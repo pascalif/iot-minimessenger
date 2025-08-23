@@ -109,9 +109,9 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 
 
 //Préfère les broches D1, D2, D5, D6, D7 ou D8 pour une LED.
-#define LED_STATUS D8 //D5  // GPIO14
+#define LED_STATUS D8  //D5  // GPIO14
 #define LED_FRIEND_1 D6
-#define LED_FRIEND_2 D1 // D7
+#define LED_FRIEND_2 D1  // D7
 
 
 // OLED configuration
@@ -132,6 +132,15 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // ================================================================================
 // Global variables
 // ================================================================================
+
+// Lines management in display
+enum Align { LEFT,
+             CENTER,
+             RIGHT };
+uint16_t g_nextMessageY = 0;
+int g_lineHeight = 8;
+#define LINE_SPACING_TS 2
+#define LINE_SPACING_MSG 8
 
 // WiFi
 WiFiClientSecure g_wifiClient;
@@ -274,15 +283,10 @@ void ntpConfigure() {
   timeClient.begin();
 }
 
-char* getUpdateDateTimeAsString() {
+char* getCurrentDateTime() {
   timeClient.update();
-  return getDateTimeString();
-}
-
-char* getDateTimeString() {
   time_t epochTime = timeClient.getEpochTime();
 
-  // Convertir en structure tm
   struct tm* timeInfo = localtime(&epochTime);
 
   snprintf(g_ts, sizeof(g_ts), "%04d-%02d-%02d|%02d:%02d:%02d",
@@ -293,10 +297,23 @@ char* getDateTimeString() {
            timeInfo->tm_min,
            timeInfo->tm_sec);
 
-  //return String(buffer);
   return g_ts;
 }
 
+char* getCurrentTime() {
+  timeClient.update();
+
+  time_t epochTime = timeClient.getEpochTime();
+
+  struct tm* timeInfo = localtime(&epochTime);
+
+  snprintf(g_ts, sizeof(g_ts), "%02d:%02d:%02d",
+           timeInfo->tm_hour,
+           timeInfo->tm_min,
+           timeInfo->tm_sec);
+
+  return g_ts;
+}
 
 // ================================================================================
 // Connectivity
@@ -413,7 +430,7 @@ void mqttPushFormattedMessage(const char* topic, const char* payload) {
   snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE,
            "%s ### ts:%s deviceId:%d msgId:%d",
            payload,
-           getUpdateDateTimeAsString(), g_deviceIdMe, g_mqttOutputMsgId);
+           getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
 
   hlog("MQTT: Publishing message #", g_mqttOutputMsgId, " to topic [", topic, "] : [", g_mqttOutgoingMsg, ']');
   // Publishing. Only QoS 0 is possible at publish time with PubSubClient
@@ -501,10 +518,11 @@ void setupDisplay() {
     Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
     pDisp->init(240, 320);
+    pDisp->setRotation(1);
 
     g_display2 = pDisp;
   } else {
-    hlogn("Display: nothing to configure");
+    hlogn("setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
@@ -523,18 +541,6 @@ void showSplashScreen() {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
 
     pDisp->fillScreen(ST77XX_BLACK);
-    pDisp->fillCircle(50, 50, 30, ST77XX_MAGENTA);
-
-    for (int x = 0; x < 320; x+=50) {
-      pDisp->drawFastHLine(0, x, pDisp->width(), ST77XX_RED);
-      pDisp->drawFastVLine(x, 0, pDisp->height(), ST77XX_YELLOW);
-    }
-
-  /*for (int16_t x=10; x < pDisp->width(); x+=20) {
-    for (int16_t y=10; y < pDisp->height(); y+=20) {
-      pDisp->fillCircle(x, y, 10, ST77XX_BLUE);
-    }
-  }*/
 
     duration = 1000;
   } else {
@@ -543,6 +549,62 @@ void showSplashScreen() {
   }
 
   delay(duration);
+}
+
+
+void showLine(String text, uint16_t color, int textSize, Align align, int lineSpacing) {
+  g_display2->setTextSize(textSize);
+  g_display2->setTextColor(color);
+
+  // Dimensions du texte pour calculer largeur et hauteur
+  int16_t x1, y1;
+  uint16_t w, h;
+  g_display2->getTextBounds(text, 0, g_nextMessageY, &x1, &y1, &w, &h);
+
+  // Vérifier dépassement bas d’écran
+  if (g_nextMessageY + h > g_display2->height()) {
+    // Efface l’écran et repart du haut
+    g_display2->fillScreen(ST77XX_BLACK);
+    g_nextMessageY = 0;
+  }
+
+
+  int x;
+  if (align == LEFT) {
+    x = 0;
+  } else if (align == RIGHT) {
+    x = g_display2->width() - w;
+  } else {  // CENTER
+    x = (g_display2->width() - w) / 2;
+  }
+
+  g_display2->setCursor(x, g_nextMessageY);
+  g_display2->print(text);
+
+  // Incrémente Y automatiquement (espacement = hauteur du texte)
+  g_nextMessageY += h+lineSpacing;
+}
+
+
+// ================================================================================
+// char* & Strings
+// ================================================================================
+
+char* trim(char* str) {
+  // Left trim
+  while (isspace((unsigned char)*str)) str++;
+
+  if (*str == 0)  // all spaces?
+    return str;
+
+  // Right trim
+  char* end = str + strlen(str) - 1;
+  while (end > str && isspace((unsigned char)*end)) end--;
+
+  // Write new null terminator
+  *(end + 1) = '\0';
+
+  return str;
 }
 
 
@@ -557,16 +619,84 @@ void setRecipient(int recipientDeviceId) {
   hlogn("MQTT: Setting recipient topic to [", g_mqttOutoingRecipientTopic, ']');
 }
 
+void onIncomingTextMessage(String messageDate, String pseudoOther, String message) {
+
+  if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
+    cleanScreen();
+
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    pDisp->setTextSize(1);
+    pDisp->setTextColor(WHITE);
+    pDisp->setCursor(0, 0);
+    pDisp->print(message);
+    pDisp->display();
+  } else if (g_displayType == DISPLAY_TYPE_ST7789) {
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
+
+    if (g_nextMessageY == 0) {
+      cleanScreen();
+    }
+
+    showLine(messageDate, ST77XX_CYAN, 1, LEFT, LINE_SPACING_TS);
+    showLine(message, ST77XX_WHITE, 2, LEFT, LINE_SPACING_MSG);
+
+    // TODO scroll
+  } else {
+    hlogn("onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
+  }
+}
+
+void onOutgoingMessage(String message) {
+  if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    //  pDisp->setTextSize(1);
+    //    pDisp->setTextColor(WHITE);
+    //    pDisp->setCursor(0, 0);
+    pDisp->print(message);
+    pDisp->display();
+  } else if (g_displayType == DISPLAY_TYPE_ST7789) {
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
+
+    showLine(getCurrentTime(), ST77XX_YELLOW, 1, RIGHT, LINE_SPACING_TS);
+    showLine(message, ST77XX_WHITE, 2, RIGHT, LINE_SPACING_MSG);
+
+    // TODO multiple lines
+    // TODO scroll
+  } else {
+    hlogn("onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
+  }
+}
+
 
 // ================================================================================
 // Entrypoints
 // ================================================================================
 
+void cleanScreen() {
+  if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
+
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+
+    pDisp->clearDisplay();
+
+  } else if (g_displayType == DISPLAY_TYPE_ST7789) {
+
+    g_display2->fillScreen(ST77XX_BLACK);
+
+  } else {
+    hlogn("cleanScreen: DISPLAY_TYPE_NOT_CONFIGURED");
+  }
+}
+
 void showUpdatedInfoScreen() {
   String mac = WiFi.macAddress();
-  mac.replace(":", "");
+
+  int colHeaders = 2;
+  int colValues = 70;
+  int currentLine = 0;
 
   if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
+    mac.replace(":", "");
 
     Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
 
@@ -611,41 +741,65 @@ void showUpdatedInfoScreen() {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
 
     pDisp->fillScreen(ST77XX_BLACK);
-    pDisp->setCursor(0, 0);
     pDisp->setTextSize(2);
-    pDisp->setTextColor(ST77XX_WHITE);
 
+    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("ID:");
+    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(g_deviceIdMe);
-    pDisp->print(' ');
+    currentLine++;
 
-    pDisp->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
+    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("Name:");
+    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(g_deviceName);
+    currentLine++;
 
+    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("MAC:");
+    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->print(' ');
     pDisp->print(mac);
-    pDisp->print(' ');
+    currentLine++;
 
-    pDisp->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
-    pDisp->print(ssid);
-
+    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("SSID:");
+    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->print(' ');
+    pDisp->print(ssid);
+    currentLine++;
+
+    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("IP:");
+    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_WHITE);
     if (WiFi.status() != WL_CONNECTED) {
-      pDisp->print("no-wifi");
+      pDisp->print("NO WIFI");
     } else {
       pDisp->print(WiFi.localIP().toString());
     }
-    pDisp->print(' ');
+    currentLine++;
 
-    pDisp->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
-    if (g_mqttClient.connected()) {
-      pDisp->print("DATA");
+    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("MQTT: ");
+    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setTextColor(ST77XX_WHITE);
+    if (WiFi.status() != WL_CONNECTED) {
+      pDisp->print("NOT OK");
     } else {
-      pDisp->print("----");
+      pDisp->print("OK");
     }
+    currentLine++;
   } else {
-    hlogn("Display : no display configured");
+    hlogn("showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
@@ -700,12 +854,6 @@ void resetSerialBuffer() {
   for (int i = 0; i <= MAX_SERIAL_MSG_LENGTH; i++) {
     g_contentFromSerial[i] = 0;
   }
-
-  // Prefix with my name for next message
-  snprintf(g_contentFromSerial, sizeof(g_contentFromSerial),
-           "%s: ",
-           g_userPseudo);
-  g_inNextCharIndex = strlen(g_contentFromSerial);
 }
 
 bool g_firstLoop = true;
@@ -724,6 +872,10 @@ void loop() {
       // Reconnection attempt is successfull
       if (mqttReconnect()) {
         showUpdatedInfoScreen();
+
+        delay(5000);
+        cleanScreen();
+        showLine("Ready !", ST77XX_GREEN, 2, CENTER, 20);
       }
     }
   } else {
@@ -751,6 +903,7 @@ void loop() {
     if (g_inChar == '\n') {
       if (g_inNextCharIndex > 0) {
         hlogn("Serial: Read msg id #", g_mqttOutputMsgId, " : ", g_contentFromSerial);
+        onOutgoingMessage(g_contentFromSerial);
         mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, g_contentFromSerial);
 
         resetSerialBuffer();
@@ -794,6 +947,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
   for (unsigned int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
+  message.trim();
 
   if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
     int remoteDeviceId = atoi(message.c_str());
@@ -806,17 +960,8 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
   else if (topic[0] == 'm') {
     hlogn("MQTT: Incoming message [", message, ']');
 
-    if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
-      Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
-      pDisp->clearDisplay();
-      pDisp->setTextSize(1);
-      pDisp->setTextColor(WHITE);
-      pDisp->setCursor(0, 0);
-      //pDisp->print(topic);
-      //pDisp->print(" : ");
-      pDisp->print(message);
-      pDisp->display();
-    }
+    onIncomingTextMessage("13:34:23", "Jolan", message);
+
   } else {
     hlogn("MQTT: Message received in unknown topic [", topic, "] : [", message, ']');
   }
