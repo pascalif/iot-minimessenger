@@ -7,7 +7,12 @@ Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c
 
 TODO
 - gérer les accents entrants
+- tester perte de connection wifi (refaire boucle de co ?)
+- tester perte MQTT et affichage msg
+- couleur et affichage du pseudo remote (pour chan room multi )
+- gerer un delta de temps contre le réaffichage du timestamp
 - utiliser WiFiManager (cf mistral) pour configurer le wifi - https://github.com/tzapu/WiFiManager, sinon déplacer la connection dans loop
+- commandes pour shutdown la nuit
 */
 
 
@@ -37,6 +42,8 @@ TODO
 #include <WiFiUdp.h>
 // Install from library manager: "NTPClient" (3.2.1)
 #include <NTPClient.h>
+
+#include <Fonts/FreeSans9pt7b.h>  // Police avec accents 9x7 au lieu de 7x5
 
 
 // ================================================================================
@@ -137,10 +144,76 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 enum Align { LEFT,
              CENTER,
              RIGHT };
-uint16_t g_nextMessageY = 0;
-int g_lineHeight = 8;
-#define LINE_SPACING_TS 2
-#define LINE_SPACING_MSG 8
+// Position d’écriture dans l’espace virtuel
+uint16_t g_nextTextTopY = 0;
+
+// Objet représentant une ligne
+#define BOX_X 0
+#define BOX_Y 1
+#define BOX_W 2
+#define BOX_H 3
+
+class TextLine {
+public:
+  String ts;  // optionnal
+  uint16_t tsColor;
+  const GFXfont* tsFont;
+  byte tsFontSize;
+  byte tsHeightWithBottomMargin;  // avec marge
+  int16_t tsBounds[4];            // {x1, y1, w, h} renvoyés par getTextBounds
+  uint16_t tsX;
+
+  String msg;
+  uint16_t msgColor;
+  const GFXfont* msgFont;
+  byte msgFontSize;
+  byte msgHeightWithBottomMargin;  // avec marge
+  int16_t msgBounds[4];            // {x1, y1, w, h} renvoyés par getTextBounds
+  uint16_t msgX;
+
+  TextLine() {}
+  // TODO rename params
+  TextLine(String ts, uint16_t tc, GFXfont* _tsFont, byte tfs, byte th, uint16_t tx,
+           //     int16_t _tsx1, int16_t _tsy1,                uint16_t _tsw, uint16_t _tsh,
+           int16_t _tsBox[4],
+           String msg, uint16_t mc, GFXfont* _msgFont, byte mfs, byte mh, uint16_t mx,
+           //     int16_t _msgx1, int16_t _msgy1,                uint16_t _msgw, uint16_t _msgh,
+           int16_t _msgBox[4]
+
+           )
+    : ts(ts), tsColor(tc), tsFont(_tsFont), tsFontSize(tfs), tsHeightWithBottomMargin(th), tsX(tx),
+      msg(msg), msgColor(mc), msgFont(_msgFont), msgFontSize(mfs), msgHeightWithBottomMargin(mh), msgX(mx) {
+    /*       tsBounds[0] = _tsx1;
+              tsBounds[1] = _tsy1;
+              tsBounds[2] = _tsw;
+              tsBounds[3] = _tsh;
+               msgBounds[0] = _msgx1;
+                      msgBounds[1] = _msgy1;
+                      msgBounds[2] =_msgw;
+                      msgBounds[3] = _msgh;
+                      */
+    tsBounds[0] = _tsBox[0];
+    tsBounds[1] = _tsBox[1];
+    tsBounds[2] = _tsBox[2];
+    tsBounds[3] = _tsBox[3];
+    msgBounds[0] = _msgBox[0];
+    msgBounds[1] = _msgBox[1];
+    msgBounds[2] = _msgBox[2];
+    msgBounds[3] = _msgBox[3];
+  }
+};
+
+const int MAX_LINES = 40;   // nombre max de lignes gardées en mémoire
+TextLine lines[MAX_LINES];  // buffer des lignes
+int lineCount = 0;          // nombre de lignes utilisées
+
+#define CONVO_TS_FONT_SIZE 1
+#define CONVO_TS_MARGIN_BOTTOM 2
+#define CONV0_TS_COLOR ST77XX_CYAN
+#define CONVO_MSG_FONT_SIZE 1
+#define CONVO_MSG_MARGIN_BOTTOM 9  // 9 sur font par defaut en taille 2
+#define CONVO_INFO_COLOR ST77XX_GREEN
+#define CONVO_ERROR_COLOR ST77XX_RED
 
 // WiFi
 WiFiClientSecure g_wifiClient;
@@ -168,7 +241,7 @@ char g_mqttOutoingRecipientTopic[MQTT_TOPIC_SIZE];
 int g_displayType = 0;
 
 Adafruit_SSD1306 g_displayOledShield(OLED_RESET);
-Adafruit_GFX* g_display2 = NULL;
+Adafruit_GFX* g_disp = NULL;
 
 static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
                                                          B00000001, B11000000,
@@ -513,14 +586,18 @@ void setupDisplay() {
     // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
     pDisp->begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C (for the 64x48)
 
-    g_display2 = pDisp;
+    g_disp = pDisp;
   } else if (g_displayType == DISPLAY_TYPE_ST7789) {
     Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
     pDisp->init(240, 320);
     pDisp->setRotation(1);
 
-    g_display2 = pDisp;
+    //pDisp->setScrollMargins(0, 0);  // Pas de marges haute/basse
+    // scrollPos = 0;
+    // pDisp->setScrollOffset(scrollPos);
+
+    g_disp = pDisp;
   } else {
     hlogn("setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
   }
@@ -533,12 +610,12 @@ void showSplashScreen() {
   int duration = 1000;
 
   if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
 
     pDisp->display();
 
   } else if (g_displayType == DISPLAY_TYPE_ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
     pDisp->fillScreen(ST77XX_BLACK);
 
@@ -552,39 +629,114 @@ void showSplashScreen() {
 }
 
 
-void showLine(String text, uint16_t color, int textSize, Align align, int lineSpacing) {
-  g_display2->setTextSize(textSize);
-  g_display2->setTextColor(color);
-
-  // Dimensions du texte pour calculer largeur et hauteur
-  int16_t x1, y1;
-  uint16_t w, h;
-  g_display2->getTextBounds(text, 0, g_nextMessageY, &x1, &y1, &w, &h);
-
-  // Vérifier dépassement bas d’écran
-  if (g_nextMessageY + h > g_display2->height()) {
-    // Efface l’écran et repart du haut
-    g_display2->fillScreen(ST77XX_BLACK);
-    g_nextMessageY = 0;
-  }
-
-
-  int x;
-  if (align == LEFT) {
-    x = 0;
-  } else if (align == RIGHT) {
-    x = g_display2->width() - w;
-  } else {  // CENTER
-    x = (g_display2->width() - w) / 2;
-  }
-
-  g_display2->setCursor(x, g_nextMessageY);
-  g_display2->print(text);
-
-  // Incrémente Y automatiquement (espacement = hauteur du texte)
-  g_nextMessageY += h+lineSpacing;
+// Renvoie l'avance de ligne (baseline → baseline) pour la police active
+static int lineAdvanceFor(const GFXfont* font, uint8_t textSize) {
+  if (font) return font->yAdvance * textSize;  // GFX font
+  return 8 * textSize;                         // font bitmap 5x7 par défaut
 }
 
+
+void redrawAllConversations() {
+  g_disp->fillScreen(ST77XX_BLACK);
+
+  int nextMessageY = 0;
+
+  // Gestion verticale :
+  // - currentTopY = haut de la ligne
+  // - baseline = currentTopY - y1  (car y1 est la distance du haut au baseline, souvent négative)
+  int lineAdv = lineAdvanceFor(&FreeSans9pt7b, CONVO_MSG_FONT_SIZE);
+
+
+  //for (int i = 0; i < lineCount; i++) {
+  for (auto& line : lines) {
+    if (!line.ts.isEmpty()) {
+      g_disp->setFont(NULL);
+      g_disp->setTextSize(line.tsFontSize);
+      g_disp->setTextColor(line.tsColor);
+      g_disp->setCursor(line.tsX, nextMessageY);
+      g_disp->print(line.ts);
+      nextMessageY += line.tsHeightWithBottomMargin;
+    }
+
+
+    int baselineY = nextMessageY - 10;
+
+
+    g_disp->setFont(&FreeSans9pt7b);
+    g_disp->setTextSize(line.msgFontSize);
+    g_disp->setTextColor(line.msgColor);
+    g_disp->setCursor(line.msgX, nextMessageY);
+    g_disp->print(line.msg);
+    nextMessageY += line.msgHeightWithBottomMargin;
+  }
+
+  g_nextTextTopY = nextMessageY;
+}
+
+
+
+void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align) {
+  /*
+  // Dimension TS
+  uint16_t tsSubblockH = 0;
+
+  static uint16_t tsBox[4] = { 0, 0, 0, 0 };  // x1, y1, w, h
+  if (!ts.isEmpty()) {
+    g_disp->setFont(NULL);
+    g_disp->setTextSize(CONVO_TS_FONT_SIZE);
+    g_disp->getTextBounds(ts, 0, 0, &tsBox[BOX_X], &tsBox[BOX_Y], &tsBox[BOX_W], &tsBox[BOX_H]);
+    tsSubblockH = tsBox[BOX_H] + CONVO_TS_MARGIN_BOTTOM;
+  }
+
+  // Dimension msg
+  uint16_t msgSubblockH = 0;
+  static int16_t msgBox[4] = { 0, 0, 0, 0 };
+
+  g_disp->setFont(&FreeSans9pt7b);
+  g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
+  g_disp->getTextBounds(msg, 0, 0, &msgBox[BOX_X], &msgBox[BOX_Y], &msgBox[BOX_W], &msgBox[BOX_H]);
+
+  msgSubblockH = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
+
+
+  // Vérifier si ça dépasse la hauteur
+  while (g_nextTextTopY + tsSubblockH + msgSubblockH > g_disp->height()) {
+    // Décaler toutes les lignes d'une place vers le haut
+    int regainedY = lines[0].tsHeightWithBottomMargin + lines[0].msgHeightWithBottomMargin;
+
+    for (int i = 1; i < lineCount; i++) {
+      lines[i - 1] = lines[i];
+    }
+    if (lineCount > 0) lineCount--;  // on libère une place
+
+    g_nextTextTopY -= regainedY;
+  }
+
+  // Sinon, juste écrire à la suite
+  uint16_t tsX = 0, msgX = 0;
+  uint16_t correctedWidth = (x1 + tsBox[BOX_W]);
+  if (align == LEFT) {
+    tsX = -x1;
+    msgX = -x1;
+  } else if (align == RIGHT) {
+    tsX = g_disp->width() - correctedWidth;
+    msgX = g_disp->width() - correctedWidth;
+  } else if (align == CENTER) {
+    tsX = (g_disp->width() - correctedWidth) / 2;
+    msgX = (g_disp->width() - correctedWidth) / 2;
+  }
+
+
+  // Créer la nouvelle ligne
+  lines[lineCount++] = TextLine(ts, CONV0_TS_COLOR, NULL, CONVO_TS_FONT_SIZE, tsSubblockH, tsX, tsBox,
+                                msg, msgColor, &FreeSans9pt7b, CONVO_MSG_FONT_SIZE, msgSubblockH - y1, msgX, msgBox);
+
+  // Redessiner tout (scroll inclus)
+  redrawAllConversations();
+  */
+}
+
+// TODO faire calcul des boxings de fonts null et l'autre
 
 // ================================================================================
 // char* & Strings
@@ -624,23 +776,20 @@ void onIncomingTextMessage(String messageDate, String pseudoOther, String messag
   if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
     cleanScreen();
 
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
     pDisp->setTextSize(1);
     pDisp->setTextColor(WHITE);
     pDisp->setCursor(0, 0);
     pDisp->print(message);
     pDisp->display();
   } else if (g_displayType == DISPLAY_TYPE_ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-    if (g_nextMessageY == 0) {
-      cleanScreen();
+    if (message == "dis") {
+      g_mqttClient.disconnect();
+    } else {
+      addConversationBlock(messageDate, message, ST77XX_YELLOW, LEFT);
     }
-
-    showLine(messageDate, ST77XX_CYAN, 1, LEFT, LINE_SPACING_TS);
-    showLine(message, ST77XX_WHITE, 2, LEFT, LINE_SPACING_MSG);
-
-    // TODO scroll
   } else {
     hlogn("onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
   }
@@ -648,20 +797,17 @@ void onIncomingTextMessage(String messageDate, String pseudoOther, String messag
 
 void onOutgoingMessage(String message) {
   if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
     //  pDisp->setTextSize(1);
     //    pDisp->setTextColor(WHITE);
     //    pDisp->setCursor(0, 0);
     pDisp->print(message);
     pDisp->display();
   } else if (g_displayType == DISPLAY_TYPE_ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-    showLine(getCurrentTime(), ST77XX_YELLOW, 1, RIGHT, LINE_SPACING_TS);
-    showLine(message, ST77XX_WHITE, 2, RIGHT, LINE_SPACING_MSG);
+    addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
 
-    // TODO multiple lines
-    // TODO scroll
   } else {
     hlogn("onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
   }
@@ -675,30 +821,27 @@ void onOutgoingMessage(String message) {
 void cleanScreen() {
   if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
 
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
 
     pDisp->clearDisplay();
 
   } else if (g_displayType == DISPLAY_TYPE_ST7789) {
 
-    g_display2->fillScreen(ST77XX_BLACK);
+    g_disp->fillScreen(ST77XX_BLACK);
 
   } else {
     hlogn("cleanScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
-void showUpdatedInfoScreen() {
+void showUpdatedInfoScreen(bool withMQTTInfo) {
   String mac = WiFi.macAddress();
 
-  int colHeaders = 2;
-  int colValues = 70;
-  int currentLine = 0;
 
   if (g_displayType == DISPLAY_TYPE_OLEDSHIELD) {
     mac.replace(":", "");
 
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_display2;
+    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
 
     pDisp->clearDisplay();
     pDisp->setCursor(0, 0);
@@ -738,76 +881,138 @@ void showUpdatedInfoScreen() {
     pDisp->display();
   } else if (g_displayType == DISPLAY_TYPE_ST7789) {
 
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_display2;
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
     pDisp->fillScreen(ST77XX_BLACK);
+
+    pDisp->setFont(NULL);  // font par défaut
     pDisp->setTextSize(2);
 
-    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    int colHeaders = 2;
+    int colValues = 70;
+    int lineHeight = 22;
+
+    int nextY = 0;
+
+    pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
     pDisp->print("ID:");
-    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(g_deviceIdMe);
-    currentLine++;
+    nextY += lineHeight;
 
-    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
     pDisp->print("Name:");
-    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(g_deviceName);
-    currentLine++;
+    nextY += lineHeight;
 
-    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
     pDisp->print("MAC:");
-    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(mac);
-    currentLine++;
+    nextY += lineHeight;
 
-    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
     pDisp->print("SSID:");
-    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(ssid);
-    currentLine++;
+    nextY += lineHeight;
 
-    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
     pDisp->print("IP:");
-    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
+    pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     if (WiFi.status() != WL_CONNECTED) {
       pDisp->print("NO WIFI");
     } else {
       pDisp->print(WiFi.localIP().toString());
     }
-    currentLine++;
 
-    pDisp->setCursor(colHeaders, currentLine * g_lineHeight * 2);
-    pDisp->setTextColor(ST77XX_RED);
-    pDisp->print("MQTT: ");
-    pDisp->setCursor(colValues, currentLine * g_lineHeight * 2);
-    pDisp->setTextColor(ST77XX_WHITE);
-    if (WiFi.status() != WL_CONNECTED) {
-      pDisp->print("NOT OK");
-    } else {
-      pDisp->print("OK");
+    nextY += lineHeight;
+
+    if (withMQTTInfo) {
+      pDisp->setCursor(colHeaders, nextY);
+      pDisp->setTextColor(ST77XX_RED);
+      pDisp->print("MQTT: ");
+      pDisp->setCursor(colValues, nextY);
+      pDisp->setTextColor(ST77XX_WHITE);
+      if (!g_mqttClient.connected()) {
+        pDisp->print("NOT OK");
+      } else {
+        pDisp->print("OK");
+      }
     }
-    currentLine++;
+
   } else {
     hlogn("showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
 
+
+void setupTests() {
+// ==== Font default
+// lineAdvance : 8
+// Bounds for text [jjjjj]: x1=0, y1=0, w=30, h=8
+// Bounds for text [Abefg]: x1=0, y1=0, w=30, h=8
+// Bounds for text [     ]: x1=0, y1=0, w=30, h=8
+// Bounds for text [_____]: x1=0, y1=0, w=30, h=8
+// ==== Font FreeSans9pt7b
+// yAdvance : 22
+// lineAdvance : 22
+// Bounds for text [aaaaa]: x1=1, y1=-9, w=49, h=10
+// Bounds for text [ttttt]: x1=1, y1=-11, w=24, h=12
+// Bounds for text [jjjjj]: x1=0, y1=-12, w=20, h=17
+// Bounds for text [Abefg]: x1=0, y1=-12, w=46, h=17
+// Bounds for text [     ]: x1=0, y1=0, w=20, h=0
+// Bounds for text [_____]: x1=0, y1=3, w=50, h=1
+
+  delay(2000);
+
+  uint8_t textSize = 1;
+  String texts[] = { "aaaaa", "ttttt", "jjjjj", "Abefg", "     ", "_____" };
+  String fontNames[] = { "default", "FreeSans9pt7b" };
+  const GFXfont* fonts[] = { NULL, &FreeSans9pt7b };
+
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  for (int f = 0; f < 2; f++) {
+    hlogn("==== Font ", fontNames[f]);
+    const GFXfont* font = fonts[f];
+
+    g_disp->setFont(font);
+    g_disp->setTextSize(textSize);
+
+    uint8_t yAdvance = 8;
+    if (font != NULL) {
+      yAdvance = pgm_read_byte(&font->yAdvance);
+      hlogn("yAdvance : ", yAdvance);
+    }
+    uint8_t lineAdvance = yAdvance * textSize;
+    hlogn("lineAdvance : ", lineAdvance);
+
+    for (auto& text : texts) {
+      g_disp->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+      hlogn("Bounds for text [", text, "]: x1=", x1, ", y1=", y1, ", w=", w, ", h=", h);
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("ESP8266: setup()");
+
 
   // Initialise le générateur de nombres aléatoires
   // Utilise une broche non connectée pour varier la graine (seed)
@@ -818,8 +1023,10 @@ void setup() {
   setupDisplay();
   setupLeds();
 
+  setupTests();
+
   showSplashScreen();
-  showUpdatedInfoScreen();
+  showUpdatedInfoScreen(false);
 
   ntpConfigure();
 
@@ -832,14 +1039,14 @@ void setup() {
   }
   logn(" Connected. IP=", WiFi.localIP().toString());
   g_wifiClient.setInsecure();  // Use this if you don't have a certificate
-  showUpdatedInfoScreen();
+  showUpdatedInfoScreen(false);
 
 
   // Set up MQTT with TLS
   g_mqttClient.setServer(mqtt_server, mqtt_port);
   g_mqttClient.setCallback(onMqttIncomingMessage);
 
-  g_mqttWasConnected = true;
+  //g_mqttWasConnected = true;
   // Test blinking
   //g_mqttLastReconnectTryTimestampMs = millis();
 
@@ -865,17 +1072,20 @@ void loop() {
     if (g_mqttWasConnected) {
       g_mqttWasConnected = false;
       ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
+
+      addConversationBlock("", "Lost server", CONVO_ERROR_COLOR, CENTER);
+      addConversationBlock("", "Trying to reconnect...", CONVO_ERROR_COLOR, CENTER);
     }
 
     // Time to try to reconnect ?
     if (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL) {
       // Reconnection attempt is successfull
       if (mqttReconnect()) {
-        showUpdatedInfoScreen();
+        showUpdatedInfoScreen(false);
 
-        delay(5000);
+        delay(2000);
         cleanScreen();
-        showLine("Ready !", ST77XX_GREEN, 2, CENTER, 20);
+        addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
       }
     }
   } else {
