@@ -60,7 +60,14 @@ TODO
 
 #include <Fonts/FreeSans9pt7b.h>  // Police avec accents 9x7 au lieu de 7x5
 
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+
+
 #include "symbols.h"
+
 
 // ================================================================================
 // Toggles
@@ -215,6 +222,11 @@ const char* root_ca = \
 #endif
 
 
+// MAC found by sketchbook/esp32_scan_bt_classic_and_ble/ project
+#define KEYBOARD_MAC_ADDRESS "xx:xx:xx:xx:xx:xx"
+BLEAdvertisedDevice* targetKeyboard = nullptr;
+BLEClient* pClient = nullptr;
+bool deviceConnected = false;
 
 
 
@@ -478,7 +490,7 @@ void identifyDevice() {
     //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
     g_displayType = DisplayType::ST7789;
   } else if (mac == "00:00:00:00:00:00" ) {
-  error("MAC address is unknown. WiFi.begin() was not enough in bootstrap sequence.")
+  error("MAC address is unknown. WiFi.begin() was not enough in bootstrap sequence.");
   }
   else {
     strcpy(g_userPseudo, "JohnDoe");
@@ -496,6 +508,43 @@ void identifyDevice() {
   setRecipient(recipientId);
 }
 
+
+// ================================================================================
+// BLUETOOTH KEYBOARD
+// ================================================================================
+
+// Callback for BLE scan results
+class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    if (advertisedDevice.getAddress().toString() == KEYBOARD_MAC_ADDRESS) {
+      advertisedDevice.getScan()->stop();
+      targetKeyboard = new BLEAdvertisedDevice(advertisedDevice);
+      Serial.println("Keyboard found!");
+    }
+  }
+};
+
+// Callback for connection status
+class MyClientCallback: public BLEClientCallbacks {
+  void onConnect(BLEClient* pclient) {
+    deviceConnected = true;
+    Serial.println("Connected to keyboard!");
+  }
+
+  void onDisconnect(BLEClient* pclient) {
+    deviceConnected = false;
+    Serial.println("Disconnected from keyboard. Attempting to reconnect...");
+    pclient->connect(targetKeyboard); // Reconnect
+  }
+};
+
+void setupBluetooth() {
+  BLEDevice::init("ESP32 Keyboard Client");
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setActiveScan(true);
+  pBLEScan->start(30); // Scan for 30 seconds
+}
 
 // ================================================================================
 // MQTT
@@ -831,13 +880,13 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 // char* & Strings
 // ================================================================================
 
-void error(msg:String)
+void error(String msg)
 {
     Serial.print("ERROR: ");
     Serial.println(msg);
 }
 
-void assertTrue(condition:boolean, msg: String) {
+void assertTrue(boolean condition, String msg) {
     if (!condition) {
     Serial.print("ERROR: ");
     Serial.println(msg);
@@ -1137,6 +1186,9 @@ void setup() {
   showSplashScreen();
   showUpdatedInfoScreen(false);
 
+// Connect to BT
+setupBluetooth();
+
   // Connect to WiFi
   // TODO setupWifi
   hlog("WiFi: Connecting...");
@@ -1186,6 +1238,13 @@ bool g_firstLoop = true;
 
 void loop() {
   unsigned long currentMillis = millis();  // Temps actuel en millisecondes depuis le démarrage
+
+  if (!deviceConnected && targetKeyboard) {
+    pClient = BLEDevice::createClient();
+    pClient->setClientCallbacks(new MyClientCallback());
+    pClient->connect(targetKeyboard);
+  }
+
 
   if (!g_mqttClient.connected()) {
     if (g_mqttWasConnected) {
