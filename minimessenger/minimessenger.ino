@@ -21,12 +21,22 @@ TODO
 */
 
 
+//#define PAC_ON_D1MINI
+#define PAC_ON_ESP32
+
+
 // ================================================================================
 // Librairies
 // ================================================================================
 
 // Provided by Arduino IDE (with ESP8266 board plugins ?)
+#ifdef PAC_ON_D1MINI
 #include <ESP8266WiFi.h>
+#endif
+#ifdef PAC_ON_ESP32
+// Provided by ESP32 boards
+#include <WiFi.h>
+#endif
 
 // Install from library manager: "PubSubClient" (2.8)
 #include <PubSubClient.h>
@@ -85,7 +95,43 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 //                                         "msg/unicast/12"
 
 
-#define NTP_UTC_OFFSET 7200  // UTC+2
+#define NTP_UTC_OFFSET_S 7200  // UTC+2
+#define NTP_UPDATE_INTERVAL_MS 60000
+
+// Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
+const char* root_ca = \
+  "-----BEGIN CERTIFICATE-----\n" \
+  "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\n" \
+  "-----END CERTIFICATE-----\n" ;
+
 
 
 // ================================================================================
@@ -98,7 +144,7 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // Period between sending 2 "keepalive" messages
 #define MQTT_KEEPALIVE_INTERVAL 30000
 // Period between retring connection to MQTT broker
-#define MQTT_CONNECT_RETRY_INTERVAL 15000
+#define MQTT_CONNECT_RETRY_INTERVAL 5000
 
 
 // ================================================================================
@@ -121,10 +167,17 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // D4 GPIO2 LED intégrée (inversée : LOW = allumée). Peut être utilisée, mais la LED bleue intégrée s'allumera aussi.
 
 
+#ifdef PAC_ON_D1MINI
 //Préfère les broches D1, D2, D5, D6, D7 ou D8 pour une LED.
-#define LED_STATUS D8  //D5  // GPIO14
+#define LED_STATUS D8
 #define LED_FRIEND_1 D6
-#define LED_FRIEND_2 D1  // D7
+#define LED_FRIEND_2 D1
+#endif
+#ifdef PAC_ON_ESP32
+#define LED_STATUS 32
+#define LED_FRIEND_1 33
+#define LED_FRIEND_2 25
+#endif
 
 
 // OLED configuration
@@ -134,11 +187,34 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 #define OLED_RESET 0  // GPIO0  TODO Correct?
 
 
-#define TFT_CS D2   // TFT CS  pin is connected to NodeMCU pin D2
-#define TFT_RST D3  // TFT RST pin is connected to NodeMCU pin D3
-#define TFT_DC D4   // TFT DC  pin is connected to NodeMCU pin D4
-// SCK (CLK) ---> NodeMCU pin D5 (GPIO14)
-// MOSI(DIN) ---> NodeMCU pin D7 (GPIO13)
+// STT7789v pins, vue de dessus
+// GND, VCC, SCL, SDA, RST, DC, CS
+
+
+// On TFT to D1mini :
+//
+//   CS:  D1Mini pin D2 (GPIO4)
+//   RST: D1Mini pin D3 (GPIO0)
+//   DC:  D1Mini pin D4 (GPIO2)
+//   No need for constants if using std pins:
+#ifdef PAC_ON_D1MINI
+//     SCK (CLK) ---> D1Mini pin D5 (GPIO14, SLCK).  By default
+//     MOSI(DIN) ---> D1Mini pin D7 (GPIO13)
+#define TFT_RST D3
+#define TFT_CS D2
+#define TFT_DC D4
+#endif
+
+// On ESP32:
+#ifdef PAC_ON_ESP32
+// SCL : D18 GPIO18 "SCK". By default
+// SDA : D23 GPIO23 "MOSI"
+#define TFT_RST -1  // optional, can use RST pin
+#define TFT_DC 2    // GPIO2 : Data/Command select
+#define TFT_CS 5    // GPIO5 : chip select, optionnal, can tie to GND if only one device
+#endif
+
+
 
 
 
@@ -177,7 +253,7 @@ int lineCount = 0;          // nombre de lignes utilisées
 WiFiClientSecure g_wifiClient;
 
 // MQTT
-PubSubClient g_mqttClient(g_wifiClient);
+PubSubClient g_mqttClient(g_wifiClient); // a WiFiClientSecure instance is needed for HiveMQ connection
 int g_mqttConnectionId = -1;
 unsigned int g_mqttOutputMsgId = 0;
 bool g_mqttWasConnected = false;
@@ -219,7 +295,7 @@ static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
 
 // NTP
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", NTP_UTC_OFFSET);
+NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", NTP_UTC_OFFSET_S, NTP_UPDATE_INTERVAL_MS);
 
 // format "YYYY-MM-DD HH:MM:SS"
 char g_ts[20];
@@ -309,6 +385,7 @@ void logn(const Args&... args) {
 // Time
 // ================================================================================
 void ntpConfigure() {
+  hlog("Init NTP...");
   timeClient.begin();
 }
 
@@ -349,34 +426,61 @@ char* getCurrentTime() {
 // ================================================================================
 
 void identifyDevice() {
+    // This call to WiFi.begin() is needed on ESP32 (not on ESP8266) so that our MAC address is initialized
+    WiFi.begin();
   String mac = WiFi.macAddress();  // Get MAC address as string
   hlogn("MAC Address: ", mac);
 
   int recipientId = 3;
 
   if (mac == "xx:xx:xx:xx:xx:xx") {
-    strcpy(g_userPseudo, "Papa");
     g_deviceIdMe = 1;
+    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
+    snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
+
+    strcpy(g_userPseudo, "Papa");
     g_deviceIdFriend1 = 2;
     g_deviceIdFriend2 = 3;
 
     //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
     g_displayType = DisplayType::ST7789;
   } else if (mac == "xx:xx:xx:xx:xx:xx") {
-    strcpy(g_userPseudo, "Maïa");
     g_deviceIdMe = 2;
+    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
+    snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
+
+    strcpy(g_userPseudo, "Maïa");
     g_deviceIdFriend1 = 1;
     g_deviceIdFriend2 = 3;
   } else if (mac == "xx:xx:xx:xx:xx:xx") {
-    strcpy(g_userPseudo, "Jolan");
     g_deviceIdMe = 3;
+    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
+    snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
+
+    strcpy(g_userPseudo, "Jolan");
     g_deviceIdFriend1 = 1;
     g_deviceIdFriend2 = 2;
     recipientId = 2;
 
     g_displayType = DisplayType::OLEDSHIELD;
 
-  } else {
+  } else if (mac=="xx:xx:xx:xx:xx:xx") {
+    // ESP32-02
+    g_deviceIdMe = 4;
+
+    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
+    snprintf(g_deviceName, 8, "E32_%03d", g_deviceIdMe);
+
+    strcpy(g_userPseudo, "Proto");
+    g_deviceIdFriend1 = 2;
+    g_deviceIdFriend2 = 3;
+
+    //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
+    g_displayType = DisplayType::ST7789;
+  } else if (mac == "00:00:00:00:00:00" ) {
+  error("MAC address is unknown. WiFi.begin() was not enough in bootstrap sequence.")
+  }
+  else {
     strcpy(g_userPseudo, "JohnDoe");
     g_deviceIdMe = random(100, 1000);
   }
@@ -385,7 +489,7 @@ void identifyDevice() {
   snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
   snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
 
-  hlogn("Identified device: name=", g_deviceName, "id=", g_deviceIdMe, ", screenType:", g_displayType);
+  hlogn("Identified device: name=", g_deviceName, ", id=", g_deviceIdMe, ", screenType:", g_displayType);
 
   WiFi.hostname(g_deviceName);
 
@@ -435,8 +539,10 @@ bool mqttReconnect() {
 
     return true;
   } else {
-    logn("failed, rc=", g_mqttClient.state(), " trying again in ", MQTT_CONNECT_RETRY_INTERVAL, 's');
-    //            delay(5000);
+    logn("failed, rc=", g_mqttClient.state(), " trying again in ", MQTT_CONNECT_RETRY_INTERVAL, "s for device ", g_deviceName);
+    // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
+    // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
+    delay(MQTT_CONNECT_RETRY_INTERVAL);
     return false;
   }
 }
@@ -503,19 +609,15 @@ void ledCommuteBlinkState(int pin) {
 }
 
 void setupLeds() {
-  // Integrated blue led (inversed: LOW=On)
-  pinMode(D4, OUTPUT);
   pinMode(LED_STATUS, OUTPUT);
   pinMode(LED_FRIEND_1, OUTPUT);
   pinMode(LED_FRIEND_2, OUTPUT);
 
   for (int i = 0; i < 4; i++) {
-    digitalWrite(D4, LOW);
     digitalWrite(LED_STATUS, HIGH);
     digitalWrite(LED_FRIEND_1, HIGH);
     digitalWrite(LED_FRIEND_2, HIGH);
     delay(150);
-    digitalWrite(D4, HIGH);
     digitalWrite(LED_STATUS, LOW);
     digitalWrite(LED_FRIEND_1, LOW);
     digitalWrite(LED_FRIEND_2, LOW);
@@ -691,7 +793,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 
 
   // Vérifier si ça dépasse la hauteur (on ignore la margin bottom du msg)
-  while (g_nextTextTopY + tsBlockHWithMargin + msgBox[BOX_H] >= g_disp->height()  || lineCount >= MAX_LINES) {
+  while (g_nextTextTopY + tsBlockHWithMargin + msgBox[BOX_H] >= g_disp->height() || lineCount >= MAX_LINES) {
     // Décaler toutes les lignes d'une place vers le haut
     int regainedY = lines[0].tsHeightWithBottomMargin + lines[0].msgHeightWithBottomMargin;
 
@@ -728,6 +830,19 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 // ================================================================================
 // char* & Strings
 // ================================================================================
+
+void error(msg:String)
+{
+    Serial.print("ERROR: ");
+    Serial.println(msg);
+}
+
+void assertTrue(condition:boolean, msg: String) {
+    if (!condition) {
+    Serial.print("ERROR: ");
+    Serial.println(msg);
+    }
+}
 
 char* trim(char* str) {
   // Left trim
@@ -1005,7 +1120,7 @@ void setupTests() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("ESP8266: setup()");
+  Serial.println("setup()");
 
 
   // Initialise le générateur de nombres aléatoires
@@ -1017,14 +1132,13 @@ void setup() {
   setupDisplay();
   setupLeds();
 
-  setupTests();
+  //setupTests();
 
   showSplashScreen();
   showUpdatedInfoScreen(false);
 
-  ntpConfigure();
-
   // Connect to WiFi
+  // TODO setupWifi
   hlog("WiFi: Connecting...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -1032,7 +1146,18 @@ void setup() {
     log(".");
   }
   logn(" Connected. IP=", WiFi.localIP().toString());
+
+  ntpConfigure(); // must be done after Wifi on ESP32 (was not important on D1mini though)
+
+
+// TODO mettre un define
+if (false) {
   g_wifiClient.setInsecure();  // Use this if you don't have a certificate
+}
+else {
+    g_wifiClient.setCACert(root_ca); // Set the root CA
+}
+
   showUpdatedInfoScreen(true);
 
 
@@ -1046,7 +1171,7 @@ void setup() {
 
   resetSerialBuffer();
 
-  Serial.println("ESP8266: setup() completed.");
+  Serial.println("setup() completed.");
 }
 
 void resetSerialBuffer() {
