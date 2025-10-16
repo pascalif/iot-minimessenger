@@ -1,9 +1,12 @@
 /*
 2025-08
-D1Mini Whatsapp
-avec le freebroker HiveMQ
+ESP32 Whatsapp
+avec le freebroker HiveMQ + BT keyboard +
 
-Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
+
+Tools > Boards :           Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
+Tools > Partition Scheme : For ESP32, try the "Huge App" partition (1.9MB app space, 320KB SPIFFS).
+
 
 Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-g_mqttClient
 
@@ -18,6 +21,13 @@ TODO
 - gerer un delta de temps contre le réaffichage du timestamp
 - utiliser WiFiManager (cf mistral) pour configurer le wifi - https://github.com/tzapu/WiFiManager, sinon déplacer la connection dans loop
 - commandes pour shutdown la nuit
+
+- taille program:
+  Remove Debug Code: Strip out all Serial.print() and debug code for production.
+  Use PROGMEM: Store large constants (e.g., strings, images) in PROGMEM.
+    pour la font ? ou le logo ? ou certificat ?
+  Disable Unused Features: In your library includes, disable features you don’t use (e.g., Adafruit_GFX has options for this).
+
 */
 
 
@@ -45,13 +55,11 @@ TODO
 #include <WiFiClientSecure.h>
 
 // Install from library manager:
-// - "Adafruit SSD1306 Wemos Mini OLED" (1.1.2)
 // - "Adafruit ST7735 and ST7789" (1.11.0)
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>  // "Oled Shield" for D1Mini
-#include <Adafruit_ST7789.h>   // 320x240
+#include <Adafruit_ST7789.h>  // 320x240
 
 // To get current date & time for timestamping messages
 #include <WiFiUdp.h>
@@ -60,10 +68,14 @@ TODO
 
 #include <Fonts/FreeSans9pt7b.h>  // Police avec accents 9x7 au lieu de 7x5
 
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+//#include <BLEDevice.h>
+//#include <BLEUtils.h>
+//#include <BLEScan.h>
+//#include <BLEAdvertisedDevice.h>
+// To get keyboard keys
+// to set up a BLE client that subscribes to the keyboard's HID (Human Interface Device) notifications.
+// Bluetooth keyboards use the HID over GATT profile. The keyboard sends keypresses as notifications on a specific characteristic (usually the HID Report Characteristic).
+#include <NimBLEDevice.h>
 
 
 #include "symbols.h"
@@ -106,38 +118,38 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 #define NTP_UPDATE_INTERVAL_MS 60000
 
 // Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
-const char* root_ca = \
-  "-----BEGIN CERTIFICATE-----\n" \
-  "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\n" \
-  "-----END CERTIFICATE-----\n" ;
+const char* root_ca =
+  "-----BEGIN CERTIFICATE-----\n"
+  "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\n"
+  "-----END CERTIFICATE-----\n";
 
 
 
@@ -152,6 +164,10 @@ const char* root_ca = \
 #define MQTT_KEEPALIVE_INTERVAL 30000
 // Period between retring connection to MQTT broker
 #define MQTT_CONNECT_RETRY_INTERVAL 5000
+
+
+// MAC found by sketchbook/esp32_scan_bt_classic_and_ble/ project
+#define KEYBOARD_MAC_ADDRESS "xx:xx:xx:xx:xx:xx"
 
 
 // ================================================================================
@@ -222,11 +238,15 @@ const char* root_ca = \
 #endif
 
 
-// MAC found by sketchbook/esp32_scan_bt_classic_and_ble/ project
-#define KEYBOARD_MAC_ADDRESS "xx:xx:xx:xx:xx:xx"
-BLEAdvertisedDevice* targetKeyboard = nullptr;
-BLEClient* pClient = nullptr;
-bool deviceConnected = false;
+// HID Service UUID
+#define HID_SERVICE_UUID "00001812-0000-1000-8000-00805f9b34fb"
+// HID Report Characteristic UUID
+#define HID_REPORT_CHAR_UUID "00002a4d-0000-1000-8000-00805f9b34fb"
+
+NimBLEClient* g_pBLEClient = nullptr;
+//BLEAdvertisedDevice* targetKeyboard = nullptr;
+bool g_btKeyboardConnected = false;
+NimBLERemoteCharacteristic* g_pReportChar;
 
 
 
@@ -265,7 +285,7 @@ int lineCount = 0;          // nombre de lignes utilisées
 WiFiClientSecure g_wifiClient;
 
 // MQTT
-PubSubClient g_mqttClient(g_wifiClient); // a WiFiClientSecure instance is needed for HiveMQ connection
+PubSubClient g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
 int g_mqttConnectionId = -1;
 unsigned int g_mqttOutputMsgId = 0;
 bool g_mqttWasConnected = false;
@@ -284,7 +304,6 @@ char g_mqttOutoingRecipientTopic[MQTT_TOPIC_SIZE];
 // OLED Display
 DisplayType g_displayType = ST7789;
 
-Adafruit_SSD1306 g_displayOledShield(OLED_RESET);
 Adafruit_GFX* g_disp = NULL;
 
 static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
@@ -307,7 +326,7 @@ static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
 
 // NTP
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", NTP_UTC_OFFSET_S, NTP_UPDATE_INTERVAL_MS);
+NTPClient g_timeClient(ntpUDP, "europe.pool.ntp.org", NTP_UTC_OFFSET_S, NTP_UPDATE_INTERVAL_MS);
 
 // format "YYYY-MM-DD HH:MM:SS"
 char g_ts[20];
@@ -339,6 +358,14 @@ char g_userPseudo[40];
 byte g_ledRequiredState[LED_QTY];
 bool g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
+
+
+// ================================================================================
+// H zzz
+// ================================================================================
+
+void setRecipient(int recipientDeviceId);
+void showUpdatedInfoScreen(bool withMQTTInfo);
 
 
 // ================================================================================
@@ -393,17 +420,54 @@ void logn(const Args&... args) {
 }
 
 
+void error(String msg) {
+#ifdef WITH_LOGS
+  Serial.print("ERROR: ");
+  Serial.println(msg);
+#endif
+}
+
+void assertTrue(boolean condition, String msg) {
+#ifdef WITH_LOGS
+  if (!condition) {
+    Serial.print("ERROR: ");
+    Serial.println(msg);
+  }
+#endif
+}
+
+// ================================================================================
+// char* & Strings
+// ================================================================================
+
+char* trim(char* str) {
+  // Left trim
+  while (isspace((unsigned char)*str)) str++;
+
+  if (*str == 0)  // all spaces?
+    return str;
+
+  // Right trim
+  char* end = str + strlen(str) - 1;
+  while (end > str && isspace((unsigned char)*end)) end--;
+
+  // Write new null terminator
+  *(end + 1) = '\0';
+
+  return str;
+}
+
 // ================================================================================
 // Time
 // ================================================================================
 void ntpConfigure() {
-  hlog("Init NTP...");
-  timeClient.begin();
+  hlogn("Init NTP...");
+  g_timeClient.begin();
 }
 
 char* getCurrentDateTime() {
-  timeClient.update();
-  time_t epochTime = timeClient.getEpochTime();
+  g_timeClient.update();
+  time_t epochTime = g_timeClient.getEpochTime();
 
   struct tm* timeInfo = localtime(&epochTime);
 
@@ -419,9 +483,9 @@ char* getCurrentDateTime() {
 }
 
 char* getCurrentTime() {
-  timeClient.update();
+  g_timeClient.update();
 
-  time_t epochTime = timeClient.getEpochTime();
+  time_t epochTime = g_timeClient.getEpochTime();
 
   struct tm* timeInfo = localtime(&epochTime);
 
@@ -438,8 +502,8 @@ char* getCurrentTime() {
 // ================================================================================
 
 void identifyDevice() {
-    // This call to WiFi.begin() is needed on ESP32 (not on ESP8266) so that our MAC address is initialized
-    WiFi.begin();
+  // This call to WiFi.begin() is needed on ESP32 (not on ESP8266) so that our MAC address is initialized
+  WiFi.begin();
   String mac = WiFi.macAddress();  // Get MAC address as string
   hlogn("MAC Address: ", mac);
 
@@ -447,7 +511,6 @@ void identifyDevice() {
 
   if (mac == "xx:xx:xx:xx:xx:xx") {
     g_deviceIdMe = 1;
-    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
     snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Papa");
@@ -458,7 +521,6 @@ void identifyDevice() {
     g_displayType = DisplayType::ST7789;
   } else if (mac == "xx:xx:xx:xx:xx:xx") {
     g_deviceIdMe = 2;
-    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
     snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Maïa");
@@ -466,7 +528,6 @@ void identifyDevice() {
     g_deviceIdFriend2 = 3;
   } else if (mac == "xx:xx:xx:xx:xx:xx") {
     g_deviceIdMe = 3;
-    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
     snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Jolan");
@@ -476,11 +537,10 @@ void identifyDevice() {
 
     g_displayType = DisplayType::OLEDSHIELD;
 
-  } else if (mac=="xx:xx:xx:xx:xx:xx") {
+  } else if (mac == "xx:xx:xx:xx:xx:xx") {
     // ESP32-02
     g_deviceIdMe = 4;
 
-    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
     snprintf(g_deviceName, 8, "E32_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Proto");
@@ -489,61 +549,145 @@ void identifyDevice() {
 
     //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
     g_displayType = DisplayType::ST7789;
-  } else if (mac == "00:00:00:00:00:00" ) {
-  error("MAC address is unknown. WiFi.begin() was not enough in bootstrap sequence.");
-  }
-  else {
+  } else if (mac == "00:00:00:00:00:00") {
+
+    error("MAC address is unknown. WiFi.begin() was not enough in bootstrap sequence.");
+
+  } else {
     strcpy(g_userPseudo, "JohnDoe");
     g_deviceIdMe = random(100, 1000);
+    snprintf(g_deviceName, 8, "E32_%03d", g_deviceIdMe);
   }
 
   // Non formated g_deviceIdMe (pour Will topic)
   snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
-  snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
 
   hlogn("Identified device: name=", g_deviceName, ", id=", g_deviceIdMe, ", screenType:", g_displayType);
-
-  WiFi.hostname(g_deviceName);
 
   setRecipient(recipientId);
 }
 
 
 // ================================================================================
+// WIFI
+// ================================================================================
+
+void setupWifi() {
+  hlogn("setupWifi()...");
+  WiFi.hostname(g_deviceName);
+
+  WiFi.begin(ssid, password);
+
+  hlog("WiFi: Connecting...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    log(".");
+  }
+  logn(" Connected. IP=", WiFi.localIP().toString());
+
+  ntpConfigure();  // For ESP32 boards, this call must be done after the Wifi is connected (was not important on D1mini though)
+
+
+  // TODO mettre un define
+  // TODO tester sans
+  if (false) {
+    g_wifiClient.setInsecure();  // Use this if you don't have a certificate
+  } else {
+    // For HiveMQ TLS
+    g_wifiClient.setCACert(root_ca);  // Set the root CA
+  }
+}
+
+// ================================================================================
 // BLUETOOTH KEYBOARD
 // ================================================================================
 
-// Callback for BLE scan results
-class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (advertisedDevice.getAddress().toString() == KEYBOARD_MAC_ADDRESS) {
-      advertisedDevice.getScan()->stop();
-      targetKeyboard = new BLEAdvertisedDevice(advertisedDevice);
-      Serial.println("Keyboard found!");
-    }
+class MyAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
+  void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+    Serial.printf("Found device: %s (Address: %s)\n",
+                  advertisedDevice->getName().c_str(),
+                  advertisedDevice->getAddress().toString().c_str());
   }
 };
 
 // Callback for connection status
-class MyClientCallback: public BLEClientCallbacks {
-  void onConnect(BLEClient* pclient) {
-    deviceConnected = true;
-    Serial.println("Connected to keyboard!");
+class MyBLEClientCallback : public NimBLEClientCallbacks {
+  void onConnect(NimBLEClient* g_pBLEClient) {
+    g_btKeyboardConnected = true;
+    showUpdatedInfoScreen(true);
+    Serial.println("*********** Connected to keyboard!");
   }
 
-  void onDisconnect(BLEClient* pclient) {
-    deviceConnected = false;
-    Serial.println("Disconnected from keyboard. Attempting to reconnect...");
-    pclient->connect(targetKeyboard); // Reconnect
+  void onDisconnect(NimBLEClient* g_pBLEClient) {
+    g_btKeyboardConnected = false;
+    showUpdatedInfoScreen(true);
+    Serial.println("************* Disconnected from keyboard. Attempting to reconnect...");
+    delay(1000);
+
+    NimBLEAddress keyboardAddress = NimBLEAddress(std::string(KEYBOARD_MAC_ADDRESS), 0);
+    g_pBLEClient->connect(keyboardAddress);  // Auto-reconnect
   }
 };
 
-void setupBluetooth() {
-  BLEDevice::init("ESP32 Keyboard Client");
-  BLEScan* pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  pBLEScan->setActiveScan(true);
-  pBLEScan->start(30); // Scan for 30 seconds
+// Callback for notifications
+static void myBLENotifyCallback(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
+  Serial.print("Keypress data: ");
+  for (int i = 0; i < length; i++) {
+    Serial.printf("%02X ", pData[i]);
+  }
+  Serial.println();
+  // Parse pData for keypresses (see below)
+  if (length >= 2 && pData[0] == 0) {          // No modifier keys pressed
+    uint8_t keyCode = pData[2];                // Example: First key in the report
+    if (keyCode >= 0x04 && keyCode <= 0x1D) {  // A-Z keys
+      Serial.write('A' + keyCode - 0x04);
+    }
+    // Add more mappings as needed
+  }
+};
+
+boolean setupBluetoothKeyboard() {
+  Serial.println("setupBluetoothKeyboard()...");
+
+
+  NimBLEDevice::init("ESP32 Keyboard Client");
+  g_pBLEClient = NimBLEDevice::createClient();
+  g_pBLEClient->setClientCallbacks(new MyBLEClientCallback());
+  // TODO needed ?
+  //g_pBLEClient->setSecurityAuth(BLE_SECURITY_LEVEL_ENCRYPTION);
+
+  Serial.println("scanning...");
+NimBLEScan* pScan = NimBLEDevice::getScan();
+  pScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+pScan->setActiveScan(true);
+pScan->start(30, false); // Scan for 5 seconds
+
+
+  // Connect to the keyboard
+  NimBLEAddress keyboardAddress = NimBLEAddress(std::string(KEYBOARD_MAC_ADDRESS), 0);
+  if (!g_pBLEClient->connect(keyboardAddress)) {
+    error("BT Keyboard: Failed to connect");
+    return false;
+  }
+
+  // Discover HID service and subscribe to keyboard characteristic notifications
+  NimBLERemoteService* pHIDService = g_pBLEClient->getService(HID_SERVICE_UUID);
+  if (!pHIDService) {
+    error("BT Keyboard: No HID_SERVICE_UUID");
+    return false;
+  }
+
+  g_pReportChar = pHIDService->getCharacteristic(HID_REPORT_CHAR_UUID);
+  if (!g_pReportChar) {
+    error("BT Keyboard: No HID_REPORT_CHAR_UUID");
+    return false;
+  }
+
+  if (!g_pReportChar->subscribe(true, myBLENotifyCallback, false)) {
+    error("BT Keyboard: Failed to subscribe to notifications");
+    return false;
+  }
+  return true;
 }
 
 // ================================================================================
@@ -591,7 +735,6 @@ bool mqttReconnect() {
     logn("failed, rc=", g_mqttClient.state(), " trying again in ", MQTT_CONNECT_RETRY_INTERVAL, "s for device ", g_deviceName);
     // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
     // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
-    delay(MQTT_CONNECT_RETRY_INTERVAL);
     return false;
   }
 }
@@ -631,7 +774,7 @@ void mqttPushFormattedMessage(const char* topic, const char* payload) {
 
 
 // ================================================================================
-// LEDd
+// LED
 // ================================================================================
 
 void ledSetState(int pin, int requiredState) {
@@ -688,14 +831,7 @@ void setupLeds() {
 // ================================================================================
 
 void setupDisplay() {
-  if (g_displayType == DisplayType::OLEDSHIELD) {
-    Adafruit_SSD1306* pDisp = new Adafruit_SSD1306(OLED_RESET);
-
-    // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-    pDisp->begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C (for the 64x48)
-
-    g_disp = pDisp;
-  } else if (g_displayType == DisplayType::ST7789) {
+  if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
     pDisp->init(240, 320);
@@ -717,12 +853,7 @@ void showSplashScreen() {
   // Since the buffer is intialized with an Adafruit splashscreen internally, this will display the splashscreen.
   int duration = 1000;
 
-  if (g_displayType == DisplayType::OLEDSHIELD) {
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
-
-    pDisp->display();
-
-  } else if (g_displayType == DisplayType::ST7789) {
+  if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
     pDisp->fillScreen(ST77XX_BLACK);
@@ -864,8 +995,8 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     msgX = (g_disp->width() - msgBox[BOX_W]) / 2;
   }
 
-  Serial.printf("TS  box=(%d, %d, %d, %d) ; msgX=%d \n", tsBox[BOX_X], tsBox[BOX_Y], tsBox[BOX_W], tsBox[BOX_H], tsX);
-  Serial.printf("MSG box=(%d, %d, %d, %d) ; msgX=%d \n", msgBox[BOX_X], msgBox[BOX_Y], msgBox[BOX_W], msgBox[BOX_H], msgX);
+  // Serial.printf("TS  box=(%d, %d, %d, %d) ; msgX=%d \n", tsBox[BOX_X], tsBox[BOX_Y], tsBox[BOX_W], tsBox[BOX_H], tsX);
+  //Serial.printf("MSG box=(%d, %d, %d, %d) ; msgX=%d \n", msgBox[BOX_X], msgBox[BOX_Y], msgBox[BOX_W], msgBox[BOX_H], msgX);
 
   // Créer la nouvelle ligne
   lines[lineCount++] = TextLine(ts, CONV0_TS_COLOR, NULL, CONVO_TS_FONT_SIZE, tsBlockHWithMargin, tsX, tsBox,
@@ -873,41 +1004,6 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 
   // Redessiner tout (scroll inclus)
   redrawAllConversations();
-}
-
-
-// ================================================================================
-// char* & Strings
-// ================================================================================
-
-void error(String msg)
-{
-    Serial.print("ERROR: ");
-    Serial.println(msg);
-}
-
-void assertTrue(boolean condition, String msg) {
-    if (!condition) {
-    Serial.print("ERROR: ");
-    Serial.println(msg);
-    }
-}
-
-char* trim(char* str) {
-  // Left trim
-  while (isspace((unsigned char)*str)) str++;
-
-  if (*str == 0)  // all spaces?
-    return str;
-
-  // Right trim
-  char* end = str + strlen(str) - 1;
-  while (end > str && isspace((unsigned char)*end)) end--;
-
-  // Write new null terminator
-  *(end + 1) = '\0';
-
-  return str;
 }
 
 
@@ -924,16 +1020,7 @@ void setRecipient(int recipientDeviceId) {
 
 void onIncomingTextMessage(String messageDate, String pseudoOther, String message) {
 
-  if (g_displayType == DisplayType::OLEDSHIELD) {
-    cleanScreen();
-
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
-    pDisp->setTextSize(1);
-    pDisp->setTextColor(WHITE);
-    pDisp->setCursor(0, 0);
-    pDisp->print(message);
-    pDisp->display();
-  } else if (g_displayType == DisplayType::ST7789) {
+  if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
     if (message == "dis") {
@@ -947,14 +1034,7 @@ void onIncomingTextMessage(String messageDate, String pseudoOther, String messag
 }
 
 void onOutgoingMessage(String message) {
-  if (g_displayType == DisplayType::OLEDSHIELD) {
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
-    //  pDisp->setTextSize(1);
-    //    pDisp->setTextColor(WHITE);
-    //    pDisp->setCursor(0, 0);
-    pDisp->print(message);
-    pDisp->display();
-  } else if (g_displayType == DisplayType::ST7789) {
+  if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
     addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
@@ -970,13 +1050,7 @@ void onOutgoingMessage(String message) {
 // ================================================================================
 
 void cleanScreen() {
-  if (g_displayType == DisplayType::OLEDSHIELD) {
-
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
-
-    pDisp->clearDisplay();
-
-  } else if (g_displayType == DisplayType::ST7789) {
+  if (g_displayType == DisplayType::ST7789) {
 
     g_disp->fillScreen(ST77XX_BLACK);
 
@@ -989,48 +1063,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
   String mac = WiFi.macAddress();
 
 
-  if (g_displayType == DisplayType::OLEDSHIELD) {
-    mac.replace(":", "");
-
-    Adafruit_SSD1306* pDisp = (Adafruit_SSD1306*)g_disp;
-
-    pDisp->clearDisplay();
-    pDisp->setCursor(0, 0);
-
-    pDisp->setTextSize(1);
-    pDisp->setTextColor(WHITE);
-    pDisp->print(g_deviceIdMe);
-    pDisp->print(' ');
-
-    pDisp->setTextColor(BLACK, WHITE);
-    pDisp->print(g_deviceName);
-
-    pDisp->setTextColor(WHITE);
-    pDisp->print(' ');
-    pDisp->print(mac);
-    pDisp->print(' ');
-
-    pDisp->setTextColor(BLACK, WHITE);
-    pDisp->print(ssid);
-
-    pDisp->setTextColor(WHITE);
-    pDisp->print(' ');
-    if (WiFi.status() != WL_CONNECTED) {
-      pDisp->print("no-wifi");
-    } else {
-      pDisp->print(WiFi.localIP().toString());
-    }
-    pDisp->print(' ');
-
-    pDisp->setTextColor(BLACK, WHITE);
-    if (g_mqttClient.connected()) {
-      pDisp->print("DATA");
-    } else {
-      pDisp->print("----");
-    }
-
-    pDisp->display();
-  } else if (g_displayType == DisplayType::ST7789) {
+  if (g_displayType == DisplayType::ST7789) {
 
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
@@ -1067,6 +1100,17 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(mac);
+    nextY += lineHeight;
+
+    // Blank line to separate static vs dynamic values
+    nextY += lineHeight;
+
+    pDisp->setCursor(colHeaders, nextY);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("BTKB:");
+    pDisp->setCursor(colValues, nextY);
+    pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->print(g_btKeyboardConnected ? "Connected" : "Not found");
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);
@@ -1107,7 +1151,6 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     hlogn("showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
-
 
 
 void setupTests() {
@@ -1186,29 +1229,11 @@ void setup() {
   showSplashScreen();
   showUpdatedInfoScreen(false);
 
-// Connect to BT
-setupBluetooth();
+  // Connect to BT
+  setupBluetoothKeyboard();
 
   // Connect to WiFi
-  // TODO setupWifi
-  hlog("WiFi: Connecting...");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    log(".");
-  }
-  logn(" Connected. IP=", WiFi.localIP().toString());
-
-  ntpConfigure(); // must be done after Wifi on ESP32 (was not important on D1mini though)
-
-
-// TODO mettre un define
-if (false) {
-  g_wifiClient.setInsecure();  // Use this if you don't have a certificate
-}
-else {
-    g_wifiClient.setCACert(root_ca); // Set the root CA
-}
+  setupWifi();
 
   showUpdatedInfoScreen(true);
 
@@ -1239,10 +1264,8 @@ bool g_firstLoop = true;
 void loop() {
   unsigned long currentMillis = millis();  // Temps actuel en millisecondes depuis le démarrage
 
-  if (!deviceConnected && targetKeyboard) {
-    pClient = BLEDevice::createClient();
-    pClient->setClientCallbacks(new MyClientCallback());
-    pClient->connect(targetKeyboard);
+  if (!g_btKeyboardConnected) {
+    //  Serial.println("bt not connected");
   }
 
 
@@ -1260,10 +1283,12 @@ void loop() {
       // Reconnection attempt is successfull
       if (mqttReconnect()) {
         showUpdatedInfoScreen(true);
-
         delay(1000);
+
         cleanScreen();
         addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+      } else {
+        delay(MQTT_CONNECT_RETRY_INTERVAL);
       }
     }
   } else {
