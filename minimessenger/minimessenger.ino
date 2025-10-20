@@ -242,11 +242,17 @@ const char* root_ca =
 #define HID_SERVICE_UUID "00001812-0000-1000-8000-00805f9b34fb"
 // HID Report Characteristic UUID
 #define HID_REPORT_CHAR_UUID "00002a4d-0000-1000-8000-00805f9b34fb"
+#define HID_CONTROL_POINT_UUID "00002a4c-0000-1000-8000-00805f9b34fb"
+#define REPORT_REF_DESC_UUID "00002908-0000-1000-8000-00805f9b34fb"
 
 NimBLEClient* g_pBLEClient = nullptr;
 //BLEAdvertisedDevice* targetKeyboard = nullptr;
 bool g_btKeyboardConnected = false;
 NimBLERemoteCharacteristic* g_pReportChar;
+
+const std::string KEYBOARD_NAME = "Bluetooth Keyboard";
+
+NimBLEAddress keyboardAddress;
 
 
 
@@ -602,23 +608,56 @@ void setupWifi() {
 // BLUETOOTH KEYBOARD
 // ================================================================================
 
-class MyAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
-  void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+static constexpr uint32_t scanTimeMs = 12 * 1000;
+
+
+class MyAdvertisedDeviceCallbacks : public NimBLEScanCallbacks {
+
+  void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override {
     Serial.printf("Found device: %s (Address: %s)\n",
                   advertisedDevice->getName().c_str(),
                   advertisedDevice->getAddress().toString().c_str());
+
+    if (advertisedDevice->getName() == std::string(KEYBOARD_NAME)) {
+      // if (advertisedDevice->getName() == KEYBOARD_NAME) {
+      Serial.print("Found keyboard: ");
+      Serial.println(advertisedDevice->getName().c_str());
+      Serial.print("MAC Address: ");
+      Serial.println(advertisedDevice->getAddress().toString().c_str());
+      advertisedDevice->getScan()->stop();
+      keyboardAddress = advertisedDevice->getAddress();
+
+      printf("Keyboard found onresult. Connecting...\n");
+      boolean res = connectToKeyboard();
+      printf("connect result = %d\n", res);
+    }
+  }
+
+  void onScanEnd(const NimBLEScanResults& results, int reason) override {
+    Serial.printf("Scan complete! %d devices found.\n", results.getCount());
+
+    printf("Scan ended reason = %d\n", reason);
+    if (keyboardAddress.toString() != "00:00:00:00:00:00") {
+      printf("Keyboard found onscanend. Connecting...\n");
+      boolean res = connectToKeyboard();
+      printf("connect result = %d\n", res);
+
+    } else {
+      printf("Keyboard not found. Restarting scan...\n");
+      NimBLEDevice::getScan()->start(scanTimeMs, false, true);
+    }
   }
 };
 
 // Callback for connection status
 class MyBLEClientCallback : public NimBLEClientCallbacks {
-  void onConnect(NimBLEClient* g_pBLEClient) {
+  void onConnect(NimBLEClient* g_pBLEClient) override {
     g_btKeyboardConnected = true;
     showUpdatedInfoScreen(true);
     Serial.println("*********** Connected to keyboard!");
   }
 
-  void onDisconnect(NimBLEClient* g_pBLEClient) {
+  void onDisconnect(NimBLEClient* g_pBLEClient, int reason) override {
     g_btKeyboardConnected = false;
     showUpdatedInfoScreen(true);
     Serial.println("************* Disconnected from keyboard. Attempting to reconnect...");
@@ -646,47 +685,103 @@ static void myBLENotifyCallback(NimBLERemoteCharacteristic* pBLERemoteCharacteri
   }
 };
 
+
+
 boolean setupBluetoothKeyboard() {
   Serial.println("setupBluetoothKeyboard()...");
 
-
   NimBLEDevice::init("ESP32 Keyboard Client");
+
+  return connectToKeyboard();
+
+
+  NimBLEScan* pScan = NimBLEDevice::getScan();
+  pScan->setScanCallbacks(new MyAdvertisedDeviceCallbacks(), false);
+  pScan->setActiveScan(true);
+  pScan->setMaxResults(0);
+  pScan->start(scanTimeMs, false, true);  // Scan for 5 seconds
+
+
+  for (int i = 0; i < 10; i++) {
+    delay(scanTimeMs / 10);
+    if (keyboardAddress.toString() != "00:00:00:00:00:00") {
+      break;
+    }
+  }
+
+  return true;
+}
+
+
+boolean connectToKeyboard() {
+ keyboardAddress = NimBLEAddress(std::string(KEYBOARD_MAC_ADDRESS), 0);
+
+  if (keyboardAddress.toString() == "00:00:00:00:00:00") {
+    Serial.println("BT Keyboard: Not found after scan !");
+    return false;
+  }
+
+
+  Serial.print("Connecting to KB MAC : ");
+  Serial.println(keyboardAddress.toString().c_str());
+
+
   g_pBLEClient = NimBLEDevice::createClient();
   g_pBLEClient->setClientCallbacks(new MyBLEClientCallback());
   // TODO needed ?
-  //g_pBLEClient->setSecurityAuth(BLE_SECURITY_LEVEL_ENCRYPTION);
-
-  Serial.println("scanning...");
-NimBLEScan* pScan = NimBLEDevice::getScan();
-  pScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-pScan->setActiveScan(true);
-pScan->start(30, false); // Scan for 5 seconds
-
+  //NimBLEDevice::setSecurityAuth(BLE_SECURITY_LEVEL_ENCRYPTION);
 
   // Connect to the keyboard
-  NimBLEAddress keyboardAddress = NimBLEAddress(std::string(KEYBOARD_MAC_ADDRESS), 0);
-  if (!g_pBLEClient->connect(keyboardAddress)) {
+  //  NimBLEAddress keyboardAddress(keyboardMacStr);
+
+  if (!g_pBLEClient->connect(&keyboardAddress)) {
     error("BT Keyboard: Failed to connect");
     return false;
   }
+  Serial.println("Connected!");
 
   // Discover HID service and subscribe to keyboard characteristic notifications
   NimBLERemoteService* pHIDService = g_pBLEClient->getService(HID_SERVICE_UUID);
   if (!pHIDService) {
-    error("BT Keyboard: No HID_SERVICE_UUID");
+    error("BT Keyboard: HID service not found");
     return false;
   }
 
   g_pReportChar = pHIDService->getCharacteristic(HID_REPORT_CHAR_UUID);
   if (!g_pReportChar) {
-    error("BT Keyboard: No HID_REPORT_CHAR_UUID");
+    error("BT Keyboard: Report characteristic not found");
     return false;
+  }
+
+  // Enable reports via HID Control Point (if available)
+  NimBLERemoteCharacteristic* pControlPointChar = pHIDService->getCharacteristic(HID_CONTROL_POINT_UUID);
+  if (pControlPointChar) {
+    Serial.println("writing 0x01 to the HID control point 2a4c to enable reports");
+    uint8_t enableReports[] = { 0x01 };
+    pControlPointChar->writeValue(enableReports, 1, false);
+  }
+
+  // Write to Report Reference Descriptor (if available)
+  NimBLERemoteDescriptor* pReportRefDesc = g_pReportChar->getDescriptor(NimBLEUUID(REPORT_REF_DESC_UUID));
+  if (pReportRefDesc) {
+    Serial.println("writing stuff to the HID control point 2908 to enable reports");
+    uint8_t reportRefData[] = { 0x01, 0x00 };
+    pReportRefDesc->writeValue(reportRefData, 2, false);
+  }
+
+  NimBLERemoteCharacteristic* pReportMapChar = pHIDService->getCharacteristic("00002a4b-0000-1000-8000-00805f9b34fb");
+  if (pReportMapChar) {
+    std::string reportMap = pReportMapChar->readValue();
+    Serial.print("Report Map: ");
+    Serial.println(reportMap.c_str());
   }
 
   if (!g_pReportChar->subscribe(true, myBLENotifyCallback, false)) {
     error("BT Keyboard: Failed to subscribe to notifications");
     return false;
   }
+
+  Serial.println("connectToKeyboard() completed successfully");
   return true;
 }
 
@@ -713,7 +808,7 @@ bool mqttReconnect() {
         mqtt_user, mqtt_password,
         g_mqttOutgoingTopicWill, MQTT_QOS_0, MQTT_MSG_NOT_RETAINED, g_deviceIdChars,
         MQTT_SESSION_VOLATILE)) {
-    logn("connected");
+    logn("mqtt connected");
     hlogn("MQTT: MQTT_MAX_PACKET_SIZE=", MQTT_MAX_PACKET_SIZE);
 
     g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
