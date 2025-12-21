@@ -1381,6 +1381,8 @@ void loop() {
   }
 
   g_firstLoop = false;
+
+  delay(500);
 }
 
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {

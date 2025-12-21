@@ -200,9 +200,9 @@ void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
 
   if (doConnect) {
     if (connectToServer(*pServerAddress)) {
-      Serial.println("BTKB: We are now connected");
+      Serial.println("BTKB - tryToMaintainConnection() : We are now connected");
     } else {
-      Serial.println("BTKB: Failed to connect");
+      Serial.println("BTKB - tryToMaintainConnection() : Failed to connect");
       doScan = true;  // retry scan if connect failed
     }
     doConnect = false;
