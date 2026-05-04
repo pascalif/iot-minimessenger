@@ -27,9 +27,9 @@ void MiniMessengerBLEKeyboardInterface::clearAllExistingBonds() {
   for (int i = 0; i < dev_num; i++) {
     esp_ble_remove_bond_device(dev_list[i].bd_addr);
     char bda_str[18];
-    sprintf(bda_str, "%02X:%02X:%02X:%02X:%02X:%02X",
-            dev_list[i].bd_addr[0], dev_list[i].bd_addr[1], dev_list[i].bd_addr[2],
-            dev_list[i].bd_addr[3], dev_list[i].bd_addr[4], dev_list[i].bd_addr[5]);
+    snprintf(bda_str, sizeof(bda_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             dev_list[i].bd_addr[0], dev_list[i].bd_addr[1], dev_list[i].bd_addr[2],
+             dev_list[i].bd_addr[3], dev_list[i].bd_addr[4], dev_list[i].bd_addr[5]);
     Serial.print("Removed bonded device: ");
     Serial.println(bda_str);
   }
@@ -165,7 +165,6 @@ bool MiniMessengerBLEKeyboardInterface::setup(
   Serial.println("MiniMessengerBLEKeyboardInterface::setup()...");
 
   BLEDevice::init("");
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
   BLEDevice::setSecurityCallbacks(this);
   // Vu dans chatgpt, utile un jour ?
   //BLEDevice::setSecurityAuth(true, true, true);

@@ -3,10 +3,30 @@
 ESP32 Whatsapp
 avec le freebroker HiveMQ + BT keyboard +
 
-
+Old
 Tools > Boards :           Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
 Tools > Partition Scheme : For ESP32, try the "Huge App" partition (1.9MB app space, 320KB SPIFFS).
 
+Faire le tri des boards :
+  Wemos/Lolin do sell ESP32-based boards in similar form factors, but they ship under different names and live under the ESP32 boards
+  package (Espressif Systems):
+  - "LOLIN D32" — ESP32 (classic)
+  - "LOLIN D32 Pro" — ESP32 with PSRAM + SD slot
+  - "LOLIN S2 Mini" — ESP32-S2 (mini form factor, often confused with the D1 mini)
+  - "LOLIN S3 Mini" / "LOLIN C3 Mini" — ESP32-S3 / -C3
+
+
+
+2026-05
+
+ArduinoIDE :               2.3.8_Linux_64bit.AppImage
+Tools > Boards  :          ESP32 >> ESP32 Dev Module,
+                           /dev/ttyUSB0, Baud 115200
+Tools > Partition Scheme : "Huge APP (3MB No OTA / 1MB SPIFFS)"
+COMPILE: OK
+LINK   : OK
+UPLOAD : OK
+RUN    : ?
 
 Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-g_mqttClient
 
@@ -333,9 +353,12 @@ byte g_inNextCharIndex = 0;
 #endif
 
 // Messaging
-byte g_deviceIdMe = -1;
-byte g_deviceIdFriend1 = -1;
-byte g_deviceIdFriend2 = -1;
+// Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — any
+// real device gets a small positive ID assigned in identifyDevice().
+#define DEVICE_ID_UNSET 0xFF
+byte g_deviceIdMe = DEVICE_ID_UNSET;
+byte g_deviceIdFriend1 = DEVICE_ID_UNSET;
+byte g_deviceIdFriend2 = DEVICE_ID_UNSET;
 char g_deviceIdChars[4];
 char g_deviceName[40];
 char g_userPseudo[40];
@@ -604,16 +627,28 @@ static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
 // ================================================================================
 
 void identifyDevice() {
-  // This call to WiFi.begin() is needed on ESP32 (not on ESP8266) so that our MAC address is initialized
-  WiFi.begin();
-  String mac = WiFi.macAddress();  // Get MAC address as string
+  // Read the MAC from eFuse directly. The WiFi.macAddress() String overload uses
+  // esp_wifi_get_mac() which races with the async WiFi driver init on ESP32 core 3.x
+  // and can return all zeros. The byte-buffer overload reads from eFuse and works
+  // regardless of WiFi state.
+  String mac;
+#ifdef PAC_ON_ESP32
+  uint8_t macBytes[6];
+  WiFi.macAddress(macBytes);
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
+  mac = macStr;
+#else
+  mac = WiFi.macAddress();
+#endif
   hlogn("MAC Address: ", mac);
 
   int recipientId = 3;
 
   if (mac == "xx:xx:xx:xx:xx:xx") {
     g_deviceIdMe = 1;
-    snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
+    snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Papa");
     g_deviceIdFriend1 = 2;
@@ -623,14 +658,14 @@ void identifyDevice() {
     g_displayType = DisplayType::ST7789;
   } else if (mac == "xx:xx:xx:xx:xx:xx") {
     g_deviceIdMe = 2;
-    snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
+    snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Maïa");
     g_deviceIdFriend1 = 1;
     g_deviceIdFriend2 = 3;
   } else if (mac == "xx:xx:xx:xx:xx:xx") {
     g_deviceIdMe = 3;
-    snprintf(g_deviceName, 8, "D1M_%03d", g_deviceIdMe);
+    snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Jolan");
     g_deviceIdFriend1 = 1;
@@ -643,7 +678,7 @@ void identifyDevice() {
     // ESP32-02
     g_deviceIdMe = 4;
 
-    snprintf(g_deviceName, 8, "E32_%03d", g_deviceIdMe);
+    snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
 
     strcpy(g_userPseudo, "Proto");
     g_deviceIdFriend1 = 2;
@@ -658,7 +693,7 @@ void identifyDevice() {
   } else {
     strcpy(g_userPseudo, "JohnDoe");
     g_deviceIdMe = random(100, 1000);
-    snprintf(g_deviceName, 8, "E32_%03d", g_deviceIdMe);
+    snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
   }
 
   // Non formated g_deviceIdMe (pour Will topic)
@@ -676,7 +711,9 @@ void identifyDevice() {
 
 void setupWifi() {
   hlogn("setupWifi()...");
-  WiFi.hostname(g_deviceName);
+  WiFi.disconnect(true, true);     // clear any prior config & stop in-flight attempts
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(g_deviceName);  // ESP32 core 3.x: setHostname() must be called before begin()
 
   WiFi.begin(ssid, password);
 
@@ -753,7 +790,7 @@ bool mqttReconnect() {
     g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
     g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
 
-    g_mqttWasConnected = true,
+    g_mqttWasConnected = true;
     g_mqttConnectionId++;
     ledSetState(LED_STATUS, LED_STATE_ON);
 
@@ -1382,7 +1419,14 @@ void loop() {
 
   g_firstLoop = false;
 
-  delay(500);
+  // Short cooperative yield. delay(5) on ESP cores calls yield()/vTaskDelay()
+  // internally, which lets the lwIP / BLE / Wi-Fi background tasks run and
+  // feeds the watchdog. We keep some delay (rather than 0) so a tight loop
+  // does not starve those background tasks on single-core paths or hog the CPU
+  // for nothing — but we don't want it large because BLE scan, keystroke
+  // dispatch, MQTT keepalive and the LED blink tick all live in this loop and
+  // each extra millisecond shows up directly as input lag.
+  delay(5);
 }
 
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {

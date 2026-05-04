@@ -1,10 +1,14 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## What this is
 
-A small Arduino sketch turning an ESP32 (or ESP8266 D1 mini) into a self-contained "messenger" appliance: BLE keyboard for input, ST7789 240×320 TFT for display, and MQTT over TLS (HiveMQ Cloud) as the transport between paired devices. There is no host-side build system — everything is a `.ino` plus headers compiled by the Arduino IDE.
+An Arduino sketch turning an ESP32 (or ESP8266 D1 mini) into a self-contained "messenger" appliance: BLE keyboard for input, ST7789 240×320 TFT for display, and MQTT over TLS (HiveMQ Cloud) as the transport between paired devices. There is no host-side build system — everything is a `.ino` plus headers compiled by the Arduino IDE.
+
+The goal is to provide a way for multiple people to communicate together as long as they can connect to a WiFi network.
+It's kind of a very small "whatsapp"-like application.
+Messages can be sent to a single person or to all persons using the devices.
+Messages are received then displayed.
+MQTT server is used to manage storage and transfer of messages.
 
 ## Build / flash
 
