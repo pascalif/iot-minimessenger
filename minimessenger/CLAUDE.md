@@ -22,13 +22,14 @@ There is no Makefile, PlatformIO config, CI, or test harness. Build and flash vi
 Required libraries (Library Manager, exact versions known to work in comments):
 - PubSubClient 2.8
 - Adafruit ST7735 and ST7789 1.11.0 (pulls in Adafruit_GFX)
-- BLE / WiFi / WiFiClientSecure / SPI / Wire ship with the ESP32 / ESP8266 board packages. Time comes from the core's `configTime()` SNTP (no third-party NTP lib).
+- **NimBLE-Arduino 2.5.0** (by h2zero) — replaces the bundled Bluedroid BLE library. Required to free enough heap (~50 KB) for the mbedtls TLS handshake to HiveMQ; with Bluedroid, the handshake fails with rc=-2 (only ~24 KB contiguous heap, mbedtls needs ~38 KB for default 16 KB IN + 16 KB OUT + SSL ctx). Do **not** also `#include <BLEDevice.h>` — calling Bluedroid's `BLEDevice::init()` alongside NimBLE wastes the savings.
+- WiFi / WiFiClientSecure / SPI / Wire ship with the ESP32 / ESP8266 board packages. Time comes from the core's `configTime()` SNTP (no third-party NTP lib).
 
 ## Per-device identity
 
-`identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It branches on `WiFi.macAddress()` and assigns: `g_deviceIdMe`, `g_deviceName` (e.g. `D1M_001`, `E32_004`), `g_userPseudo`, the two `g_deviceIdFriend*` IDs, the default recipient, and `g_displayType`. **Adding or moving a physical device requires editing this function** — there is no config file. An unknown MAC falls back to a random ID and pseudo "JohnDoe".
+`identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It branches on the device's MAC and assigns: `g_deviceIdMe`, `g_deviceName` (e.g. `D1M_001`, `E32_004`), `g_userPseudo`, the two `g_deviceIdFriend*` IDs, the default recipient, and `g_displayType`. **Adding or moving a physical device requires editing this function** — there is no config file. An unknown MAC falls back to a random ID and pseudo "JohnDoe".
 
-On ESP32 the bootstrap sequence calls `WiFi.begin()` once *before* reading the MAC; without that call, the MAC reads as `00:00:00:00:00:00`. Don't reorder `identifyDevice()` relative to that.
+On ESP32 the MAC is read via `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` (from `<esp_mac.h>`), which hits the eFuse directly and works at any point in `setup()` — no need to initialize the WiFi driver first. Avoid `WiFi.macAddress()` in core 3.x: it depends on the driver being up and silently returns `00:00:00:00:00:00` (or partial garbage like `00:00:03:00:00:00`) if called too early. On D1mini the legacy `WiFi.macAddress()` path is kept under `#else`.
 
 ## MQTT topology
 
@@ -52,9 +53,11 @@ Coordinate quirk worth knowing: with GFX fonts (`FreeSans9pt7b`), `getTextBounds
 
 ## BLE keyboard
 
-`mm_blekb.{h,cpp}` wraps the ESP32 BLE stack into `MiniMessengerBLEKeyboardInterface`, which multi-inherits `BLEAdvertisedDeviceCallbacks`, `BLESecurityCallbacks`, and `BLEClientCallbacks`. The expected keyboard MAC is `KEYBOARD_MAC_ADDRESS` in the sketch. Bonding is persisted in NVS; pass `true` to `setup()`'s `clearExistingBonds` to wipe and re-pair.
+`mm_blekb.{h,cpp}` wraps the **NimBLE-Arduino** stack into `MiniMessengerBLEKeyboardInterface`, which multi-inherits `NimBLEScanCallbacks` and `NimBLEClientCallbacks`. NimBLE folds the security callbacks (`onPassKeyEntry`, `onConfirmPasskey`, `onAuthenticationComplete`) into `NimBLEClientCallbacks`, so there is no third base class as there was under Bluedroid. The expected keyboard MAC is `KEYBOARD_MAC_ADDRESS` in the sketch. Bonding is persisted in NVS under NimBLE-specific keys (so the existing Bluedroid bonds are not reused — re-pair the keyboard the first time after the migration). Pass `true` to `setup()`'s `clearExistingBonds` to wipe and re-pair.
 
-`tryToMaintainConnection()` is called every `loop()` iteration and drives the scan → connect → re-scan state machine; do not block in `loop()` longer than a couple of seconds or BLE reconnection stalls.
+`tryToMaintainConnection()` is called every `loop()` iteration and drives the scan → connect → re-scan state machine. The key difference vs Bluedroid: in NimBLE, `NimBLEScan::start()` is **asynchronous** — it returns immediately and the scan runs in the background. The state machine therefore sets `doScan = false` right after starting a scan, and relies on the `onScanEnd()` callback to re-arm `doScan = true` when the scan window elapses without finding the keyboard. Don't reintroduce a blocking pattern here, or you'll stall MQTT.
+
+Two NimBLE 2.x signature gotchas worth remembering: `onPassKeyEntry(NimBLEConnInfo&)` returns `void` (you call `NimBLEDevice::injectPassKey(connInfo, key)` to inject the value, not via the return); and scan/connect durations are in **milliseconds** (Bluedroid and NimBLE 1.x used seconds — multiply by 1000 if porting old snippets).
 
 HID reports arrive in `decodeHIDReport()`, which maintains `kbIsCapsLockOn` locally (toggled on the keyboard's CapsLock keypress, since we don't read the LED state back from the keyboard) and uses `keymapLower` / `keymapUpper` lookup tables keyed by HID codes from `hid_keys.h`. Currently keystrokes accumulate into `g_currentMsg` but pressing Enter only logs "TODO Send message" — this path is not yet wired to MQTT publishing; serial input *is* wired (via `FLAG_READ_SERIAL_INPUTS`).
 

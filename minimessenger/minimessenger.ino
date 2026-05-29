@@ -71,6 +71,9 @@ Friend present
 #ifdef PAC_ON_ESP32
 // Provided by ESP32 boards
 #include <WiFi.h>
+// For esp_read_mac() — reads MAC directly from eFuse without needing the
+// WiFi driver to be initialized.
+#include <esp_mac.h>
 #endif
 
 // Install from library manager: "PubSubClient" (2.8)
@@ -187,6 +190,11 @@ const char* root_ca =
 // Period between retring connection to MQTT broker
 #define MQTT_CONNECT_RETRY_INTERVAL 5000
 
+// Burn-in protection: time without local input (BT keystroke / serial) and
+// without a remote message before the screen dims, then fully turns off.
+#define DISPLAY_IDLE_BEFORE_DIM_MS  300000UL   // 5 min  -> dim to 50%
+#define DISPLAY_IDLE_BEFORE_OFF_MS  360000UL   // 5 + 1 min -> panel off
+
 
 // MAC found by sketchbook/esp32_scan_bt_classic_and_ble/ project
 #define KEYBOARD_MAC_ADDRESS "xx:xx:xx:xx:xx:xx"
@@ -257,6 +265,12 @@ const char* root_ca =
 #define TFT_RST -1  // optional, can use RST pin
 #define TFT_DC 2    // GPIO2 : Data/Command select
 #define TFT_CS 5    // GPIO5 : chip select, optionnal, can tie to GND if only one device
+
+// Backlight pin for PWM dimming. Set to a GPIO if the BL/LED pin of the panel
+// is wired to one (then dim = 50% PWM, off = 0% PWM). Set to -1 if the BL pin
+// is tied straight to 3.3 V — the dim phase becomes invisible but the OFF
+// state still works because it uses Adafruit_ST7789::enableDisplay(false).
+#define TFT_BL -1
 #endif
 
 
@@ -279,8 +293,13 @@ uint16_t g_nextTextTopY = 0;
 
 
 const int MAX_LINES = 40;   // nombre max de lignes gardées en mémoire
-TextLine lines[MAX_LINES];  // buffer des lignes
-int lineCount = 0;          // nombre de lignes utilisées
+// True ring buffer: no per-element shift, no copy on scroll. Logical index i
+// (0 = oldest visible line) maps to `lines[(g_lineHead + i) % MAX_LINES]`.
+// Adding a line: write at (g_lineHead + g_lineCount) % MAX_LINES, ++g_lineCount.
+// Dropping the oldest: ++g_lineHead, --g_lineCount.
+TextLine lines[MAX_LINES];
+int g_lineHead = 0;
+int g_lineCount = 0;
 
 #define CONVO_TS_FONT_SIZE 1
 #define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
@@ -316,6 +335,10 @@ char g_mqttOutoingRecipientTopic[MQTT_TOPIC_SIZE];
 DisplayType g_displayType = ST7789;
 
 Adafruit_GFX* g_disp = NULL;
+
+// Burn-in protection state
+DisplayPowerState g_displayPowerState = DISPLAY_ON;
+unsigned long g_lastActivityMs = 0;
 
 static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
                                                          B00000001, B11000000,
@@ -548,6 +571,12 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
   uint8_t modifiers = pData[0];
   uint8_t key1 = pData[2];  // First key pressed (others in pData[3..7])
 
+  // Wake screen on any keystroke. If we were sleeping, discard this report:
+  // the user pressed a key to light the screen, not to type.
+  if (key1 != 0 && noteActivity()) {
+    return;
+  }
+
   if (key1 != 0) {
 
     // Handle Caps Lock toggle
@@ -629,14 +658,14 @@ static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
 // ================================================================================
 
 void identifyDevice() {
-  // Read the MAC from eFuse directly. The WiFi.macAddress() String overload uses
-  // esp_wifi_get_mac() which races with the async WiFi driver init on ESP32 core 3.x
-  // and can return all zeros. The byte-buffer overload reads from eFuse and works
-  // regardless of WiFi state.
+  // Read the MAC from eFuse via esp_read_mac(). Unlike WiFi.macAddress(), which
+  // relies on the WiFi driver being initialized (and returns 00:00:... or partial
+  // garbage like 00:00:03:00:00:00 if called too early on ESP32 core 3.x), this
+  // IDF call hits the eFuse directly and works at any point in setup().
   String mac;
 #ifdef PAC_ON_ESP32
   uint8_t macBytes[6];
-  WiFi.macAddress(macBytes);
+  esp_read_mac(macBytes, ESP_MAC_WIFI_STA);
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
@@ -729,13 +758,13 @@ void setupWifi() {
   setupNTP();  // For ESP32 boards, this call must be done after the Wifi is connected (was not important on D1mini though)
 
 
-  // TODO mettre un define
-  // TODO tester sans
-  if (true) {
+  // Il n'est pas indispensable d'avoir le TLS, mais ca évite une attack man in the middle.
+  // Le code tourne dans les cas.
+  if (false) {
     g_wifiClient.setInsecure();  // Use this if you don't have a certificate
   } else {
     // For HiveMQ TLS
-    g_wifiClient.setCACert(root_ca);  // Set the root CA
+    g_wifiClient.setCACert(root_ca);
   }
 }
 
@@ -776,6 +805,12 @@ boolean setupKeyboard() {
 // Return true is reconnection is successfull
 bool mqttReconnect() {
   hlog("MQTT: Attempting connection...");
+
+  // Pour voir s'il y a assez de bloc memoire pour la connection TLS.
+  // mbedtls handshake = ~38-40 KB contigus (16 KB IN + 16 KB OUT + ~6 KB SSL ctx).
+  // Heap dispo (largest block) observé :
+  //   - Bluedroid : ~24 KB → insuffisant, rc=-2
+  //   - NimBLE    : ~60-70 KB attendus → handshake OK
   hlogn(" heap free=", ESP.getFreeHeap(), " largest block=", ESP.getMaxAllocHeap());
 
   unsigned long t0 = millis();
@@ -919,6 +954,75 @@ void setupDisplay() {
   } else {
     hlogn("setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
   }
+
+#if TFT_BL >= 0
+  pinMode(TFT_BL, OUTPUT);
+  analogWrite(TFT_BL, 255);  // full brightness at boot
+#endif
+  g_lastActivityMs = millis();
+}
+
+
+// Apply a power state to the panel. Idempotent.
+void setDisplayPowerState(DisplayPowerState nextState) {
+  if (nextState == g_displayPowerState) return;
+
+  hlogn("setDisplayPowerState(", (int)g_displayPowerState, " -> ", (int)nextState, ')');
+
+  if (g_displayType == DisplayType::ST7789) {
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+
+    switch (nextState) {
+      case DISPLAY_ON:
+        pDisp->enableDisplay(true);
+#if TFT_BL >= 0
+        analogWrite(TFT_BL, 255);
+#endif
+        break;
+
+      case DISPLAY_DIMMED:
+#if TFT_BL >= 0
+        analogWrite(TFT_BL, 128);  // 50% backlight
+#endif
+        // No panel-level dim command on ST7789 (the controller doesn't expose
+        // a contrast register). Without a PWM backlight pin this transition
+        // is silent — only the timer keeps progressing toward DISPLAY_OFF.
+        break;
+
+      case DISPLAY_OFF:
+#if TFT_BL >= 0
+        analogWrite(TFT_BL, 0);
+#endif
+        pDisp->enableDisplay(false);  // controller stops driving the matrix
+        break;
+    }
+  }
+
+  g_displayPowerState = nextState;
+}
+
+
+// Reset the idle timer. If the screen was dim or off, restore it to ON and
+// return true so callers can swallow the input that caused the wake.
+bool noteActivity() {
+  g_lastActivityMs = millis();
+  if (g_displayPowerState != DISPLAY_ON) {
+    setDisplayPowerState(DISPLAY_ON);
+    return true;  // caller should treat this as a wake event, not a real input
+  }
+  return false;
+}
+
+
+// Drive the dim/off state machine. Call from loop().
+void updateDisplayPowerState() {
+  unsigned long idleMs = millis() - g_lastActivityMs;
+
+  if (g_displayPowerState == DISPLAY_ON && idleMs >= DISPLAY_IDLE_BEFORE_DIM_MS) {
+    setDisplayPowerState(DISPLAY_DIMMED);
+  } else if (g_displayPowerState == DISPLAY_DIMMED && idleMs >= DISPLAY_IDLE_BEFORE_OFF_MS) {
+    setDisplayPowerState(DISPLAY_OFF);
+  }
 }
 
 
@@ -961,9 +1065,12 @@ void redrawAllConversations() {
   // - baseline = currentTopY - y1  (car y1 est la distance du haut au baseline, souvent négative)
   int lineAdv = lineAdvanceFor(&FreeSans9pt7b, CONVO_MSG_FONT_SIZE);
 
-  //for (int i = 0; i < lineCount; i++) {
-  for (auto& line : lines) {
-    if (!line.ts.isEmpty()) {
+  // Ring-buffer traversal: only the g_lineCount valid entries, in oldest-first
+  // order. Skips unused slots in `lines[]` (which would print garbage / blanks).
+  for (int k = 0; k < g_lineCount; k++) {
+    TextLine& line = lines[(g_lineHead + k) % MAX_LINES];
+
+    if (line.ts[0] != '\0') {
       g_disp->setFont(NULL);
       g_disp->setTextSize(line.tsFontSize);
       g_disp->setTextColor(line.tsColor);
@@ -996,6 +1103,8 @@ void redrawAllConversations() {
 
 
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align) {
+  // Any new block on screen counts as activity — wakes the panel if it was off.
+  noteActivity();
 
   // Dimension TS
   uint16_t tsBlockHWithMargin = 0;
@@ -1047,14 +1156,14 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 
 
   // Vérifier si ça dépasse la hauteur (on ignore la margin bottom du msg)
-  while (g_nextTextTopY + tsBlockHWithMargin + msgBox[BOX_H] >= g_disp->height() || lineCount >= MAX_LINES) {
-    // Décaler toutes les lignes d'une place vers le haut
-    int regainedY = lines[0].tsHeightWithBottomMargin + lines[0].msgHeightWithBottomMargin;
+  // Si ca dépasse de l'écran, on supprime autant de TextLine que nécessaire pour que le nouveau block soit entièrement visible.
+  while (g_nextTextTopY + tsBlockHWithMargin + msgBox[BOX_H] >= g_disp->height() || g_lineCount >= MAX_LINES) {
+    // Drop the oldest line: O(1) — just advance the ring head, no copy.
+    TextLine& oldest = lines[g_lineHead];
+    int regainedY = oldest.tsHeightWithBottomMargin + oldest.msgHeightWithBottomMargin;
 
-    for (int i = 1; i < lineCount; i++) {
-      lines[i - 1] = lines[i];
-    }
-    if (lineCount > 0) lineCount--;  // on libère une place
+    g_lineHead = (g_lineHead + 1) % MAX_LINES;
+    if (g_lineCount > 0) g_lineCount--;
 
     g_nextTextTopY -= regainedY;
   }
@@ -1072,9 +1181,11 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
   // Serial.printf("TS  box=(%d, %d, %d, %d) ; msgX=%d \n", tsBox[BOX_X], tsBox[BOX_Y], tsBox[BOX_W], tsBox[BOX_H], tsX);
   //Serial.printf("MSG box=(%d, %d, %d, %d) ; msgX=%d \n", msgBox[BOX_X], msgBox[BOX_Y], msgBox[BOX_W], msgBox[BOX_H], msgX);
 
-  // Créer la nouvelle ligne
-  lines[lineCount++] = TextLine(ts, CONV0_TS_COLOR, NULL, CONVO_TS_FONT_SIZE, tsBlockHWithMargin, tsX, tsBox,
-                                msg, msgColor, &FreeSans9pt7b, CONVO_MSG_FONT_SIZE, msgBlockHWithMargin, msgX, msgBox);
+  // Créer la nouvelle ligne dans le prochain slot du ring buffer
+  int writeIdx = (g_lineHead + g_lineCount) % MAX_LINES;
+  lines[writeIdx] = TextLine(ts, CONV0_TS_COLOR, NULL, CONVO_TS_FONT_SIZE, tsBlockHWithMargin, tsX, tsBox,
+                             msg, msgColor, &FreeSans9pt7b, CONVO_MSG_FONT_SIZE, msgBlockHWithMargin, msgX, msgBox);
+  g_lineCount++;
 
   // Redessiner tout (scroll inclus)
   redrawAllConversations();
@@ -1356,16 +1467,18 @@ void loop() {
 
     // Time to try to reconnect ?
     if (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL) {
-      // Reconnection attempt is successfull
+      // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
+      // up to ~30 s; starting the timer from the call's *end* would compound.
+      g_mqttLastReconnectTryTimestampMs = currentMillis;
+
       if (mqttReconnect()) {
         showUpdatedInfoScreen(true);
         delay(1000);
 
         cleanScreen();
         addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
-      } else {
-        delay(MQTT_CONNECT_RETRY_INTERVAL);
       }
+      // On failure: no delay() — the time gate above throttles the next retry.
     }
   } else {
     g_mqttClient.loop();
@@ -1387,6 +1500,12 @@ void loop() {
   // Add a new char to the buffer
   while (Serial.available() > 0) {
     g_inChar = Serial.read();
+
+    // Wake screen on any serial char. If we were sleeping, swallow this char:
+    // the user typed it to light the screen, not to compose a message.
+    if (noteActivity()) {
+      continue;
+    }
 
     // 'Enter key' : send message
     if (g_inChar == '\n') {
@@ -1427,6 +1546,9 @@ void loop() {
       }
     }
   }
+
+  // Burn-in protection: advance the dim → off state machine based on idle time.
+  updateDisplayPowerState();
 
   g_firstLoop = false;
 

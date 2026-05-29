@@ -12,5 +12,12 @@ enum DisplayType {
     ST7789, // 320x240, lib Adafruit_ST7789
 };
 
+// Burn-in protection: drives the local activity / sleep state machine.
+enum DisplayPowerState {
+    DISPLAY_ON,
+    DISPLAY_DIMMED,   // 50% backlight (if TFT_BL is a real PWM pin); otherwise no visible change but timer still progresses to OFF
+    DISPLAY_OFF,      // panel sleeps via Adafruit_ST7789::enableDisplay(false)
+};
+
 
 #endif

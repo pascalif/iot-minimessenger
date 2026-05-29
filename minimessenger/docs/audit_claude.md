@@ -5,7 +5,7 @@
 last_run: 2026-05-03T15:24:56Z
 files_scanned: 6
 counters: { BUG: 3, LOGIC: 3, EDGE: 0, MEM: 3, PERF: 2, SEC: 7, OBS: 3, DUP: 1, LANG: 1 }
-fixed: [ BUG-001, BUG-002, BUG-003, LOGIC-001, PERF-001 ]
+fixed: [ BUG-001, BUG-002, BUG-003, LOGIC-001, PERF-001, OBS-001, OBS-003, PERF-002 ]
 -->
 
 **Last run:** 2026-05-03 15:24 UTC
@@ -18,13 +18,13 @@ fixed: [ BUG-001, BUG-002, BUG-003, LOGIC-001, PERF-001 ]
 |----------|-------|
 | CRITICAL | 0     |
 | HIGH     | 0     |
-| MEDIUM   | 6     |
-| LOW      | 12    |
+| MEDIUM   | 4     |
+| LOW      | 11    |
 | INFO     | 0     |
 
-- Active: **18**
-- Fixed since last run: **5** (BUG-001, BUG-002, BUG-003, LOGIC-001, PERF-001)
-- Carried over: **18**
+- Active: **15**
+- Fixed since last run: **8** (BUG-001, BUG-002, BUG-003, LOGIC-001, PERF-001, OBS-001, OBS-003, PERF-002)
+- Carried over: **15**
 - Suppressed by Won't fix: **0**
 
 IDs of fixed issues are retired and will not be reused — the counters above
@@ -50,42 +50,6 @@ Ordered by severity, then category, then ID.
 1043: while (g_nextTextTopY + ... >= g_disp->height() || lineCount >= MAX_LINES) {
 1044:   for (int i = 1; i < lineCount; i++) {
 1045:     lines[i - 1] = lines[i];   // deep String copy each shift
-```
-
-#### PERF-001 — Unconditional `delay(500)` at end of `loop()` starves BLE / keystroke handling
-
-- **File:** `minimessenger.ino:1419`
-- **Category:** PERF
-- **First seen:** 2026-05-03
-
-Every loop iteration ends with a 500 ms blocking delay. `mm_blekb.tryToMaintainConnection()`, the LED state machine tick, and any incoming-keystroke processing all run at most twice per second. CLAUDE.md explicitly notes that `loop()` must not block longer than "a couple of seconds" or BLE reconnection stalls — 500 ms is the same order of magnitude and clearly already hurts perceived responsiveness when typing.
-
-**Recommendation:** remove the `delay(500)`. If a small yield is needed, replace with `delay(1)` (which calls `yield()` on ESP) and gate other actions on `millis()` deltas as the rest of the codebase already does.
-
-```cpp
-1419:   delay(500);
-1420: }
-```
-
-#### PERF-002 — Blocking `delay(MQTT_CONNECT_RETRY_INTERVAL)` in MQTT reconnect failure path
-
-- **File:** `minimessenger.ino:1352`
-- **Category:** PERF
-- **First seen:** 2026-05-03
-
-When `mqttReconnect()` fails, the code blocks the entire loop for `MQTT_CONNECT_RETRY_INTERVAL` (5 s). During that window, BLE reconnection, keystroke handling, NTP, and the LED tick are all frozen. The retry-interval gate at line 1344 (`currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL`) is already designed to be a non-blocking back-off — the `delay()` is redundant **and** harmful.
-
-**Recommendation:** remove the `delay(MQTT_CONNECT_RETRY_INTERVAL)` and ensure `g_mqttLastReconnectTryTimestampMs = currentMillis;` is set in the failure branch so the existing time-gate handles the back-off.
-
-```cpp
-1346:   if (mqttReconnect()) {
-1347:     showUpdatedInfoScreen(true);
-1348:     delay(1000);
-1349:     cleanScreen();
-1350:     addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
-1351:   } else {
-1352:     delay(MQTT_CONNECT_RETRY_INTERVAL);
-1353:   }
 ```
 
 #### SEC-001 — `strcpy()` into `g_userPseudo` without bounds
@@ -139,57 +103,7 @@ The protocol embeds `deviceId` in the payload trailer, but anything that can pub
 824:            payload, getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
 ```
 
-#### OBS-001 — Bluedroid BLE stack is the legacy stack on ESP32; NimBLE-Arduino is recommended
-
-- **File:** `mm_blekb.h:1-10`, `mm_blekb.cpp` (full file)
-- **Category:** OBS
-- **First seen:** 2026-05-03
-
-The sketch uses the legacy `BLEDevice` / `BLEScan` / `BLESecurity` API from the in-tree ESP32 BLE Arduino library (Bluedroid). Espressif now recommends NimBLE-Arduino: ~50 % less RAM and flash, more responsive scanning, and an API that is more stable across core versions (the recent `setEncryptionLevel` removal and `BLEAdvertisedDeviceCallbacks → BLEScanCallbacks` rename in core 3.x are exactly the kind of churn NimBLE avoids). Memory pressure from `String` use in the display path (MEM-001) makes any RAM win valuable.
-
-**Recommendation:** install `NimBLE-Arduino`, port `mm_blekb.cpp` to its API (drop-in for most call-sites; security callbacks differ). Treat it as a one-evening migration, then re-baseline binary size.
-
-```cpp
-1: #include "BLEDevice.h"
-3: #include <BLEDevice.h>
-4: #include <BLEUtils.h>
-5: #include <BLEClient.h>
-6: #include <BLEAddress.h>
-7: #include <BLEScan.h>
-8: #include <BLESecurity.h>
-```
-
 ### LOW
-
-#### BUG-003 — `sprintf()` for MAC formatting in `mm_blekb`
-
-- **File:** `mm_blekb.cpp:30`
-- **Category:** BUG
-- **First seen:** 2026-05-03
-
-The buffer is exact-fit (`char[18]` for `"XX:XX:XX:XX:XX:XX"`), so it does not actually overflow today. But `sprintf` should not exist in modern firmware — every audit / static analyzer flags it, and the cost of switching is one character.
-
-**Recommendation:** `snprintf(bda_str, sizeof(bda_str), ...)`.
-
-```cpp
-29: char bda_str[18];
-30: sprintf(bda_str, "%02X:%02X:%02X:%02X:%02X:%02X", ...);
-```
-
-#### LOGIC-001 — Comma instead of semicolon ends `g_mqttWasConnected = true`
-
-- **File:** `minimessenger.ino:790`
-- **Category:** LOGIC
-- **First seen:** 2026-05-03
-
-`g_mqttWasConnected = true,` followed on the next line by `g_mqttConnectionId++;` parses as a comma-expression statement: the assignment IS executed (the comma evaluates the LHS for side effects), so the code happens to behave correctly. But this is a typo — one accidental edit on the next line and the assignment vanishes. Static analyzers will flag this every time.
-
-**Recommendation:** change the trailing `,` to `;`.
-
-```cpp
-790:     g_mqttWasConnected = true,
-791:     g_mqttConnectionId++;
-```
 
 #### LOGIC-002 — `redrawAllConversations` iterates all 40 slots instead of `lineCount`
 
@@ -330,22 +244,6 @@ Pinned at 2.8 in CLAUDE.md; widely-known limitations (16-bit packet length, no Q
 77: #include <PubSubClient.h>
 ```
 
-#### OBS-003 — `NTPClient` library duplicates ESP32's built-in `configTime()` SNTP
-
-- **File:** `minimessenger.ino:91-92,340`
-- **Category:** OBS
-- **First seen:** 2026-05-03
-
-ESP32 core ships full SNTP via `configTime(offset, dst, server)` plus `time()` / `localtime()`. Removing `NTPClient` saves a couple of KB of flash and a `WiFiUDP` instance.
-
-**Recommendation:** on ESP32 only, replace with `configTime(NTP_UTC_OFFSET_S, 0, "europe.pool.ntp.org")` and read `time(nullptr)` for the epoch. Keep `NTPClient` on the ESP8266 branch where the ergonomics are uglier.
-
-```cpp
-91: // Install from library manager: "NTPClient" (3.2.1)
-92: #include <NTPClient.h>
-340: NTPClient g_timeClient(ntpUDP, "europe.pool.ntp.org", NTP_UTC_OFFSET_S, NTP_UPDATE_INTERVAL_MS);
-```
-
 #### DUP-001 — `if (g_displayType == DisplayType::ST7789) { ... } else { hlogn("DISPLAY_TYPE_NOT_CONFIGURED"); }` repeated in 6+ functions
 
 - **File:** `minimessenger.ino:897-911,915-933,1087-1098,1101-1109,1117-1124,1130-1216`
@@ -378,6 +276,119 @@ Displayed on the TFT after MQTT connect succeeds. The space before `!` is the Fr
 
 ```cpp
 1350: addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+```
+
+## Fixed
+
+These issues were flagged by a prior audit run and have since been addressed
+by code changes. IDs are retired and never reused. The original body of each
+entry is kept here verbatim for traceability — line numbers refer to the code
+at the time the issue was flagged, not to the current tree.
+
+#### BUG-001 — _(no body retained; fixed before the 2026-05-03 audit run)_
+
+#### BUG-002 — _(no body retained; fixed before the 2026-05-03 audit run)_
+
+#### BUG-003 — `sprintf()` for MAC formatting in `mm_blekb`
+
+- **File:** `mm_blekb.cpp:30`
+- **Category:** BUG
+- **First seen:** 2026-05-03
+
+The buffer is exact-fit (`char[18]` for `"XX:XX:XX:XX:XX:XX"`), so it does not actually overflow today. But `sprintf` should not exist in modern firmware — every audit / static analyzer flags it, and the cost of switching is one character.
+
+**Recommendation:** `snprintf(bda_str, sizeof(bda_str), ...)`.
+
+```cpp
+29: char bda_str[18];
+30: sprintf(bda_str, "%02X:%02X:%02X:%02X:%02X:%02X", ...);
+```
+
+#### LOGIC-001 — Comma instead of semicolon ends `g_mqttWasConnected = true`
+
+- **File:** `minimessenger.ino:790`
+- **Category:** LOGIC
+- **First seen:** 2026-05-03
+
+`g_mqttWasConnected = true,` followed on the next line by `g_mqttConnectionId++;` parses as a comma-expression statement: the assignment IS executed (the comma evaluates the LHS for side effects), so the code happens to behave correctly. But this is a typo — one accidental edit on the next line and the assignment vanishes. Static analyzers will flag this every time.
+
+**Recommendation:** change the trailing `,` to `;`.
+
+```cpp
+790:     g_mqttWasConnected = true,
+791:     g_mqttConnectionId++;
+```
+
+#### PERF-001 — Unconditional `delay(500)` at end of `loop()` starves BLE / keystroke handling
+
+- **File:** `minimessenger.ino:1419`
+- **Category:** PERF
+- **First seen:** 2026-05-03
+
+Every loop iteration ends with a 500 ms blocking delay. `mm_blekb.tryToMaintainConnection()`, the LED state machine tick, and any incoming-keystroke processing all run at most twice per second. CLAUDE.md explicitly notes that `loop()` must not block longer than "a couple of seconds" or BLE reconnection stalls — 500 ms is the same order of magnitude and clearly already hurts perceived responsiveness when typing.
+
+**Recommendation:** remove the `delay(500)`. If a small yield is needed, replace with `delay(1)` (which calls `yield()` on ESP) and gate other actions on `millis()` deltas as the rest of the codebase already does.
+
+```cpp
+1419:   delay(500);
+1420: }
+```
+
+#### PERF-002 — Blocking `delay(MQTT_CONNECT_RETRY_INTERVAL)` in MQTT reconnect failure path
+
+- **File:** `minimessenger.ino:1352`
+- **Category:** PERF
+- **First seen:** 2026-05-03
+
+When `mqttReconnect()` fails, the code blocks the entire loop for `MQTT_CONNECT_RETRY_INTERVAL` (5 s). During that window, BLE reconnection, keystroke handling, NTP, and the LED tick are all frozen. The retry-interval gate at line 1344 (`currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL`) is already designed to be a non-blocking back-off — the `delay()` is redundant **and** harmful.
+
+**Recommendation:** remove the `delay(MQTT_CONNECT_RETRY_INTERVAL)` and ensure `g_mqttLastReconnectTryTimestampMs = currentMillis;` is set in the failure branch so the existing time-gate handles the back-off.
+
+```cpp
+1346:   if (mqttReconnect()) {
+1347:     showUpdatedInfoScreen(true);
+1348:     delay(1000);
+1349:     cleanScreen();
+1350:     addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+1351:   } else {
+1352:     delay(MQTT_CONNECT_RETRY_INTERVAL);
+1353:   }
+```
+
+#### OBS-001 — Bluedroid BLE stack is the legacy stack on ESP32; NimBLE-Arduino is recommended
+
+- **File:** `mm_blekb.h:1-10`, `mm_blekb.cpp` (full file)
+- **Category:** OBS
+- **First seen:** 2026-05-03
+
+The sketch uses the legacy `BLEDevice` / `BLEScan` / `BLESecurity` API from the in-tree ESP32 BLE Arduino library (Bluedroid). Espressif now recommends NimBLE-Arduino: ~50 % less RAM and flash, more responsive scanning, and an API that is more stable across core versions (the recent `setEncryptionLevel` removal and `BLEAdvertisedDeviceCallbacks → BLEScanCallbacks` rename in core 3.x are exactly the kind of churn NimBLE avoids). Memory pressure from `String` use in the display path (MEM-001) makes any RAM win valuable.
+
+**Recommendation:** install `NimBLE-Arduino`, port `mm_blekb.cpp` to its API (drop-in for most call-sites; security callbacks differ). Treat it as a one-evening migration, then re-baseline binary size.
+
+```cpp
+1: #include "BLEDevice.h"
+3: #include <BLEDevice.h>
+4: #include <BLEUtils.h>
+5: #include <BLEClient.h>
+6: #include <BLEAddress.h>
+7: #include <BLEScan.h>
+8: #include <BLESecurity.h>
+```
+
+#### OBS-003 — `NTPClient` library duplicates ESP32's built-in `configTime()` SNTP
+
+- **File:** `minimessenger.ino:91-92,340`
+- **Category:** OBS
+- **First seen:** 2026-05-03
+
+ESP32 core ships full SNTP via `configTime(offset, dst, server)` plus `time()` / `localtime()`. Removing `NTPClient` saves a couple of KB of flash and a `WiFiUDP` instance.
+
+**Recommendation:** on ESP32 only, replace with `configTime(NTP_UTC_OFFSET_S, 0, "europe.pool.ntp.org")` and read `time(nullptr)` for the epoch. Keep `NTPClient` on the ESP8266 branch where the ergonomics are uglier.
+
+```cpp
+91: // Install from library manager: "NTPClient" (3.2.1)
+92: #include <NTPClient.h>
+340: NTPClient g_timeClient(ntpUDP, "europe.pool.ntp.org", NTP_UTC_OFFSET_S, NTP_UPDATE_INTERVAL_MS);
 ```
 
 ## Won't fix
