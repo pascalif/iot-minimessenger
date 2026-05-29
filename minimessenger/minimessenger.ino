@@ -4,7 +4,8 @@ ESP32 Whatsapp
 avec le freebroker HiveMQ + BT keyboard +
 
 Old
-Tools > Boards :           Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
+Tools > Boards :           D1Mini : Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
+                           ESP32 : ESP32 Dev Module
 Tools > Partition Scheme : For ESP32, try the "Huge App" partition (1.9MB app space, 320KB SPIFFS).
 
 Faire le tri des boards :
@@ -14,7 +15,6 @@ Faire le tri des boards :
   - "LOLIN D32 Pro" — ESP32 with PSRAM + SD slot
   - "LOLIN S2 Mini" — ESP32-S2 (mini form factor, often confused with the D1 mini)
   - "LOLIN S3 Mini" / "LOLIN C3 Mini" — ESP32-S3 / -C3
-
 
 
 2026-05
@@ -86,10 +86,10 @@ Friend present
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>  // 320x240
 
-// To get current date & time for timestamping messages
-#include <WiFiUdp.h>
-// Install from library manager: "NTPClient" (3.2.1)
-#include <NTPClient.h>
+// To get current date & time for timestamping messages.
+// configTime() sets the ESP system clock via SNTP; required for TLS cert
+// validity checks against the HiveMQ broker.
+#include <time.h>
 
 #include <Fonts/FreeSans9pt7b.h>  // Police avec accents 9x7 au lieu de 7x5
 
@@ -138,7 +138,6 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 
 
 #define NTP_UTC_OFFSET_S 7200  // UTC+2
-#define NTP_UPDATE_INTERVAL_MS 60000
 
 // Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
 const char* root_ca =
@@ -336,10 +335,6 @@ static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
                                                          B00000000, B00110000 };
 
 
-// NTP
-WiFiUDP ntpUDP;
-NTPClient g_timeClient(ntpUDP, "europe.pool.ntp.org", NTP_UTC_OFFSET_S, NTP_UPDATE_INTERVAL_MS);
-
 // format "YYYY-MM-DD HH:MM:SS"
 char g_ts[20];
 
@@ -479,39 +474,46 @@ char* trim(char* str) {
 // ================================================================================
 // Time
 // ================================================================================
-void ntpConfigure() {
-  hlogn("Init NTP...");
-  g_timeClient.begin();
+void setupNTP() {
+  hlog("Init NTP...");
+  configTime(NTP_UTC_OFFSET_S, 0, "europe.pool.ntp.org", "pool.ntp.org");
+
+  // Block until SNTP returns a plausible epoch (after 2023-11) so the first
+  // TLS handshake doesn't run with a 1970 clock and reject the broker cert.
+  time_t now = 0;
+  int tries = 0;
+  while ((now = time(nullptr)) < 1700000000 && tries++ < 30) {
+    delay(500);
+    log(".");
+  }
+  logn(" NTP synced, epoch=", (long)now);
 }
 
 char* getCurrentDateTime() {
-  g_timeClient.update();
-  time_t epochTime = g_timeClient.getEpochTime();
-
-  struct tm* timeInfo = localtime(&epochTime);
+  time_t epochTime = time(nullptr);
+  struct tm timeInfo;
+  localtime_r(&epochTime, &timeInfo);
 
   snprintf(g_ts, sizeof(g_ts), "%04d-%02d-%02d|%02d:%02d:%02d",
-           timeInfo->tm_year + 1900,
-           timeInfo->tm_mon + 1,
-           timeInfo->tm_mday,
-           timeInfo->tm_hour,
-           timeInfo->tm_min,
-           timeInfo->tm_sec);
+           timeInfo.tm_year + 1900,
+           timeInfo.tm_mon + 1,
+           timeInfo.tm_mday,
+           timeInfo.tm_hour,
+           timeInfo.tm_min,
+           timeInfo.tm_sec);
 
   return g_ts;
 }
 
 char* getCurrentTime() {
-  g_timeClient.update();
-
-  time_t epochTime = g_timeClient.getEpochTime();
-
-  struct tm* timeInfo = localtime(&epochTime);
+  time_t epochTime = time(nullptr);
+  struct tm timeInfo;
+  localtime_r(&epochTime, &timeInfo);
 
   snprintf(g_ts, sizeof(g_ts), "%02d:%02d:%02d",
-           timeInfo->tm_hour,
-           timeInfo->tm_min,
-           timeInfo->tm_sec);
+           timeInfo.tm_hour,
+           timeInfo.tm_min,
+           timeInfo.tm_sec);
 
   return g_ts;
 }
@@ -724,12 +726,12 @@ void setupWifi() {
   }
   logn(" Connected. IP=", WiFi.localIP().toString());
 
-  ntpConfigure();  // For ESP32 boards, this call must be done after the Wifi is connected (was not important on D1mini though)
+  setupNTP();  // For ESP32 boards, this call must be done after the Wifi is connected (was not important on D1mini though)
 
 
   // TODO mettre un define
   // TODO tester sans
-  if (false) {
+  if (true) {
     g_wifiClient.setInsecure();  // Use this if you don't have a certificate
   } else {
     // For HiveMQ TLS
@@ -750,7 +752,7 @@ boolean setupKeyboard() {
 
   return g_kb.setup(
     "Bluetooth Keyboard",
-    false,
+    true, //false,
     onBluetoothKeyboardConnectionCallback,
     onBluetoothKeyboardNotifyCallback);
 }
@@ -774,12 +776,17 @@ boolean setupKeyboard() {
 // Return true is reconnection is successfull
 bool mqttReconnect() {
   hlog("MQTT: Attempting connection...");
+  hlogn(" heap free=", ESP.getFreeHeap(), " largest block=", ESP.getMaxAllocHeap());
 
-  if (g_mqttClient.connect(
+  unsigned long t0 = millis();
+  bool connected = g_mqttClient.connect(
         g_deviceName,
         mqtt_user, mqtt_password,
         g_mqttOutgoingTopicWill, MQTT_QOS_0, MQTT_MSG_NOT_RETAINED, g_deviceIdChars,
-        MQTT_SESSION_VOLATILE)) {
+        MQTT_SESSION_VOLATILE);
+  hlogn("MQTT: connect() returned ", connected, " after ", (millis() - t0), "ms, rc=", g_mqttClient.state());
+
+  if (connected) {
     logn("mqtt connected");
     hlogn("MQTT: MQTT_MAX_PACKET_SIZE=", MQTT_MAX_PACKET_SIZE);
 
@@ -799,7 +806,7 @@ bool mqttReconnect() {
 
     return true;
   } else {
-    logn("failed, rc=", g_mqttClient.state(), " trying again in ", MQTT_CONNECT_RETRY_INTERVAL, "s for device ", g_deviceName);
+    logn("failed, rc=", g_mqttClient.state(), " trying again in ", MQTT_CONNECT_RETRY_INTERVAL, "ms for device ", g_deviceName);
     // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
     // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
     return false;
@@ -1279,7 +1286,11 @@ void setupTests() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  delay(1000);
   Serial.println("setup()");
+
+  Serial.println("=== minimessenger build " __DATE__ " " __TIME__ " ===");
+
 
 
   // Initialise le générateur de nombres aléatoires

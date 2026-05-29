@@ -22,8 +22,7 @@ There is no Makefile, PlatformIO config, CI, or test harness. Build and flash vi
 Required libraries (Library Manager, exact versions known to work in comments):
 - PubSubClient 2.8
 - Adafruit ST7735 and ST7789 1.11.0 (pulls in Adafruit_GFX)
-- NTPClient 3.2.1
-- BLE / WiFi / WiFiClientSecure / SPI / Wire ship with the ESP32 / ESP8266 board packages.
+- BLE / WiFi / WiFiClientSecure / SPI / Wire ship with the ESP32 / ESP8266 board packages. Time comes from the core's `configTime()` SNTP (no third-party NTP lib).
 
 ## Per-device identity
 

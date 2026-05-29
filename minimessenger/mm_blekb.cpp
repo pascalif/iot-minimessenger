@@ -10,61 +10,37 @@ bool MiniMessengerBLEKeyboardInterface::isFullyConnected() {
 }
 
 void MiniMessengerBLEKeyboardInterface::clearAllExistingBonds() {
-  int dev_num = esp_ble_get_bond_device_num();
-  if (dev_num == 0) {
-    Serial.println("No bonded devices to clear.");
-    return;
-  }
-
-  esp_ble_bond_dev_t* dev_list = (esp_ble_bond_dev_t*)malloc(sizeof(esp_ble_bond_dev_t) * dev_num);
-  if (!dev_list) {
-    Serial.println("Failed to allocate memory for bond list.");
-    return;
-  }
-
-  esp_ble_get_bond_device_list(&dev_num, dev_list);
-
-  for (int i = 0; i < dev_num; i++) {
-    esp_ble_remove_bond_device(dev_list[i].bd_addr);
-    char bda_str[18];
-    snprintf(bda_str, sizeof(bda_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-             dev_list[i].bd_addr[0], dev_list[i].bd_addr[1], dev_list[i].bd_addr[2],
-             dev_list[i].bd_addr[3], dev_list[i].bd_addr[4], dev_list[i].bd_addr[5]);
-    Serial.print("Removed bonded device: ");
-    Serial.println(bda_str);
-  }
-
-  free(dev_list);
+  NimBLEDevice::deleteAllBonds();
   Serial.println("BTKB: 🧹 All bonds cleared.");
 }
 
-bool MiniMessengerBLEKeyboardInterface::connectToServer(BLEAddress pAddress) {
-  BLEClient* pClient = BLEDevice::createClient();
+bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& address) {
+  NimBLEClient* pClient = NimBLEDevice::createClient();
   Serial.println("BTKB: Connecting to server...");
 
-  pClient->setClientCallbacks(this);
+  pClient->setClientCallbacks(this, false);  // false = do NOT delete `this` when client is destroyed
 
-  if (!pClient->connect(pAddress)) {
+  if (!pClient->connect(address)) {
     Serial.println("BTKB: Connection failed!");
     return false;
   }
 
   Serial.println("BTKB: Connected");
 
-  BLERemoteService* pRemoteService = pClient->getService(BLEUUID((uint16_t)0x1812));
+  NimBLERemoteService* pRemoteService = pClient->getService(NimBLEUUID((uint16_t)0x1812));
   if (pRemoteService == nullptr) {
     Serial.println("BTKB: HID service 0x1812 not found!");
     return false;
   }
 
-  pRemoteCharacteristic = pRemoteService->getCharacteristic(BLEUUID((uint16_t)0x2A4D));  // HID Report
+  pRemoteCharacteristic = pRemoteService->getCharacteristic(NimBLEUUID((uint16_t)0x2A4D));  // HID Report
   if (pRemoteCharacteristic == nullptr) {
     Serial.println("BTKB: HID Report characteristic 0x2A4D not found!");
     return false;
   }
 
   if (pRemoteCharacteristic->canNotify()) {
-    pRemoteCharacteristic->registerForNotify(this->bleNotifyCallback);
+    pRemoteCharacteristic->subscribe(true, MiniMessengerBLEKeyboardInterface::bleNotifyCallback);
     Serial.println("BTKB: Keystrokes callback registered");
   } else {
     Serial.println("BTKB: Keystrokes callback not registered");
@@ -78,78 +54,80 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(BLEAddress pAddress) {
 }
 
 // ============================================================================
-// Scan callbacks
-//class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+// Scan callbacks (NimBLEScanCallbacks)
 // ============================================================================
 
-void MiniMessengerBLEKeyboardInterface::onResult(BLEAdvertisedDevice advertisedDevice) {
-  if (advertisedDevice.haveName() && advertisedDevice.getName() == m_expectedKeyboardBluetoothName) {
-    Serial.print("BTKB: BLEAdvertisedDeviceCallbacks::onResult() - ✅ Found target keyboard [");
-    Serial.print(advertisedDevice.toString().c_str());
+void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
+  if (advertisedDevice->haveName()
+      && String(advertisedDevice->getName().c_str()) == m_expectedKeyboardBluetoothName) {
+    Serial.print("BTKB: NimBLEScanCallbacks::onResult() - ✅ Found target keyboard [");
+    Serial.print(advertisedDevice->toString().c_str());
     Serial.println(']');
 
-    advertisedDevice.getScan()->stop();
-    pServerAddress = new BLEAddress(advertisedDevice.getAddress());
+    NimBLEDevice::getScan()->stop();
+    pServerAddress = new NimBLEAddress(advertisedDevice->getAddress());
 
     doConnect = true;
     doScan = false;
   }
 }
-//};
+
+void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanResults, int reason) {
+  // NimBLE scans are asynchronous: the start() call returns immediately and
+  // this fires when the scan window elapses. Re-arm doScan so the next
+  // tryToMaintainConnection() iteration kicks off a new round.
+  Serial.printf("BTKB: onScanEnd() reason=%d, %d devices seen — will rescan\n",
+                reason, scanResults.getCount());
+  if (!m_connectionDone) {
+    doScan = true;
+  }
+}
 
 
 // ============================================================================
-// Security callbacks (PIN / bonding) from BLESecurityCallbacks
-//
-// None of the 4 following methods will be called because we don't request this kind of security
+// Security callbacks (merged into NimBLEClientCallbacks).
+// None of these will be called: we use IO_NO_INPUT_OUTPUT → "Just Works" pairing.
 // ============================================================================
-uint32_t MiniMessengerBLEKeyboardInterface::onPassKeyRequest() {
-  Serial.printf("BTKB: BLESecurityCallbacks::onPassKeyRequest() not implemented...");
-  return 123456;
-}
-void MiniMessengerBLEKeyboardInterface::onPassKeyNotify(uint32_t pass_key) {
-  Serial.printf("BTKB: BLESecurityCallbacks::onPassKeyNotify(), PassKey: %06u\n", pass_key);
-}
-bool MiniMessengerBLEKeyboardInterface::onSecurityRequest() {
-  Serial.printf("BTKB: BLESecurityCallbacks::onSecurityRequest() called");
-  return true;
-}
-bool MiniMessengerBLEKeyboardInterface::onConfirmPIN(uint32_t pin) {
-  Serial.printf("BTKB: BLESecurityCallbacks::onConfirmPIN() not implemented...");
-  return true;
+
+void MiniMessengerBLEKeyboardInterface::onPassKeyEntry(NimBLEConnInfo& connInfo) {
+  Serial.printf("BTKB: onPassKeyEntry() not implemented, injecting dummy passkey\n");
+  NimBLEDevice::injectPassKey(connInfo, 123456);
 }
 
-void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t auth_cmpl) {
-  if (auth_cmpl.success) {
-    Serial.println("BTKB: BLESecurityCallbacks::onAuthenticationComplete - Bonding success ✅ (saved in NVS).");
+void MiniMessengerBLEKeyboardInterface::onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) {
+  Serial.printf("BTKB: onConfirmPasskey() not implemented, accepting %06u\n", pin);
+  NimBLEDevice::injectConfirmPasskey(connInfo, true);
+}
+
+void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
+  if (connInfo.isEncrypted()) {
+    Serial.println("BTKB: Authentication complete - Bonding success ✅ (saved in NVS).");
   } else {
-    Serial.printf("BTKB: BLESecurityCallbacks::onAuthenticationComplete - Bonding failed ❌, reason: %d\n", auth_cmpl.fail_reason);
+    Serial.println("BTKB: Authentication failed ❌");
   }
 }
 
 // ============================================================================
-// Client callbacks from BLEClientCallbacks
+// Client callbacks (NimBLEClientCallbacks)
 // ============================================================================
 
-void MiniMessengerBLEKeyboardInterface::onConnect(BLEClient* pClient) {
-  Serial.println("BTKB: BLEClientCallbacks - Client connected.");
+void MiniMessengerBLEKeyboardInterface::onConnect(NimBLEClient* pClient) {
+  Serial.println("BTKB: Client connected.");
 }
 
-void MiniMessengerBLEKeyboardInterface::onDisconnect(BLEClient* pClient) {
-  Serial.println("BTKB: BLEClientCallbacks - ⚠️ Client disconnected. Restarting scan...");
+void MiniMessengerBLEKeyboardInterface::onDisconnect(NimBLEClient* pClient, int reason) {
+  Serial.printf("BTKB: ⚠️ Client disconnected (reason=%d). Restarting scan...\n", reason);
   m_connectionDone = false;
   m_clientOnConnectionCallback(m_connectionDone);
 
   doScan = true;
 }
 
-// ============================================================================
-
 
 // ============================================================================
 
 void MiniMessengerBLEKeyboardInterface::bleNotifyCallback(
-  BLERemoteCharacteristic* pChar,
+  NimBLERemoteCharacteristic* pChar,
   uint8_t* pData,
   size_t length,
   bool isNotify) {
@@ -164,29 +142,27 @@ bool MiniMessengerBLEKeyboardInterface::setup(
   mm_btkb_on_keystroke_callback onKeystrokeCallback) {
   Serial.println("MiniMessengerBLEKeyboardInterface::setup()...");
 
-  BLEDevice::init("");
-  BLEDevice::setSecurityCallbacks(this);
-  // Vu dans chatgpt, utile un jour ?
-  //BLEDevice::setSecurityAuth(true, true, true);
-  //BLEDevice::setSecurityPasskey(0);
+  NimBLEDevice::init("");
+
+  // Bonding=true, MITM=false, Secure Connections=false.
+  // IO_NO_INPUT_OUTPUT → "Just Works" pairing (no PIN exchange).
+  NimBLEDevice::setSecurityAuth(true, false, false);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 
   // Clear bonding info if you want fresh pairing
   if (clearExistingBonds) clearAllExistingBonds();
 
-  BLESecurity* pSecurity = new BLESecurity();
-  pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
-  pSecurity->setCapability(ESP_IO_CAP_NONE);
-  pSecurity->setKeySize(16);
-  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-
   Serial.printf("BLKB: Starting scan for keyboard named [%s]\n...", keyboardBluetoothName.c_str());
   this->m_expectedKeyboardBluetoothName = keyboardBluetoothName;
 
-  BLEScan* pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(this);
+  NimBLEScan* pBLEScan = NimBLEDevice::getScan();
+  pBLEScan->setScanCallbacks(this, false);
   pBLEScan->setActiveScan(true);
-  pBLEScan->start(m_scanningDurationSec);
-  doScan = true;
+  // NimBLE-Arduino 2.x: scan duration is in MILLISECONDS (1.x was in seconds)
+  pBLEScan->start(m_scanningDurationSec * 1000);
+  // Scan already running; onScanEnd() will re-arm doScan if it ends without
+  // finding the keyboard.
+  doScan = false;
 
   m_clientOnConnectionCallback = onConnectionCallback;
   g_clientOnKeystrokeCallback = onKeystrokeCallback;
@@ -209,7 +185,11 @@ void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
 
   if (doScan) {
     Serial.println("BLKB: Rescanning...");
-    BLEDevice::getScan()->start(m_scanningDurationSec, false);  // relaunch scan
+    NimBLEDevice::getScan()->start(m_scanningDurationSec * 1000, false);
+    // NimBLE scan is async — flag it as "in flight" so we don't restart it
+    // every loop iteration. onScanEnd() will re-arm doScan when the window
+    // elapses without finding the keyboard.
+    doScan = false;
   }
 
   // delay should not be done here to not affect in main loop

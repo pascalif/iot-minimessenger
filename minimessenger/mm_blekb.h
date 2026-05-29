@@ -1,41 +1,35 @@
-#include "BLEDevice.h"
-
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEClient.h>
-#include <BLEAddress.h>
-#include <BLEScan.h>
-#include <BLESecurity.h>
+// Library Nimble-Arduino 2.5.0
+#include <Arduino.h>
+#include <NimBLEDevice.h>
 
 
 typedef std::function<void(boolean isFullyConnected)> mm_btkb_on_connection_callback;
 
-// Original notify_callback is defined in
-// ~/.arduino15/packages/esp32/hardware/esp32/3.2.0/libraries/BLE/src/BLERemoteCharacteristic.h
-// as:
-// typedef std::function<void(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify)> notify_callback;
-// Here is a simplified version:
+// Original notify_callback is defined in NimBLE-Arduino as:
+// typedef std::function<void(NimBLERemoteCharacteristic*, uint8_t*, size_t, bool)> notify_callback;
+// Here is a simplified version exposed to the upper layer:
 typedef std::function<void(uint8_t* pData, size_t length)> mm_btkb_on_keystroke_callback;
 
 
 /**
  * Class for handling bluetooth connection with a BLE keyboard
- * (detection, connection+bonding, reconnection, transmitting keystrokes to upper layer
+ * (detection, connection+bonding, reconnection, transmitting keystrokes to upper layer)
+ *
+ * NimBLE-Arduino merges the security callbacks (passkey, auth complete) into
+ * NimBLEClientCallbacks, so we only need to inherit two callback bases instead
+ * of the three required by Bluedroid.
  */
 class MiniMessengerBLEKeyboardInterface
-  : public BLEAdvertisedDeviceCallbacks,
-    public BLESecurityCallbacks,
-    public BLEClientCallbacks {
+  : public NimBLEScanCallbacks,
+    public NimBLEClientCallbacks {
 
 public:
-  // Configure stuff and start scanning for keyboards.
   bool setup(
     String keyboardBluetoothName,
     bool clearExistingBonds,
     mm_btkb_on_connection_callback onConnectionCallback,
     mm_btkb_on_keystroke_callback onKeystrokeCallback);
 
-  // Equivalent of a loop() function
   void tryToMaintainConnection();
 
   bool isFullyConnected();
@@ -45,31 +39,28 @@ protected:
   uint8_t m_scanningDurationSec = 30;
 
   void clearAllExistingBonds();
-  bool connectToServer(BLEAddress pAddress);
+  bool connectToServer(const NimBLEAddress& address);
 
-  // BLEAdvertisedDeviceCallbacks
-  virtual void onResult(BLEAdvertisedDevice advertisedDevice) override;
+  // NimBLEScanCallbacks
+  void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override;
+  void onScanEnd(const NimBLEScanResults& scanResults, int reason) override;
 
-  // BLESecurityCallbacks
-  virtual uint32_t onPassKeyRequest() override;
-  virtual void onPassKeyNotify(uint32_t pass_key) override;
-  virtual bool onSecurityRequest() override;
-  virtual bool onConfirmPIN(uint32_t pin) override;
-  virtual void onAuthenticationComplete(esp_ble_auth_cmpl_t auth_cmpl) override;
-
-  // BLEClientCallbacks
-  virtual void onConnect(BLEClient* pClient) override;
-  virtual void onDisconnect(BLEClient* pClient) override;
+  // NimBLEClientCallbacks (connect + security callbacks merged)
+  void onConnect(NimBLEClient* pClient) override;
+  void onDisconnect(NimBLEClient* pClient, int reason) override;
+  void onPassKeyEntry(NimBLEConnInfo& connInfo) override;
+  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override;
+  void onAuthenticationComplete(NimBLEConnInfo& connInfo) override;
 
 private:
-  BLEAddress* pServerAddress = nullptr;
-  BLERemoteCharacteristic* pRemoteCharacteristic = nullptr;
+  NimBLEAddress* pServerAddress = nullptr;
+  NimBLERemoteCharacteristic* pRemoteCharacteristic = nullptr;
   boolean m_connectionDone = false;
   boolean doConnect = false;
   boolean doScan = true;
 
   static void bleNotifyCallback(
-    BLERemoteCharacteristic* pChar,
+    NimBLERemoteCharacteristic* pChar,
     uint8_t* pData,
     size_t length,
     bool isNotify);
