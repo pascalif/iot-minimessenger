@@ -4,6 +4,7 @@ ESP32 Whatsapp
 avec le freebroker HiveMQ + BT keyboard +
 
 Screen layout (portrait, 240×320, see docs/howto_hardware_scrolling.md):
+VSCRDEF = Vertical Scroll Definition =  TFA (Top Fixed Area) + VSA (Vertical Scroll Area) + (BFA Bottom Fixed Area)
 
   +---------------------------------------------+   ← y=0
   |  ● ● ●                                ●     |   STATUS_BAR (25 px, VSCRDEF TFA)
@@ -19,32 +20,21 @@ Screen layout (portrait, 240×320, see docs/howto_hardware_scrolling.md):
   |                                             |
   |                                             |
   |                                             |
-  +---------------------------------------------+   ← y=296
-  |  ┌─────────────────────────────────────┐ |  |   FOOTER (24 px, VSCRDEF BFA)
-  |  │ typed_msg_buffer_here_              │ │  |   White frame + yellow cursor;
-  |  └─────────────────────────────────────┘ |  |   reflects g_currentMsg live
-  +---------------------------------------------+   ← y=320
-
-Old
-Tools > Boards :           D1Mini : Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
-                           ESP32 : ESP32 Dev Module
-Tools > Partition Scheme : For ESP32, try the "Huge App" partition (1.9MB app space, 320KB SPIFFS).
-
-Faire le tri des boards :
-  Wemos/Lolin do sell ESP32-based boards in similar form factors, but they ship under different names and live under the ESP32 boards
-  package (Espressif Systems):
-  - "LOLIN D32" — ESP32 (classic)
-  - "LOLIN D32 Pro" — ESP32 with PSRAM + SD slot
-  - "LOLIN S2 Mini" — ESP32-S2 (mini form factor, often confused with the D1 mini)
-  - "LOLIN S3 Mini" / "LOLIN C3 Mini" — ESP32-S3 / -C3
+  |                                             |         FOOTER (19 px, VSCRDEF BFA)
+  |                                             |   ← y=301 (1 px black, aerates against scroll area)
+  |---------------------------------------------|   ← y=302 (light gray hairline)
+  |                                             |   ← y=303 (1 px black margin)
+  +   typed_msg_buffer_here_         |          +   ← y=304..319 (size-2 text = 16 pixels ; yellow cursor bar)
 
 
-2026-05
+
 
 ArduinoIDE :               2.3.8_Linux_64bit.AppImage
 Tools > Boards  :          ESP32 >> ESP32 Dev Module,
                            /dev/ttyUSB0, Baud 115200
 Tools > Partition Scheme : "Huge APP (3MB No OTA / 1MB SPIFFS)"
+Tools > Core Debug Level : "Verbose"  (avant de flasher)
+
 COMPILE: OK
 LINK   : OK
 UPLOAD : OK
@@ -59,7 +49,6 @@ TODO
 - couleur et affichage du pseudo remote (pour chan room multi )
 - gerer un delta de temps contre le réaffichage du timestamp
 - utiliser WiFiManager (cf mistral) pour configurer le wifi - https://github.com/tzapu/WiFiManager, sinon déplacer la connection dans loop
-- commandes pour shutdown la nuit
 
 - taille program:
   Remove Debug Code: Strip out all Serial.print() and debug code for production.
@@ -131,6 +120,10 @@ Friend present
 
 // Our misc enums
 #include "symbols.h"
+
+// ESP_LOG* facade + tag definitions (shared with mm_blekb.cpp). Per-tag
+// severity is set by setupLogging() in setup().
+#include "mm_log.h"
 
 
 // ================================================================================
@@ -216,10 +209,10 @@ const char* root_ca =
 // Period between retring connection to MQTT broker
 #define MQTT_CONNECT_RETRY_INTERVAL 5000
 
-// Burn-in protection: time without local input (BT keystroke / serial) and
+// "Screen saver" Burn-in protection: time without local input (BT keystroke / serial) and
 // without a remote message before the screen dims, then fully turns off.
-#define DISPLAY_IDLE_BEFORE_DIM_MS  300000UL   // 5 min  -> dim to 50%
-#define DISPLAY_IDLE_BEFORE_OFF_MS  360000UL   // 5 + 1 min -> panel off
+#define DISPLAY_IDLE_BEFORE_DIM_MS  60000UL   // 5 min  -> dim to 50%
+#define DISPLAY_IDLE_BEFORE_OFF_MS  800000UL   // 5 + 1 min -> panel off
 
 
 // MAC found by sketchbook/esp32_scan_bt_classic_and_ble/ project
@@ -316,9 +309,9 @@ uint16_t g_nextTextTopY = 0;
 // framebuffer coordinates, irrespective of setRotation().
 //
 // We partition the 320 framebuffer lines into three regions:
-//   [0, 24)             Top Fixed Area     → status bar (indicators)
-//   [24, 296)           Vertical Scroll    → conversation messages
-//   [296, 320)          Bottom Fixed Area  → input feedback footer
+//   [0, 25)             Top Fixed Area     → status bar (indicators)
+//   [25, 301)           Vertical Scroll    → conversation messages
+//   [301, 320)          Bottom Fixed Area  → input feedback footer
 // The Top/Bottom Fixed areas are not affected by VSCSAD — we draw to them
 // directly with normal GFX calls.
 #define FB_WIDTH         240
@@ -326,10 +319,13 @@ uint16_t g_nextTextTopY = 0;
 // STATUS_BAR_H = 24 (icons + separator hairline) + 1 (black gap to aerate
 // before the scroll area). The separator is drawn at line STATUS_BAR_H - 2.
 #define STATUS_BAR_H     25
-#define FOOTER_H         24
-#define SCROLL_AREA_H    (FB_HEIGHT - STATUS_BAR_H - FOOTER_H)  // 271
+// FOOTER_H = 1 (top aération) + 1 (white hairline) + 1 (margin) + 16 (size-2
+// text) + 0 (text flush with screen bottom). See the diagram at the top of
+// this file for the row-by-row breakdown.
+#define FOOTER_H         19
+#define SCROLL_AREA_H    (FB_HEIGHT - STATUS_BAR_H - FOOTER_H)  // 276
 #define SCROLL_AREA_Y_FB STATUS_BAR_H                            // 25
-#define FOOTER_Y_FB      (FB_HEIGHT - FOOTER_H)                  // 296
+#define FOOTER_Y_FB      (FB_HEIGHT - FOOTER_H)                  // 301
 
 // g_scrollY: scroll OFFSET inside the scroll area, in [0, SCROLL_AREA_H).
 //            The absolute VSCSAD value sent to the controller is
@@ -344,12 +340,12 @@ uint16_t g_drawY   = 0;
 // Three small indicators on the left (WiFi white, BT blue, MQTT yellow) + one
 // chip on the right (contact, red). The radius is sized to fit comfortably in
 // the 24 px high bar with a few pixels of margin.
-#define ICON_RADIUS     7
+#define ICON_RADIUS     6
 #define ICON_Y_CENTER   (STATUS_BAR_H / 2)        // 12
 // Order from left to right: WiFi, BT, MQTT.
 #define ICON_WIFI_X     12
-#define ICON_BT_X       30
-#define ICON_MQTT_X     48
+#define ICON_BT_X       32
+#define ICON_MQTT_X     52
 #define ICON_CONTACT_X  (FB_WIDTH - 12)           // 228
 
 // Light-gray hairline drawn on the bottom row of the status bar to visually
@@ -379,7 +375,8 @@ bool g_inConversationMode = false;
 #include "display.h"
 
 
-const int MAX_LINES = 40;   // nombre max de lignes gardées en mémoire
+const int MAX_LINES = 3;   // nombre max de lignes gardées en mémoire
+
 // True ring buffer: no per-element shift, no copy on scroll. Logical index i
 // (0 = oldest visible line) maps to `lines[(g_lineHead + i) % MAX_LINES]`.
 // Adding a line: write at (g_lineHead + g_lineCount) % MAX_LINES, ++g_lineCount.
@@ -490,6 +487,12 @@ unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 bool kbIsCapsLockOn = false;
 String g_currentMsg = "";
 
+// Insertion point inside g_currentMsg, range [0, g_currentMsg.length()].
+// When equal to length(), the cursor sits after the last character (default
+// state — equivalent to "append at end").
+// Mutated only via the currentMsgXxxCursor() helpers so the invariant is centrally enforced.
+size_t g_msgCursorIdx   = 0;
+
 
 // ================================================================================
 // H zzz
@@ -504,69 +507,13 @@ void redrawInputFooter();
 // ================================================================================
 // Logging
 // ================================================================================
+// All logging uses ESP-IDF's esp_log via mm_log.h. Per-tag severity is
+// configured in setup() through setupLogging().
 
-// Impression d'une seule valeur
-template<typename T>
-void p_single(const T& val) {
-  Serial.print(val);
-}
-
-// Impression de plusieurs valeurs
-template<typename T, typename... Args>
-void p_single(const T& first, const Args&... rest) {
-  Serial.print(first);
-  p_single(rest...);
-}
-
-template<typename... Args>
-void hlog(const Args&... args) {
-#ifdef WITH_LOGS
-  Serial.print(g_deviceName);
-  Serial.print(" - ");
-  p_single(args...);  // Imprime tous les arguments
-#endif WITH_LOGS
-}
-
-template<typename... Args>
-void hlogn(const Args&... args) {
-#ifdef WITH_LOGS
-  Serial.print(g_deviceName);
-  Serial.print(" - ");
-  p_single(args...);  // Imprime tous les arguments
-  Serial.println();
-#endif WITH_LOGS
-}
-
-template<typename... Args>
-void log(const Args&... args) {
-#ifdef WITH_LOGS
-  p_single(args...);  // Imprime tous les arguments
-#endif WITH_LOGS
-}
-
-template<typename... Args>
-void logn(const Args&... args) {
-#ifdef WITH_LOGS
-  p_single(args...);  // Imprime tous les arguments
-  Serial.println();
-#endif WITH_LOGS
-}
-
-
-void error(String msg) {
-#ifdef WITH_LOGS
-  Serial.print("ERROR: ");
-  Serial.println(msg);
-#endif
-}
-
-void assertTrue(boolean condition, String msg) {
-#ifdef WITH_LOGS
+void assertTrue(bool condition, String msg) {
   if (!condition) {
-    Serial.print("ERROR: ");
-    Serial.println(msg);
+    ESP_LOGE(TAG_MM, "ASSERT FAILED: %s", msg.c_str());
   }
-#endif
 }
 
 // ================================================================================
@@ -594,7 +541,7 @@ char* trim(char* str) {
 // Time
 // ================================================================================
 void setupNTP() {
-  hlog("Init NTP...");
+  ESP_LOGI(TAG_MM, "Init NTP...");
   configTime(NTP_UTC_OFFSET_S, 0, "europe.pool.ntp.org", "pool.ntp.org");
 
   // Block until SNTP returns a plausible epoch (after 2023-11) so the first
@@ -603,9 +550,8 @@ void setupNTP() {
   int tries = 0;
   while ((now = time(nullptr)) < 1700000000 && tries++ < 30) {
     delay(500);
-    log(".");
   }
-  logn(" NTP synced, epoch=", (long)now);
+  ESP_LOGI(TAG_MM, "NTP synced after %d tries, epoch=%ld", tries, (long)now);
 }
 
 char* getCurrentDateTime() {
@@ -661,90 +607,210 @@ char keymapUpper[128] = {
   // extend if needed
 };
 
-void decodeHIDReport(uint8_t* pData, size_t length) {
-  if (length < 8) return;  // HID report is usually 8 bytes
 
+// === Message buffer editing helpers ==========================================
+// All keystroke effects on g_currentMsg go through these helpers so that the
+// cursor invariant (0 <= g_msgCursorIdx <= length()) is enforced in one place
+// and decodeHIDReport() stays a flat dispatch table.
+// Each helper redraws the footer at the end so callers don't have to.
+
+void currentMsgClear() {
+  g_currentMsg = "";
+  g_msgCursorIdx  = 0;
+  redrawInputFooter();
+}
+
+void currentMsgInsertCharAtCursor(char c) {
+  g_currentMsg = g_currentMsg.substring(0, g_msgCursorIdx)
+               + c
+               + g_currentMsg.substring(g_msgCursorIdx);
+  g_msgCursorIdx++;
+  ESP_LOGD(TAG_BTKB, "Insert [%c] at %u → msg=[%s] cur=%u",
+           c, (unsigned) (g_msgCursorIdx - 1), g_currentMsg.c_str(), (unsigned) g_msgCursorIdx);
+  redrawInputFooter();
+}
+
+// Backspace: removes the character just left of the cursor (and the cursor
+// follows). No-op when at the beginning of the buffer. Uses String::remove()
+// to shrink in place — no reallocation, friendly to the reserved capacity.
+void currentMsgDeleteCharBeforeCursor() {
+  if (g_msgCursorIdx == 0) return;
+  g_currentMsg.remove(g_msgCursorIdx - 1, 1);
+  g_msgCursorIdx--;
+  ESP_LOGD(TAG_BTKB, "Backspace → msg=[%s] cur=%u",
+           g_currentMsg.c_str(), (unsigned) g_msgCursorIdx);
+  redrawInputFooter();
+}
+
+// Delete (Suppr): removes the character under the cursor. Cursor stays put.
+// No-op when at the end of the buffer (nothing to the right).
+void currentMsgDeleteCharAtCursor() {
+  if (g_msgCursorIdx >= g_currentMsg.length()) return;
+  g_currentMsg.remove(g_msgCursorIdx, 1);
+  ESP_LOGD(TAG_BTKB, "Delete → msg=[%s] cur=%u",
+           g_currentMsg.c_str(), (unsigned) g_msgCursorIdx);
+  redrawInputFooter();
+}
+
+void currentMsgMoveCursorLeft() {
+  if (g_msgCursorIdx == 0) {
+    ESP_LOGD(TAG_BTKB, "LEFT at cur=0 — no-op");
+    return;
+  }
+  g_msgCursorIdx--;
+  ESP_LOGD(TAG_BTKB, "LEFT → cur=%u", (unsigned) g_msgCursorIdx);
+  redrawInputFooter();
+}
+
+void currentMsgMoveCursorRight() {
+  if (g_msgCursorIdx >= g_currentMsg.length()) {
+    ESP_LOGD(TAG_BTKB, "RIGHT at cur=%u (end) — no-op", (unsigned) g_msgCursorIdx);
+    return;
+  }
+  g_msgCursorIdx++;
+  ESP_LOGD(TAG_BTKB, "RIGHT → cur=%u", (unsigned) g_msgCursorIdx);
+  redrawInputFooter();
+}
+
+
+void decodeHIDReport(uint8_t* pData, size_t length) {
+  if (length < 8) return;  // HID boot keyboard report is 8 bytes
+
+  // HID Boot Keyboard report layout:
+  //   pData[0]    = modifier bitmask (Shift/Ctrl/Alt/GUI, left+right)
+  //   pData[1]    = reserved (always 0)
+  //   pData[2..7] = up to 6 currently-held key codes (6KRO — 6-key rollover)
+  //
+  // IMPORTANT: a report describes the CURRENT STATE (which keys are held
+  // right now), not an event. The keyboard emits a new report on every
+  // state change — press OR release. Slots [2..7] are unordered and a given
+  // key can migrate between slots from one report to the next.
+  //
+  // To turn this state stream into discrete keypresses we keep the previous
+  // report's key set and only fire for keys that are NEWLY present. This
+  // fixes two real-world bugs:
+  //
+  //   1. Duplicates on dwell / HID auto-repeat
+  //      Holding a key past ~500 ms makes the keyboard re-emit the same
+  //      report periodically. Reading pData[2] naively appended the same
+  //      character on every notification. With press-edge diffing, the key
+  //      stays in s_prevKeys[] for the whole hold and triggers exactly once.
+  //
+  //   2. Lost keys on fast two-hand typing
+  //      When B is pressed before A is released, a single report carries
+  //      [A, B] together — and the old code (which only looked at pData[2])
+  //      never saw B. The diff loop below walks all 6 slots and catches
+  //      every newly-pressed one, even when several arrive in the same
+  //      notification.
+
+  static uint8_t s_prevKeys[6] = {0};
+  uint8_t curKeys[6] = { pData[2], pData[3], pData[4], pData[5], pData[6], pData[7] };
   uint8_t modifiers = pData[0];
-  uint8_t key1 = pData[2];  // First key pressed (others in pData[3..7])
 
   // Wake screen on any keystroke. If we were sleeping, discard this report:
-  // the user pressed a key to light the screen, not to type.
-  if (key1 != 0 && noteActivity()) {
+  // the user pressed a key to light the screen, not to type. We still commit
+  // curKeys into s_prevKeys so a key held across the wake-up boundary isn't
+  // mistakenly seen as "newly pressed" on the next report.
+  bool anyKeyHeld = false;
+  for (int i = 0; i < 6; i++) {
+    if (curKeys[i] != 0) { anyKeyHeld = true; break; }
+  }
+  if (anyKeyHeld && noteActivity()) {
+    memcpy(s_prevKeys, curKeys, 6);
     return;
   }
 
-  if (key1 != 0) {
+  bool usingSomeShift = (modifiers & 0x22);  // LeftShift(0x02) or RightShift(0x20)
 
-    // Handle Caps Lock toggle
-    if (key1 == KEY_CAPSLOCK) {  // HID code for Caps Lock
+  // Walk every slot in the new report; handle each key that wasn't already
+  // present in the previous report. Order within [2..7] is whatever the
+  // keyboard firmware chose — in practice it matches the press order for the
+  // common alternating-fingers case.
+  for (int i = 0; i < 6; i++) {
+    uint8_t key = curKeys[i];
+    if (key == 0) continue;
+
+    bool wasHeldBefore = false;
+    for (int j = 0; j < 6; j++) {
+      if (s_prevKeys[j] == key) { wasHeldBefore = true; break; }
+    }
+    if (wasHeldBefore) continue;  // still held since the previous report, not a new press
+
+    // --- Press edge: handle this newly-pressed key ---
+
+    // Log every press at DEBUG so missing keys (e.g. KEY_RIGHT not reaching us
+    // at all) are distinguishable from "received but unhandled by our dispatch".
+    ESP_LOGD(TAG_BTKB, "HID press code=%u modifiers=%u shift=%d", key, modifiers, usingSomeShift ? 1 : 0);
+
+    if (key == KEY_CAPSLOCK) {
       kbIsCapsLockOn = !kbIsCapsLockOn;
-      Serial.printf("CapsLock toggled: %s\n", (kbIsCapsLockOn ? "ON" : "OFF"));
-      return;
+      ESP_LOGD(TAG_BTKB, "CapsLock toggled: %s", kbIsCapsLockOn ? "ON" : "OFF");
+      continue;
     }
-    // Backspace, removes one char in buffer
-    else if (key1 == KEY_BACKSPACE) {
-      if (g_currentMsg.length() >= 1) {
-        g_currentMsg.remove(g_currentMsg.length() - 1);
-        Serial.printf("Current msg: [%s]\n", g_currentMsg.c_str());
-        redrawInputFooter();
+    else if (key == KEY_BACKSPACE) {
+      currentMsgDeleteCharBeforeCursor();
+      continue;
+    }
+    else if (key == KEY_DELETE) {
+      currentMsgDeleteCharAtCursor();
+      continue;
+    }
+    else if (key == KEY_ENTER) {
+      if (g_currentMsg.length() > 0) {
+        ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsg.c_str());
+        onOutgoingMessage(g_currentMsg);
+        mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, g_currentMsg.c_str());
+        currentMsgClear();
+      } else {
+        ESP_LOGD(TAG_BTKB, "ENTER on empty buffer — nothing to send");
       }
-      return;
-    } else if (key1 == KEY_ENTER) {
-      Serial.println("ENTER key. Sending message buffer");
-      Serial.println("TODO Send message !");
-      g_currentMsg = "";
-      redrawInputFooter();
-      return;
-    } else if (key1 == KEY_LEFT) {
-      Serial.println("TODO KEY_LEFT key. ");
-      return;
-    } else if (key1 == KEY_RIGHT) {
-      Serial.println("TODO KEY_RIGHT key. ");
-      return;
+      continue;
     }
-
-    else if (key1 == KEY_ESC) {
-      Serial.println("ESC key. Resetting message buffer");
-      g_currentMsg = "";
-      redrawInputFooter();
-      return;
+    else if (key == KEY_LEFT) {
+      currentMsgMoveCursorLeft();
+      continue;
     }
-    // Keys we don't want to deal with
-    else if (key1 == KEY_TAB || key1 == KEY_UP || key1 == KEY_DOWN) {
-      Serial.printf("HID code [%d] explicitly ignored\n", key1);
-      return;
+    else if (key == KEY_RIGHT || key == KEY_UP) {
+      // KEY_UP doubles as "right" because the BT keyboard bonded to this
+      // device doesn't emit KEY_RIGHT (the dedicated right arrow is either
+      // absent on the layout or mapped to a FN layer we never receive).
+      currentMsgMoveCursorRight();
+      continue;
     }
-
-    bool usingSomeShift = (modifiers & 0x22);  // LeftShift(0x02) or RightShift(0x20)
-
-    Serial.printf("HID Code: [%d], modifiers [%d], shift [%d]\n", key1, modifiers, usingSomeShift);
+    else if (key == KEY_ESC) {
+      ESP_LOGI(TAG_BTKB, "ESC pressed — resetting message buffer");
+      currentMsgClear();
+      continue;
+    }
+    else if (key == KEY_TAB || key == KEY_DOWN) {
+      ESP_LOGD(TAG_BTKB, "HID code [%u] explicitly ignored", key);
+      continue;
+    }
 
     char ascii = 0;
-    if (key1 < 128) {
-      if ((kbIsCapsLockOn ^ usingSomeShift) && keymapUpper[key1]) {
-        ascii = keymapUpper[key1];
+    if (key < 128) {
+      if ((kbIsCapsLockOn ^ usingSomeShift) && keymapUpper[key]) {
+        ascii = keymapUpper[key];
       } else {
-        ascii = keymapLower[key1];
+        ascii = keymapLower[key];
       }
     }
 
     if (ascii) {
-      Serial.printf("Key: [%c]\n", ascii);
-      g_currentMsg.concat(ascii);
-      Serial.printf("Current msg: [%s]\n", g_currentMsg.c_str());
-      redrawInputFooter();
-
+      currentMsgInsertCharAtCursor(ascii);
     } else {
-      Serial.print("Unknown HID code: ");
-      Serial.println(key1);
+      ESP_LOGD(TAG_BTKB, "Unknown HID code: %u", key);
     }
   }
+
+  // Commit the new state so the next report can diff against it.
+  memcpy(s_prevKeys, curKeys, 6);
 }
 
 
 void onBluetoothKeyboardConnectionCallback(bool isFullyConnected) {
-  Serial.printf("onKeyboardConnectionCallback(%d)\n", isFullyConnected);
-  showUpdatedInfoScreen(true);
+  ESP_LOGI(TAG_BTKB, "onKeyboardConnectionCallback(%d)", isFullyConnected ? 1 : 0);
+  //showUpdatedInfoScreen(true);
 }
 
 static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
@@ -773,7 +839,7 @@ void identifyDevice() {
 #else
   mac = WiFi.macAddress();
 #endif
-  hlogn("MAC Address: ", mac);
+  ESP_LOGI(TAG_MM, "MAC Address: %s", mac.c_str());
 
   int recipientId = 3;
 
@@ -819,7 +885,7 @@ void identifyDevice() {
     g_displayType = DisplayType::ST7789;
   } else if (mac == "00:00:00:00:00:00") {
 
-    error("MAC address is unknown. WiFi.begin() was not enough in bootstrap sequence.");
+    ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
 
   } else {
     strcpy(g_userPseudo, "JohnDoe");
@@ -830,7 +896,8 @@ void identifyDevice() {
   // Non formated g_deviceIdMe (pour Will topic)
   snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
 
-  hlogn("Identified device: name=", g_deviceName, ", id=", g_deviceIdMe, ", screenType:", g_displayType);
+  ESP_LOGI(TAG_MM, "Identified device: name=%s id=%d screenType=%d",
+           g_deviceName, g_deviceIdMe, (int)g_displayType);
 
   setRecipient(recipientId);
 }
@@ -841,19 +908,20 @@ void identifyDevice() {
 // ================================================================================
 
 void setupWifi() {
-  hlogn("setupWifi()...");
+  ESP_LOGI(TAG_WIFI, "setupWifi()...");
   WiFi.disconnect(true, true);     // clear any prior config & stop in-flight attempts
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(g_deviceName);  // ESP32 core 3.x: setHostname() must be called before begin()
 
   WiFi.begin(ssid, password);
 
-  hlog("WiFi: Connecting...");
+  ESP_LOGI(TAG_WIFI, "Connecting...");
+  unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    log(".");
   }
-  logn(" Connected. IP=", WiFi.localIP().toString());
+  ESP_LOGI(TAG_WIFI, "Connected after %lums, IP=%s",
+           millis() - t0, WiFi.localIP().toString().c_str());
 
   setupNTP();  // For ESP32 boards, this call must be done after the Wifi is connected (was not important on D1mini though)
 
@@ -875,7 +943,7 @@ void setupWifi() {
 MiniMessengerBLEKeyboardInterface g_kb;
 
 boolean setupKeyboard() {
-  Serial.println("setupKeyboard()...");
+  ESP_LOGI(TAG_BTKB, "setupKeyboard()...");
 
   g_currentMsg.reserve(100);
 
@@ -904,14 +972,13 @@ boolean setupKeyboard() {
 
 // Return true is reconnection is successfull
 bool mqttReconnect() {
-  hlog("MQTT: Attempting connection...");
-
   // Pour voir s'il y a assez de bloc memoire pour la connection TLS.
   // mbedtls handshake = ~38-40 KB contigus (16 KB IN + 16 KB OUT + ~6 KB SSL ctx).
   // Heap dispo (largest block) observé :
   //   - Bluedroid : ~24 KB → insuffisant, rc=-2
   //   - NimBLE    : ~60-70 KB attendus → handshake OK
-  hlogn(" heap free=", ESP.getFreeHeap(), " largest block=", ESP.getMaxAllocHeap());
+  ESP_LOGI(TAG_MQTT, "Attempting connection... heap free=%u largest block=%u",
+           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   unsigned long t0 = millis();
   bool connected = g_mqttClient.connect(
@@ -919,11 +986,11 @@ bool mqttReconnect() {
         mqtt_user, mqtt_password,
         g_mqttOutgoingTopicWill, MQTT_QOS_0, MQTT_MSG_NOT_RETAINED, g_deviceIdChars,
         MQTT_SESSION_VOLATILE);
-  hlogn("MQTT: connect() returned ", connected, " after ", (millis() - t0), "ms, rc=", g_mqttClient.state());
+  ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d",
+           connected ? 1 : 0, millis() - t0, g_mqttClient.state());
 
   if (connected) {
-    logn("mqtt connected");
-    hlogn("MQTT: MQTT_MAX_PACKET_SIZE=", MQTT_MAX_PACKET_SIZE);
+    ESP_LOGI(TAG_MQTT, "Connected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
 
     g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
 
@@ -941,9 +1008,10 @@ bool mqttReconnect() {
 
     return true;
   } else {
-    logn("failed, rc=", g_mqttClient.state(), " trying again in ", MQTT_CONNECT_RETRY_INTERVAL, "ms for device ", g_deviceName);
     // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
     // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
+    ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms",
+             g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL);
     return false;
   }
 }
@@ -969,13 +1037,14 @@ void mqttPushFormattedMessage(const char* topic, const char* payload) {
            payload,
            getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
 
-  hlog("MQTT: Publishing message #", g_mqttOutputMsgId, " to topic [", topic, "] : [", g_mqttOutgoingMsg, ']');
   // Publishing. Only QoS 0 is possible at publish time with PubSubClient
   bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
   if (ok) {
-    logn(". Done.");
+    ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]",
+             g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
   } else {
-    logn(". Failed.");
+    ESP_LOGE(TAG_MQTT, "Publish FAILED for #%u to [%s]: [%s]",
+             g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
   }
 
   g_mqttOutputMsgId++;
@@ -987,7 +1056,7 @@ void mqttPushFormattedMessage(const char* topic, const char* payload) {
 // ================================================================================
 
 void ledSetState(int pin, int requiredState) {
-  hlogn("Setting led state for pin #", pin, " to state ", requiredState);
+  ESP_LOGD(TAG_MM, "led pin=%d state=%d", pin, requiredState);
   g_ledRequiredState[pin] = requiredState;
 
   if (requiredState == LED_STATE_OFF) {
@@ -1139,9 +1208,9 @@ void redrawStatusBar() {
 
 
 // === Input feedback footer (BFA) ===
-// Shows the current `g_currentMsg` being typed via the BT keyboard, framed
-// by a white rectangle, with a yellow cursor bar pinned to the right edge.
-// Repainted on every keystroke (Enter / Backspace / regular char).
+// Shows the current `g_currentMsg` being typed via the BT keyboard, with the
+// yellow cursor bar tracking g_msgCursorIdx (movable via arrow keys). Repainted
+// on every keystroke (insert / delete / move / send).
 void redrawInputFooter() {
   if (!g_inConversationMode) return;
   if (g_displayType != DisplayType::ST7789) return;
@@ -1149,29 +1218,52 @@ void redrawInputFooter() {
   // Wipe the whole footer strip.
   g_disp->fillRect(0, FOOTER_Y_FB, FB_WIDTH, FOOTER_H, ST77XX_BLACK);
 
-  // White border, inset 2 px from the screen edges for breathing room.
-  g_disp->drawRect(2, FOOTER_Y_FB + 2, FB_WIDTH - 4, FOOTER_H - 4, ST77XX_WHITE);
+  // Footer vertical layout (19 px total, rows FOOTER_Y_FB..FOOTER_Y_FB+18):
+  //   +0       : 1 px black aération against the scroll area above
+  //   +1       : white hairline separator (light gray, matches upper bar)
+  //   +2       : 1 px black margin
+  //   +3..+18  : 16 px text zone (size-2 default font) + yellow cursor bar
+  g_disp->drawFastHLine(0, FOOTER_Y_FB + 1, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
 
-  // Typed text, default 5×7 font at size 1 → ~6 px per char, fits ~37 chars.
-  // If the message is longer we show the last N characters that fit, so the
-  // cursor on the right remains visually anchored to "where you're typing".
-  const int kCharWidth   = 6;
+  // Typed text, default 5×7 font at size 2 → 12 px per char, fits ~18 chars.
+  // Right-aligned: the rightmost glyph of the viewport is pinned 2 px to the
+  // left of the screen edge, and the text grows leftward as the user types.
+  const int kCharWidth   = 12;
   const int kInsideX     = 6;
-  const int kCursorX     = FB_WIDTH - 8;
-  const int kTextAreaW   = kCursorX - kInsideX - 2;
-  const int kMaxChars    = kTextAreaW / kCharWidth;
+  const int kRightEdgeX  = FB_WIDTH - 8;
+  const int kTextAreaW   = kRightEdgeX - kInsideX - 2;
+  const int kMaxChars    = kTextAreaW / kCharWidth;  // 18
   const char* full = g_currentMsg.c_str();
-  int len = g_currentMsg.length();
-  const char* shown = (len > kMaxChars) ? (full + (len - kMaxChars)) : full;
+  const int len    = (int) g_currentMsg.length();
+  const int cur    = (int) g_msgCursorIdx;
+
+  // Viewport [viewStart, viewEnd) — at most kMaxChars chars, always contains
+  // the cursor. Anchored to the message end by default; if the cursor is
+  // further to the right than that window would allow (which only matters
+  // when len <= kMaxChars but cur could equal len), the math degenerates to
+  // showing the whole message.
+  int viewEnd = cur;
+  const int defaultEnd = (len > kMaxChars) ? kMaxChars : len;
+  if (viewEnd < defaultEnd) viewEnd = defaultEnd;
+  if (viewEnd > len)        viewEnd = len;
+  const int viewStart  = (viewEnd > kMaxChars) ? (viewEnd - kMaxChars) : 0;
+  const int visibleLen = viewEnd - viewStart;
+  const char* shown    = full + viewStart;
+  const int textStartX = kRightEdgeX - 2 - visibleLen * kCharWidth;
 
   g_disp->setFont(NULL);
-  g_disp->setTextSize(1);
+  g_disp->setTextSize(2);
   g_disp->setTextColor(ST77XX_WHITE);
-  g_disp->setCursor(kInsideX, FOOTER_Y_FB + (FOOTER_H - 8) / 2);
+  g_disp->setCursor(textStartX, FOOTER_Y_FB + 3);
   g_disp->print(shown);
 
-  // Yellow cursor bar pinned to the right of the input area.
-  g_disp->drawFastVLine(kCursorX, FOOTER_Y_FB + 6, FOOTER_H - 12, ST77XX_YELLOW);
+  // Yellow cursor bar, drawn at the insertion-point gap (1 px wide, sized to
+  // match the text height). When the cursor sits at the end of the visible
+  // window it lands in the 2 px right-edge gap; when in the middle it falls
+  // in the inter-character spacing of the previous glyph.
+  const int cursorOffset = cur - viewStart;  // 0..visibleLen
+  const int yellowX      = textStartX + cursorOffset * kCharWidth - 1;
+  g_disp->drawFastVLine(yellowX, FOOTER_Y_FB + 3, 16, ST77XX_YELLOW);
 }
 
 
@@ -1194,7 +1286,7 @@ void setupDisplay() {
     hwScrollSetupArea();
     hwScrollTo(0);
   } else {
-    hlogn("setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
+    ESP_LOGW(TAG_MM, "setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 
 #if TFT_BL >= 0
@@ -1209,7 +1301,7 @@ void setupDisplay() {
 void setDisplayPowerState(DisplayPowerState nextState) {
   if (nextState == g_displayPowerState) return;
 
-  hlogn("setDisplayPowerState(", (int)g_displayPowerState, " -> ", (int)nextState, ')');
+  ESP_LOGI(TAG_MM, "setDisplayPowerState(%d -> %d)", (int)g_displayPowerState, (int)nextState);
 
   if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
@@ -1282,7 +1374,7 @@ void showSplashScreen() {
 
     duration = 1000;
   } else {
-    hlogn("Display: no splash screen");
+    ESP_LOGW(TAG_MM, "Display: no splash screen (display not configured)");
     duration = 0;
   }
 
@@ -1526,7 +1618,7 @@ void setRecipient(int recipientDeviceId) {
   snprintf(g_mqttOutoingRecipientTopic, MQTT_TOPIC_SIZE,
            "msg/unicast/%d",
            recipientDeviceId);
-  hlogn("MQTT: Setting recipient topic to [", g_mqttOutoingRecipientTopic, ']');
+  ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutoingRecipientTopic);
 }
 
 void onMQTTReconnected() {
@@ -1547,7 +1639,7 @@ void onIncomingTextMessage(String messageDate, String pseudoOther, String messag
       addConversationBlock(messageDate, message, ST77XX_YELLOW, LEFT);
     }
   } else {
-    hlogn("onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
+    ESP_LOGW(TAG_MQTT, "onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
@@ -1558,7 +1650,7 @@ void onOutgoingMessage(String message) {
     addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
 
   } else {
-    hlogn("onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
+    ESP_LOGW(TAG_MQTT, "onOutgoingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
@@ -1577,13 +1669,12 @@ void cleanScreen() {
     redrawStatusBar();
     redrawInputFooter();
   } else {
-    hlogn("cleanScreen: DISPLAY_TYPE_NOT_CONFIGURED");
+    ESP_LOGW(TAG_MM, "cleanScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
 void showUpdatedInfoScreen(bool withMQTTInfo) {
   String mac = WiFi.macAddress();
-
 
   if (g_displayType == DisplayType::ST7789) {
 
@@ -1593,35 +1684,43 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     hwScrollReset();  // info screen draws at fixed coordinates, scroll must be 0
 
     pDisp->setFont(NULL);  // font par défaut
-    pDisp->setTextSize(2);
 
     int colHeaders = 2;
     int colValues = 70;
     int lineHeight = 22;
+    // Values land 4 px below the header baseline so the smaller size-1 glyphs
+    // appear vertically centered against the size-2 header on the same row.
+    int valueYOffset = 4;
 
     int nextY = 0;
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
+    pDisp->setTextSize(2);
     pDisp->print("ID:");
-    pDisp->setCursor(colValues, nextY);
+    pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->setTextSize(1);
     pDisp->print(g_deviceIdMe);
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
+    pDisp->setTextSize(2);
     pDisp->print("Name:");
-    pDisp->setCursor(colValues, nextY);
+    pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->setTextSize(1);
     pDisp->print(g_deviceName);
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
+    pDisp->setTextSize(2);
     pDisp->print("MAC:");
-    pDisp->setCursor(colValues, nextY);
+    pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->setTextSize(1);
     pDisp->print(mac);
     nextY += lineHeight;
 
@@ -1630,25 +1729,31 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
+    pDisp->setTextSize(2);
     pDisp->print("BTKB:");
-    pDisp->setCursor(colValues, nextY);
+    pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->setTextSize(1);
     pDisp->print(g_kb.isFullyConnected() ? "Connected" : "Not found");
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
+    pDisp->setTextSize(2);
     pDisp->print("SSID:");
-    pDisp->setCursor(colValues, nextY);
+    pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->setTextSize(1);
     pDisp->print(ssid);
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
+    pDisp->setTextSize(2);
     pDisp->print("IP:");
-    pDisp->setCursor(colValues, nextY);
+    pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->setTextSize(1);
     if (WiFi.status() != WL_CONNECTED) {
       pDisp->print("NO WIFI");
     } else {
@@ -1660,9 +1765,11 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     if (withMQTTInfo) {
       pDisp->setCursor(colHeaders, nextY);
       pDisp->setTextColor(ST77XX_RED);
+      pDisp->setTextSize(2);
       pDisp->print("MQTT: ");
-      pDisp->setCursor(colValues, nextY);
+      pDisp->setCursor(colValues, nextY + valueYOffset);
       pDisp->setTextColor(ST77XX_WHITE);
+      pDisp->setTextSize(1);
       if (!g_mqttClient.connected()) {
         pDisp->print("NOT OK");
       } else {
@@ -1671,7 +1778,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     }
 
   } else {
-    hlogn("showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
+    ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
 }
 
@@ -1702,7 +1809,7 @@ void setupTests() {
   uint16_t w, h;
 
   for (int f = 0; f < 2; f++) {
-    hlogn("==== Font ", fontNames[f]);
+    ESP_LOGD(TAG_MM, "==== Font %s", fontNames[f].c_str());
     const GFXfont* font = fonts[f];
 
     g_disp->setFont(font);
@@ -1711,14 +1818,15 @@ void setupTests() {
     uint8_t yAdvance = 8;
     if (font != NULL) {
       yAdvance = pgm_read_byte(&font->yAdvance);
-      hlogn("yAdvance : ", yAdvance);
+      ESP_LOGD(TAG_MM, "yAdvance: %u", yAdvance);
     }
     uint8_t lineAdvance = yAdvance * textSize;
-    hlogn("lineAdvance : ", lineAdvance);
+    ESP_LOGD(TAG_MM, "lineAdvance: %u", lineAdvance);
 
     for (auto& text : texts) {
       g_disp->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-      hlogn("Bounds for text [", text, "]: x1=", x1, ", y1=", y1, ", w=", w, ", h=", h);
+      ESP_LOGD(TAG_MM, "Bounds for [%s]: x1=%d y1=%d w=%u h=%u",
+               text.c_str(), x1, y1, w, h);
     }
   }
 
@@ -1736,10 +1844,14 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   delay(1000);
-  Serial.println("setup()");
 
-  Serial.println("=== minimessenger build " __DATE__ " " __TIME__ " ===");
-
+// Si rien n'apparait après cette ligne: ArduinoIDE: Tools >> Core Debug Level : Verbose ; puis reflash
+  Serial.println("Setup logging...");
+  // Install per-tag log levels before anything else logs:
+  //   default = INFO ; BTKB = DEBUG (HID keystrokes are debug-level).
+  setupLogging();
+  ESP_LOGI(TAG_MM, "setup()");
+  ESP_LOGI(TAG_MM, "=== minimessenger build %s %s ===", __DATE__, __TIME__);
 
 
   // Initialise le générateur de nombres aléatoires
@@ -1775,7 +1887,7 @@ void setup() {
 
   resetSerialBuffer();
 
-  Serial.println("setup() completed.");
+  ESP_LOGI(TAG_MM, "setup() completed");
 }
 
 void resetSerialBuffer() {
@@ -1844,20 +1956,20 @@ void loop() {
     // 'Enter key' : send message
     if (g_inChar == '\n') {
       if (g_inNextCharIndex > 0) {
-        hlogn("Serial: Read msg id #", g_mqttOutputMsgId, " : ", g_contentFromSerial);
+        ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s",  g_mqttOutputMsgId, g_contentFromSerial);
         onOutgoingMessage(g_contentFromSerial);
         mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, g_contentFromSerial);
 
         resetSerialBuffer();
       } else {
         // Message is empty. Do nothing
-        hlogn("Serial: Not publishing an empty message.");
+        ESP_LOGD(TAG_MM, "Serial: empty message, skipping publish");
       }
     } else {
       // Too long ?
       if (g_inNextCharIndex >= MAX_SERIAL_MSG_LENGTH) {
         // Force reset all
-        hlogn("Serial: Msg too long. Dropping it");
+        ESP_LOGW(TAG_MM, "Serial: msg too long, dropping it");
         resetSerialBuffer();
       } else {
         g_contentFromSerial[g_inNextCharIndex] = g_inChar;
@@ -1915,28 +2027,27 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
 
   if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
     int remoteDeviceId = atoi(message.c_str());
-    onReceivedContactLiveness(remoteDeviceId, true);
+    onReceivedContactOnline(remoteDeviceId, true);
   } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
     int remoteDeviceId = atoi(message.c_str());
-    onReceivedContactLiveness(remoteDeviceId, false);
+    onReceivedContactOnline(remoteDeviceId, false);
   }
   // msg/unicast/<me> or msg/broadcast
   else if (topic[0] == 'm') {
-    hlogn("MQTT: Incoming message [", message, ']');
-
+    ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
     onIncomingTextMessage(getCurrentTime(), "Jolan", message);
 
   } else {
-    hlogn("MQTT: Message received in unknown topic [", topic, "] : [", message, ']');
+    ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
   }
 }
 
-void onReceivedContactLiveness(int remoteDeviceId, bool isLive) {
+void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
   if (remoteDeviceId == g_deviceIdMe) {
     return;
   }
 
-  hlogn("MQTT: Liveness device #", remoteDeviceId, " isLive:", isLive);
+  ESP_LOGI(TAG_MQTT, "Liveness device #%d isLive=%d", remoteDeviceId, isLive ? 1 : 0);
   if (remoteDeviceId == g_deviceIdFriend1) {
     ledSetState(LED_FRIEND_1, (isLive ? LED_STATE_ON : LED_STATE_OFF));
     //digitalWrite(LED_FRIEND_1, (isLive ? HIGH : LOW) );

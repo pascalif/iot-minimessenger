@@ -1,4 +1,5 @@
 #include "mm_blekb.h"
+#include "mm_log.h"
 
 
 // This one cannot be a static class member for some C++ reason
@@ -11,44 +12,55 @@ bool MiniMessengerBLEKeyboardInterface::isFullyConnected() {
 
 void MiniMessengerBLEKeyboardInterface::clearAllExistingBonds() {
   NimBLEDevice::deleteAllBonds();
-  Serial.println("BTKB: 🧹 All bonds cleared.");
+  ESP_LOGI(TAG_BTKB, "All bonds cleared");
 }
 
 bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& address) {
   NimBLEClient* pClient = NimBLEDevice::createClient();
-  Serial.println("BTKB: Connecting to server...");
+  ESP_LOGI(TAG_BTKB, "Connecting to server...");
 
   pClient->setClientCallbacks(this, false);  // false = do NOT delete `this` when client is destroyed
 
   if (!pClient->connect(address)) {
-    Serial.println("BTKB: Connection failed!");
+    ESP_LOGE(TAG_BTKB, "Connection failed");
     return false;
   }
 
-  Serial.println("BTKB: Connected");
+  ESP_LOGI(TAG_BTKB, "Connected");
 
   NimBLERemoteService* pRemoteService = pClient->getService(NimBLEUUID((uint16_t)0x1812));
   if (pRemoteService == nullptr) {
-    Serial.println("BTKB: HID service 0x1812 not found!");
+    ESP_LOGE(TAG_BTKB, "HID service 0x1812 not found");
     return false;
   }
 
-  // Local: only ever used inside this function. No reason to live as a
-  // class member.
-  NimBLERemoteCharacteristic* pRemoteCharacteristic =
-      pRemoteService->getCharacteristic(NimBLEUUID((uint16_t)0x2A4D));  // HID Report
-  if (pRemoteCharacteristic == nullptr) {
-    Serial.println("BTKB: HID Report characteristic 0x2A4D not found!");
+  // HID over GATT keyboards expose MULTIPLE characteristics with UUID 0x2A4D
+  // (HID Report) inside the HID service — one per Report ID (keyboard input
+  // report, LEDs output report, possibly feature reports, etc.). We don't
+  // know upfront which one is the keyboard input report, so we iterate the
+  // whole list and subscribe to every 0x2A4D that has notify capability.
+  // The non-input reports' callbacks simply stay silent in practice.
+  //
+  // Picking only the first match (the old `getCharacteristic(0x2A4D)`
+  // shortcut) is fragile: Bluedroid often returned the input report first
+  // by chance, NimBLE may not.
+  const NimBLEUUID hidReportUuid((uint16_t)0x2A4D);
+  const std::vector<NimBLERemoteCharacteristic*>& chars =
+      pRemoteService->getCharacteristics(true);
+  int subscribed = 0;
+  for (NimBLERemoteCharacteristic* pChar : chars) {
+    if (pChar->getUUID() == hidReportUuid && pChar->canNotify()) {
+      bool ok = pChar->subscribe(true, MiniMessengerBLEKeyboardInterface::bleNotifyCallback);
+      ESP_LOGI(TAG_BTKB, "subscribe(handle=%u) -> %s",
+               pChar->getHandle(), ok ? "OK" : "FAIL");
+      if (ok) subscribed++;
+    }
+  }
+  if (subscribed == 0) {
+    ESP_LOGE(TAG_BTKB, "No notifiable HID Report (0x2A4D) characteristic found");
     return false;
   }
-
-  if (pRemoteCharacteristic->canNotify()) {
-    pRemoteCharacteristic->subscribe(true, MiniMessengerBLEKeyboardInterface::bleNotifyCallback);
-    Serial.println("BTKB: Keystrokes callback registered");
-  } else {
-    Serial.println("BTKB: Keystrokes callback not registered");
-    return false;
-  }
+  ESP_LOGI(TAG_BTKB, "%d HID Report characteristic(s) subscribed", subscribed);
 
   m_connectionDone = true;
   m_clientOnConnectionCallback(m_connectionDone);
@@ -63,9 +75,7 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& add
 void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
   if (advertisedDevice->haveName()
       && String(advertisedDevice->getName().c_str()) == m_expectedKeyboardBluetoothName) {
-    Serial.print("BTKB: NimBLEScanCallbacks::onResult() - ✅ Found target keyboard [");
-    Serial.print(advertisedDevice->toString().c_str());
-    Serial.println(']');
+    ESP_LOGI(TAG_BTKB, "Found target keyboard [%s]", advertisedDevice->toString().c_str());
 
     NimBLEDevice::getScan()->stop();
 
@@ -85,8 +95,7 @@ void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanR
   // NimBLE scans are asynchronous: the start() call returns immediately and
   // this fires when the scan window elapses. Re-arm doScan so the next
   // tryToMaintainConnection() iteration kicks off a new round.
-  Serial.printf("BTKB: onScanEnd() reason=%d, %d devices seen — will rescan\n",
-                reason, scanResults.getCount());
+  ESP_LOGI(TAG_BTKB, "Scan ended (reason=%d, %d devices seen) — will rescan", reason, scanResults.getCount());
   if (!m_connectionDone) {
     doScan = true;
   }
@@ -98,11 +107,11 @@ void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanR
 // ============================================================================
 
 void MiniMessengerBLEKeyboardInterface::onConnect(NimBLEClient* pClient) {
-  Serial.println("BTKB: Client connected.");
+  ESP_LOGI(TAG_BTKB, "Client connected");
 }
 
 void MiniMessengerBLEKeyboardInterface::onDisconnect(NimBLEClient* pClient, int reason) {
-  Serial.printf("BTKB: ⚠️ Client disconnected (reason=%d). Restarting scan...\n", reason);
+  ESP_LOGE(TAG_BTKB, "Client disconnected (reason=%d) — restarting scan", reason);
   m_connectionDone = false;
   m_clientOnConnectionCallback(m_connectionDone);
 
@@ -111,9 +120,9 @@ void MiniMessengerBLEKeyboardInterface::onDisconnect(NimBLEClient* pClient, int 
 
 void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
   if (connInfo.isEncrypted()) {
-    Serial.println("BTKB: Authentication complete - Bonding success ✅ (saved in NVS).");
+    ESP_LOGI(TAG_BTKB, "Authentication complete — bonding saved in NVS");
   } else {
-    Serial.println("BTKB: Authentication failed ❌");
+    ESP_LOGE(TAG_BTKB, "Authentication failed");
   }
 }
 
@@ -134,7 +143,7 @@ bool MiniMessengerBLEKeyboardInterface::setup(
   bool clearExistingBonds,
   mm_btkb_on_connection_callback onConnectionCallback,
   mm_btkb_on_keystroke_callback onKeystrokeCallback) {
-  Serial.println("BTKB: MiniMessengerBLEKeyboardInterface::setup()...");
+  ESP_LOGI(TAG_BTKB, "setup()...");
 
   NimBLEDevice::init("");
 
@@ -148,7 +157,7 @@ bool MiniMessengerBLEKeyboardInterface::setup(
   // Clear bonding info if you want fresh pairing
   if (clearExistingBonds) clearAllExistingBonds();
 
-  Serial.printf("BTKB: Starting scan for keyboard named [%s]\n", keyboardBluetoothName.c_str());
+  ESP_LOGI(TAG_BTKB, "Starting scan for keyboard named [%s]", keyboardBluetoothName.c_str());
   this->m_expectedKeyboardBluetoothName = keyboardBluetoothName;
 
   NimBLEScan* pBLEScan = NimBLEDevice::getScan();
@@ -171,23 +180,20 @@ void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
 
   if (doConnect) {
     if (connectToServer(*pServerAddress)) {
-      Serial.println("BTKB: tryToMaintainConnection() : We are now connected");
+      ESP_LOGI(TAG_BTKB, "tryToMaintainConnection: connected");
     } else {
-      Serial.println("BTKB: tryToMaintainConnection() : Failed to connect");
+      ESP_LOGE(TAG_BTKB, "tryToMaintainConnection: failed to connect");
       doScan = true;  // retry scan if connect failed
     }
     doConnect = false;
   }
 
   if (doScan) {
-    Serial.println("BTKB: Rescanning...");
+    ESP_LOGI(TAG_BTKB, "Rescanning...");
     NimBLEDevice::getScan()->start(m_scanningDurationSec * 1000, false);
     // NimBLE scan is async — flag it as "in flight" so we don't restart it
     // every loop iteration. onScanEnd() will re-arm doScan when the window
     // elapses without finding the keyboard.
     doScan = false;
   }
-
-  // delay should not be done here to not affect in main loop
-  //delay(1000);
 }
