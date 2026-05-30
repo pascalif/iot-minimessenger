@@ -284,8 +284,22 @@ const char* root_ca =
 // ================================================================================
 
 
-// Position d’écriture dans l’espace virtuel
+// Position d’écriture dans l’espace virtuel (legacy, used only by the
+// non-scroll redraw path: showUpdatedInfoScreen, splash, etc.)
 uint16_t g_nextTextTopY = 0;
+
+// === Hardware scroll state (ST7789, portrait, full-screen scroll area) ===
+// FB_HEIGHT is the ST7789 framebuffer height in its NATIVE portrait
+// orientation. The scroll commands (VSCRDEF / VSCSAD) always operate on
+// framebuffer coordinates, irrespective of setRotation().
+#define FB_WIDTH  240
+#define FB_HEIGHT 320
+
+// g_scrollY: current VSCSAD value. Framebuffer Y of the visible top line.
+// g_drawY:   framebuffer Y where the next conversation block's top will be
+//            drawn. After a draw + scroll, g_drawY == g_scrollY (mod FB_HEIGHT).
+uint16_t g_scrollY = 0;
+uint16_t g_drawY   = 0;
 
 // Objet représentant une ligne
 #define BOX_X 0
@@ -943,18 +957,63 @@ void setupLeds() {
 // OLED
 // ================================================================================
 
+// === Hardware vertical scroll helpers (ST7789, MIPI DCS commands) ===
+// See docs/howto_hardware_scrolling.md for the full design rationale.
+// 0x33 (VSCRDEF) declares the scroll area partition; 0x37 (VSCSAD) sets the
+// virtual top line within that partition. No high-level API in Adafruit_GFX
+// exposes this, hence the raw sendCommand() calls.
+
+void hwScrollSetupArea() {
+  if (g_displayType != DisplayType::ST7789) return;
+  Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+  // top_fixed = 0, scroll_area = FB_HEIGHT, bottom_fixed = 0 (full screen scrolls)
+  uint8_t args[6] = {
+    0, 0,
+    (uint8_t)(FB_HEIGHT >> 8), (uint8_t)(FB_HEIGHT & 0xFF),
+    0, 0,
+  };
+  pDisp->sendCommand(0x33, args, 6);  // VSCRDEF
+}
+
+void hwScrollTo(uint16_t y) {
+  g_scrollY = y % FB_HEIGHT;
+  if (g_displayType != DisplayType::ST7789) return;
+  Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+  uint8_t args[2] = { (uint8_t)(g_scrollY >> 8), (uint8_t)(g_scrollY & 0xFF) };
+  pDisp->sendCommand(0x37, args, 2);  // VSCSAD
+}
+
+// Reset scroll state and clear the framebuffer. Call this before any "static"
+// screen (splash, info, status) so it draws at known coordinates.
+void hwScrollReset() {
+  g_scrollY = 0;
+  g_drawY   = 0;
+  g_nextTextTopY = 0;
+  hwScrollTo(0);
+  if (g_displayType == DisplayType::ST7789) {
+    g_disp->fillScreen(ST77XX_BLACK);
+  }
+}
+
+
 void setupDisplay() {
   if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
     pDisp->init(240, 320);
-    pDisp->setRotation(1);
-
-    //pDisp->setScrollMargins(0, 0);  // Pas de marges haute/basse
-    // scrollPos = 0;
-    // pDisp->setScrollOffset(scrollPos);
+    // Portrait. Hardware scroll operates in framebuffer-native (portrait)
+    // coordinates; using setRotation(1) would make the scroll go sideways
+    // from the user's POV. We use rotation 2 (180° flip vs rotation 0) so
+    // that GFX's framebuffer-bottom matches the user's visual bottom on this
+    // specific module — without this the chat scroll would feel inverted
+    // (new lines at top, scrolling down). See docs/howto_hardware_scrolling.md.
+    pDisp->setRotation(2);
 
     g_disp = pDisp;
+
+    // Declare the scroll area (idempotent, sent only once).
+    hwScrollSetupArea();
+    hwScrollTo(0);
   } else {
     hlogn("setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
   }
@@ -1038,7 +1097,7 @@ void showSplashScreen() {
   if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-    pDisp->fillScreen(ST77XX_BLACK);
+    hwScrollReset();  // ensure we draw at framebuffer Y = screen Y = 0
     pDisp->print("Splash!");
 
     duration = 1000;
@@ -1195,20 +1254,10 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
   msgBlockHWithMargin = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
 
 
-  // Vérifier si ça dépasse la hauteur (on ignore la margin bottom du msg)
-  // Si ca dépasse de l'écran, on supprime autant de TextLine que nécessaire pour que le nouveau block soit entièrement visible.
-  while (g_nextTextTopY + tsBlockHWithMargin + msgBox[BOX_H] >= g_disp->height() || g_lineCount >= MAX_LINES) {
-    // Drop the oldest line: O(1) — just advance the ring head, no copy.
-    TextLine& oldest = lines[g_lineHead];
-    int regainedY = oldest.tsHeightWithBottomMargin + oldest.msgHeightWithBottomMargin;
+  uint16_t H = tsBlockHWithMargin + msgBlockHWithMargin;
 
-    g_lineHead = (g_lineHead + 1) % MAX_LINES;
-    if (g_lineCount > 0) g_lineCount--;
-
-    g_nextTextTopY -= regainedY;
-  }
-
-  // Sinon, juste écrire à la suite
+  // Compute X alignment in screen-space (g_disp->width() reflects rotation 0
+  // → 240 px, so this works directly in framebuffer coords too).
   uint16_t tsX = 0, msgX = 0;
   if (align == RIGHT) {
     tsX = g_disp->width() - tsBox[BOX_W];
@@ -1218,17 +1267,58 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     msgX = (g_disp->width() - msgBox[BOX_W]) / 2;
   }
 
-  // Serial.printf("TS  box=(%d, %d, %d, %d) ; msgX=%d \n", tsBox[BOX_X], tsBox[BOX_Y], tsBox[BOX_W], tsBox[BOX_H], tsX);
-  //Serial.printf("MSG box=(%d, %d, %d, %d) ; msgX=%d \n", msgBox[BOX_X], msgBox[BOX_Y], msgBox[BOX_W], msgBox[BOX_H], msgX);
-
-  // Créer la nouvelle ligne dans le prochain slot du ring buffer
+  // === Maintain the logical ring buffer (state only — not used for drawing) ===
+  while (g_lineCount >= MAX_LINES) {
+    g_lineHead = (g_lineHead + 1) % MAX_LINES;
+    g_lineCount--;
+  }
   int writeIdx = (g_lineHead + g_lineCount) % MAX_LINES;
   lines[writeIdx] = TextLine(ts, CONV0_TS_COLOR, NULL, CONVO_TS_FONT_SIZE, tsBlockHWithMargin, tsX, tsBox,
                              msgBuf, msgColor, &CONVO_MSG_FONT, CONVO_MSG_FONT_SIZE, msgBlockHWithMargin, msgX, msgBox);
   g_lineCount++;
 
-  // Redessiner tout (scroll inclus)
-  redrawAllConversations();
+  // === HW scroll draw path: write the block directly into the framebuffer
+  // ring, then bump VSCSAD by H. Old content scrolls off the top as the
+  // controller re-maps the visible window — no full redraw. ===
+
+  // Wrap avoidance: if the block would cross the framebuffer top boundary,
+  // skip the remaining tail and start at fb_Y = 0. The skipped tail is
+  // wiped (otherwise stale content from a previous wrap would scroll back
+  // into view), and the same number of pixels is added to the scroll so the
+  // user perceives a single (slightly bigger than H) smooth scroll.
+  if (g_drawY + H > FB_HEIGHT) {
+    uint16_t skipped = FB_HEIGHT - g_drawY;
+    g_disp->fillRect(0, g_drawY, FB_WIDTH, skipped, ST77XX_BLACK);
+    g_drawY = 0;
+    g_scrollY = (g_scrollY + skipped) % FB_HEIGHT;
+  }
+
+  // Wipe the strip we're about to overdraw (it's stale content from the
+  // last time this region of the framebuffer ring was used).
+  g_disp->fillRect(0, g_drawY, FB_WIDTH, H, ST77XX_BLACK);
+
+  // Draw TS then MSG at framebuffer Y = g_drawY. getTextBounds returned
+  // negative tsBox/msgBox y for ascender-using fonts, so we offset the
+  // cursor by `- bounds[BOX_Y]` (cf. the big French comment above).
+  uint16_t fbY = g_drawY;
+  if (!ts.isEmpty()) {
+    g_disp->setFont(NULL);
+    g_disp->setTextSize(CONVO_TS_FONT_SIZE);
+    g_disp->setTextColor(CONV0_TS_COLOR);
+    g_disp->setCursor(tsX - tsBox[BOX_X], fbY - tsBox[BOX_Y]);
+    g_disp->print(ts);
+    fbY += tsBlockHWithMargin;
+  }
+  g_disp->setFont(&CONVO_MSG_FONT);
+  g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
+  g_disp->setTextColor(msgColor);
+  g_disp->setCursor(msgX - msgBox[BOX_X], fbY - msgBox[BOX_Y]);
+  g_disp->print(msgBuf);
+
+  // Bump framebuffer cursor and the user-visible scroll register.
+  g_drawY   = (g_drawY   + H) % FB_HEIGHT;
+  g_scrollY = (g_scrollY + H) % FB_HEIGHT;
+  hwScrollTo(g_scrollY);
 }
 
 
@@ -1276,9 +1366,8 @@ void onOutgoingMessage(String message) {
 
 void cleanScreen() {
   if (g_displayType == DisplayType::ST7789) {
-
-    g_disp->fillScreen(ST77XX_BLACK);
-
+    // hwScrollReset() does the scroll-register reset AND the fillScreen.
+    hwScrollReset();
   } else {
     hlogn("cleanScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
@@ -1292,7 +1381,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
 
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-    pDisp->fillScreen(ST77XX_BLACK);
+    hwScrollReset();  // info screen draws at fixed coordinates, scroll must be 0
 
     pDisp->setFont(NULL);  // font par défaut
     pDisp->setTextSize(2);
