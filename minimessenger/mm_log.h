@@ -138,20 +138,13 @@ inline void setupLogging() {
   esp_log_level_set("*",      ESP_LOG_INFO);
   esp_log_level_set(TAG_BTKB, ESP_LOG_DEBUG);
 
-  // Silence NimBLE-Arduino internals — these settings only bite the rare
-  // NimBLE paths that go through real esp_log; the bulk of NimBLE's chatter
-  // is raw printf which we can't intercept here. Kept defensively.
-  esp_log_level_set("NimBLEDevice",                ESP_LOG_WARN);
-  esp_log_level_set("NimBLEClient",                ESP_LOG_WARN);
-  esp_log_level_set("NimBLEScan",                  ESP_LOG_WARN);
-  esp_log_level_set("NimBLERemoteService",         ESP_LOG_WARN);
-  esp_log_level_set("NimBLERemoteCharacteristic",  ESP_LOG_WARN);
-  esp_log_level_set("NimBLERemoteValueAttribute",  ESP_LOG_WARN);
-  esp_log_level_set("NimBLERemoteDescriptor",      ESP_LOG_WARN);
-  esp_log_level_set("NimBLEAdvertisedDevice",      ESP_LOG_WARN);
-  esp_log_level_set("NimBLEAddress",               ESP_LOG_WARN);
-  esp_log_level_set("NimBLEAttValue",              ESP_LOG_WARN);
-  esp_log_level_set("NimBLEUtils",                 ESP_LOG_WARN);
+  // NB: do NOT add esp_log_level_set("NimBLEXxx", ...) here. NimBLE-Arduino gates its NIMBLE_LOGD/I/W/E macros at compile time
+  // via   #if CONFIG_NIMBLE_CPP_LOG_LEVEL >= N   (see src/NimBLELog.h), and emits through console_printf, which bypasses esp_log
+  // entirely. The runtime per-tag table populated here is never consulted by NimBLE — any such call would be silently ineffective.
+  // To silence NimBLE chatter, lower CONFIG_NIMBLE_CPP_LOG_LEVEL — easiest path is Tools → Core Debug Level → "Warning" in the Arduino IDE,
+  // since NimBLELog.h falls back to CORE_DEBUG_LEVEL when the define is unset.
+  // Example of a call that would NOT work:
+  //   esp_log_level_set("NimBLEClient", ESP_LOG_WARN);
 }
 
 #endif

@@ -24,9 +24,7 @@ VSCRDEF = Vertical Scroll Definition =  TFA (Top Fixed Area) + VSA (Vertical Scr
   |                                             |   ← y=301 (1 px black, aerates against scroll area)
   |---------------------------------------------|   ← y=302 (light gray hairline)
   |                                             |   ← y=303 (1 px black margin)
-  +   typed_msg_buffer_here_         |          +   ← y=304..319 (size-2 text = 16 pixels ; yellow cursor bar)
-
-
+  +                     typed_msg_buffer_here | +   ← y=304..319 (size-2 text = 16 pixels ; yellow cursor bar)
 
 
 ArduinoIDE :               2.3.8_Linux_64bit.AppImage
@@ -141,10 +139,10 @@ Friend present
 // ================================================================================
 
 // WiFi credentials
-const char* ssid = "SatelliteThree";  // Wifi SSID
-const char* password = "xxxxxxx";  // WiFi Password
-//const char* ssid = "AndroidPACPAC5";          // Wifi SSID
-//const char* password = "apapapap";          // WiFi Password
+const char* g_wifiSSID = "SatelliteThree";  // Wifi SSID
+const char* g_wifiPassword = "xxxxxxx";  // WiFi Password
+//const char* g_wifiSSID = "AndroidPACPAC5";          // Wifi SSID
+//const char* g_wifiPassword = "apapapap";          // WiFi Password
 
 // MQTT Broker details
 const char* mqtt_server = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
@@ -160,41 +158,6 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 
 
 #define NTP_UTC_OFFSET_S 7200  // UTC+2
-
-// Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
-const char* root_ca =
-  "-----BEGIN CERTIFICATE-----\n"
-  "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\n"
-  "-----END CERTIFICATE-----\n";
-
 
 
 // ================================================================================
@@ -297,6 +260,42 @@ const char* root_ca =
 // ================================================================================
 // Global variables
 // ================================================================================
+
+
+// Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
+const char* g_hiveMQRootCA =
+  "-----BEGIN CERTIFICATE-----\n"
+  "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\n"
+  "-----END CERTIFICATE-----\n";
+
 
 
 // Position d’écriture dans l’espace virtuel (legacy, used only by the
@@ -456,7 +455,7 @@ char g_ts[20];
 // Serial
 #ifdef FLAG_READ_SERIAL_INPUTS
 #define MAX_SERIAL_MSG_LENGTH 100
-char g_contentFromSerial[MAX_SERIAL_MSG_LENGTH + 1];
+char g_fullMsgFromSerial[MAX_SERIAL_MSG_LENGTH + 1];
 char g_inChar;
 byte g_inNextCharIndex = 0;
 #endif
@@ -485,9 +484,9 @@ unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 
 // Keyboard
 bool kbIsCapsLockOn = false;
-String g_currentMsg = "";
+String g_currentMsgFromKeyboard = "";
 
-// Insertion point inside g_currentMsg, range [0, g_currentMsg.length()].
+// Insertion point inside g_currentMsgFromKeyboard, range [0, g_currentMsgFromKeyboard.length()].
 // When equal to length(), the cursor sits after the last character (default
 // state — equivalent to "append at end").
 // Mutated only via the currentMsgXxxCursor() helpers so the invariant is centrally enforced.
@@ -609,24 +608,24 @@ char keymapUpper[128] = {
 
 
 // === Message buffer editing helpers ==========================================
-// All keystroke effects on g_currentMsg go through these helpers so that the
+// All keystroke effects on g_currentMsgFromKeyboard go through these helpers so that the
 // cursor invariant (0 <= g_msgCursorIdx <= length()) is enforced in one place
 // and decodeHIDReport() stays a flat dispatch table.
 // Each helper redraws the footer at the end so callers don't have to.
 
 void currentMsgClear() {
-  g_currentMsg = "";
+  g_currentMsgFromKeyboard = "";
   g_msgCursorIdx  = 0;
   redrawInputFooter();
 }
 
 void currentMsgInsertCharAtCursor(char c) {
-  g_currentMsg = g_currentMsg.substring(0, g_msgCursorIdx)
+  g_currentMsgFromKeyboard = g_currentMsgFromKeyboard.substring(0, g_msgCursorIdx)
                + c
-               + g_currentMsg.substring(g_msgCursorIdx);
+               + g_currentMsgFromKeyboard.substring(g_msgCursorIdx);
   g_msgCursorIdx++;
   ESP_LOGD(TAG_BTKB, "Insert [%c] at %u → msg=[%s] cur=%u",
-           c, (unsigned) (g_msgCursorIdx - 1), g_currentMsg.c_str(), (unsigned) g_msgCursorIdx);
+           c, (unsigned) (g_msgCursorIdx - 1), g_currentMsgFromKeyboard.c_str(), (unsigned) g_msgCursorIdx);
   redrawInputFooter();
 }
 
@@ -635,20 +634,20 @@ void currentMsgInsertCharAtCursor(char c) {
 // to shrink in place — no reallocation, friendly to the reserved capacity.
 void currentMsgDeleteCharBeforeCursor() {
   if (g_msgCursorIdx == 0) return;
-  g_currentMsg.remove(g_msgCursorIdx - 1, 1);
+  g_currentMsgFromKeyboard.remove(g_msgCursorIdx - 1, 1);
   g_msgCursorIdx--;
   ESP_LOGD(TAG_BTKB, "Backspace → msg=[%s] cur=%u",
-           g_currentMsg.c_str(), (unsigned) g_msgCursorIdx);
+           g_currentMsgFromKeyboard.c_str(), (unsigned) g_msgCursorIdx);
   redrawInputFooter();
 }
 
 // Delete (Suppr): removes the character under the cursor. Cursor stays put.
 // No-op when at the end of the buffer (nothing to the right).
 void currentMsgDeleteCharAtCursor() {
-  if (g_msgCursorIdx >= g_currentMsg.length()) return;
-  g_currentMsg.remove(g_msgCursorIdx, 1);
+  if (g_msgCursorIdx >= g_currentMsgFromKeyboard.length()) return;
+  g_currentMsgFromKeyboard.remove(g_msgCursorIdx, 1);
   ESP_LOGD(TAG_BTKB, "Delete → msg=[%s] cur=%u",
-           g_currentMsg.c_str(), (unsigned) g_msgCursorIdx);
+           g_currentMsgFromKeyboard.c_str(), (unsigned) g_msgCursorIdx);
   redrawInputFooter();
 }
 
@@ -663,7 +662,7 @@ void currentMsgMoveCursorLeft() {
 }
 
 void currentMsgMoveCursorRight() {
-  if (g_msgCursorIdx >= g_currentMsg.length()) {
+  if (g_msgCursorIdx >= g_currentMsgFromKeyboard.length()) {
     ESP_LOGD(TAG_BTKB, "RIGHT at cur=%u (end) — no-op", (unsigned) g_msgCursorIdx);
     return;
   }
@@ -756,10 +755,9 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
       continue;
     }
     else if (key == KEY_ENTER) {
-      if (g_currentMsg.length() > 0) {
-        ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsg.c_str());
-        onOutgoingMessage(g_currentMsg);
-        mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, g_currentMsg.c_str());
+      if (g_currentMsgFromKeyboard.length() > 0) {
+        ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsgFromKeyboard.c_str());
+        processMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL);
         currentMsgClear();
       } else {
         ESP_LOGD(TAG_BTKB, "ENTER on empty buffer — nothing to send");
@@ -913,7 +911,7 @@ void setupWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(g_deviceName);  // ESP32 core 3.x: setHostname() must be called before begin()
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(g_wifiSSID, g_wifiPassword);
 
   ESP_LOGI(TAG_WIFI, "Connecting...");
   unsigned long t0 = millis();
@@ -932,7 +930,7 @@ void setupWifi() {
     g_wifiClient.setInsecure();  // Use this if you don't have a certificate
   } else {
     // For HiveMQ TLS
-    g_wifiClient.setCACert(root_ca);
+    g_wifiClient.setCACert(g_hiveMQRootCA);
   }
 }
 
@@ -945,7 +943,7 @@ MiniMessengerBLEKeyboardInterface g_kb;
 boolean setupKeyboard() {
   ESP_LOGI(TAG_BTKB, "setupKeyboard()...");
 
-  g_currentMsg.reserve(100);
+  g_currentMsgFromKeyboard.reserve(100);
 
   return g_kb.setup(
     "Bluetooth Keyboard",
@@ -1024,7 +1022,7 @@ void mqttSendAlive(int liveType) {
            g_deviceIdMe,
            (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
            WiFi.macAddress().c_str(),
-           ssid,
+           g_wifiSSID,
            WiFi.localIP().toString().c_str(),
            g_mqttConnectionId);
   mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload);
@@ -1208,7 +1206,7 @@ void redrawStatusBar() {
 
 
 // === Input feedback footer (BFA) ===
-// Shows the current `g_currentMsg` being typed via the BT keyboard, with the
+// Shows the current `g_currentMsgFromKeyboard` being typed via the BT keyboard, with the
 // yellow cursor bar tracking g_msgCursorIdx (movable via arrow keys). Repainted
 // on every keystroke (insert / delete / move / send).
 void redrawInputFooter() {
@@ -1233,8 +1231,8 @@ void redrawInputFooter() {
   const int kRightEdgeX  = FB_WIDTH - 8;
   const int kTextAreaW   = kRightEdgeX - kInsideX - 2;
   const int kMaxChars    = kTextAreaW / kCharWidth;  // 18
-  const char* full = g_currentMsg.c_str();
-  const int len    = (int) g_currentMsg.length();
+  const char* full = g_currentMsgFromKeyboard.c_str();
+  const int len    = (int) g_currentMsgFromKeyboard.length();
   const int cur    = (int) g_msgCursorIdx;
 
   // Viewport [viewStart, viewEnd) — at most kMaxChars chars, always contains
@@ -1382,57 +1380,69 @@ void showSplashScreen() {
 }
 
 
-// Renvoie l'avance de ligne (baseline → baseline) pour la police active
-static int lineAdvanceFor(const GFXfont* font, uint8_t textSize) {
-  if (font) return font->yAdvance * textSize;  // GFX font
-  return 8 * textSize;                         // font bitmap 5x7 par défaut
-}
-
-
+// Replay every entry of the ring buffer through the same HW-scroll draw
+// algorithm as addConversationBlock. After this:
+//   - status bar and footer are untouched (protected by VSCRDEF — we only
+//     fillRect the scroll area, never fillScreen)
+//   - the latest block ends up at the bottom of the scroll area with older
+//     blocks stacked above (or scrolled off the top if cumulated height
+//     exceeds SCROLL_AREA_H) — visually identical to live message arrival
+//   - g_drawY / g_scrollY are left in the "next slot" position so a new
+//     addConversationBlock right after lands naturally below the last block
+//
+// Triggered by the `cmd redraw` command (see processPayloadAsCommand).
+// We draw directly from the stored TextLine fields — no re-bound, no
+// re-utf8-conversion, no re-alignment compute, no ring rewrite. Everything
+// needed was captured at original send time.
 void redrawAllConversations() {
-  g_disp->fillScreen(ST77XX_BLACK);
+  if (g_displayType != DisplayType::ST7789) {
+    ESP_LOGW(TAG_MM, "redrawAllConversations: DISPLAY_TYPE_NOT_CONFIGURED");
+    return;
+  }
+  ESP_LOGI(TAG_MM, "Full redraw — replaying %d block(s) from ring", g_lineCount);
 
-  bool showEnclosingRect = false;
-  int nextMessageY = 0;
+  // Reset HW scroll state and wipe ONLY the scroll area.
+  g_drawY = 0;
+  g_scrollY = 0;
+  hwScrollTo(0);
+  g_disp->fillRect(0, SCROLL_AREA_Y_FB, FB_WIDTH, SCROLL_AREA_H, ST77XX_BLACK);
 
-  // Gestion verticale :
-  // - currentTopY = haut de la ligne
-  // - baseline = currentTopY - y1  (car y1 est la distance du haut au baseline, souvent négative)
-  int lineAdv = lineAdvanceFor(&CONVO_MSG_FONT, CONVO_MSG_FONT_SIZE);
-
-  // Ring-buffer traversal: only the g_lineCount valid entries, in oldest-first
-  // order. Skips unused slots in `lines[]` (which would print garbage / blanks).
   for (int k = 0; k < g_lineCount; k++) {
-    TextLine& line = lines[(g_lineHead + k) % MAX_LINES];
+    const TextLine& line = lines[(g_lineHead + k) % MAX_LINES];
+    uint16_t H = line.tsHeightWithBottomMargin + line.msgHeightWithBottomMargin;
 
+    // Wrap avoidance, mirroring addConversationBlock: if the block would
+    // cross the scroll-area top boundary, skip the remaining tail and
+    // restart at scroll-offset 0, bumping the scroll register to swallow
+    // the skipped pixels.
+    if (g_drawY + H > SCROLL_AREA_H) {
+      uint16_t skipped = SCROLL_AREA_H - g_drawY;
+      g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
+      g_drawY = 0;
+      g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
+    }
+
+    g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, H, ST77XX_BLACK);
+
+    uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
     if (line.ts[0] != '\0') {
       g_disp->setFont(NULL);
       g_disp->setTextSize(line.tsFontSize);
       g_disp->setTextColor(line.tsColor);
-
-      // Text X/Y bounds are used to tweak text positionning (and not a potential rectangle in background)
-      g_disp->setCursor(line.tsX - line.tsBounds[BOX_X], nextMessageY - line.tsBounds[BOX_Y]);
+      g_disp->setCursor(line.tsX - line.tsBounds[BOX_X], fbY - line.tsBounds[BOX_Y]);
       g_disp->print(line.ts);
-      if (showEnclosingRect) {
-        g_disp->drawRect(line.tsX, nextMessageY, line.tsBounds[BOX_W], line.tsBounds[BOX_H], ST77XX_MAGENTA);
-      }
-
-      nextMessageY += line.tsHeightWithBottomMargin;
+      fbY += line.tsHeightWithBottomMargin;
     }
-
     g_disp->setFont(&CONVO_MSG_FONT);
     g_disp->setTextSize(line.msgFontSize);
     g_disp->setTextColor(line.msgColor);
-    g_disp->setCursor(line.msgX - line.msgBounds[BOX_X], nextMessageY - line.msgBounds[BOX_Y]);
+    g_disp->setCursor(line.msgX - line.msgBounds[BOX_X], fbY - line.msgBounds[BOX_Y]);
     g_disp->print(line.msg);
-    if (showEnclosingRect) {
-      g_disp->drawRect(line.msgX, nextMessageY, line.msgBounds[BOX_W], line.msgBounds[BOX_H], ST77XX_GREEN);
-    }
 
-    nextMessageY += line.msgHeightWithBottomMargin;
+    g_drawY   = (g_drawY   + H) % SCROLL_AREA_H;
+    g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
+    hwScrollTo(g_scrollY);
   }
-
-  g_nextTextTopY = nextMessageY;
 }
 
 
@@ -1629,30 +1639,88 @@ void onMQTTReconnected() {
         addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
 }
 
-void onIncomingTextMessage(String messageDate, String pseudoOther, String message) {
-  if (g_displayType == DisplayType::ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+// ----------------------------------------------------------------------------
+// Local commands + message funnel
+//
+// processMessage() is the SINGLE insertion point for any complete payload
+// landing in this device, whether it arrived over MQTT (REMOTE) or was just
+// composed locally on the serial monitor (LOCAL). Both channels converge here
+// so the same three steps happen exactly once:
+//
+//   1. Wake the screen via noteActivity() — every payload is a real
+//      user-initiated event and must be visible, regardless of dim/off state.
+//   2. Try to interpret the payload as a local command (CMD_* below).
+//      Commands run locally and are NEITHER displayed in the conversation
+//      NOR republished to peers, so an MQTT 'cmd wifi' cleanly disconnects
+//      the recipient without polluting anyone's screen, and a serial 'cmd
+//      bonds' wipes BLE bonds without leaking that string to other devices.
+//   3. Otherwise route to display: LEFT for REMOTE, RIGHT for LOCAL — and
+//      for LOCAL, also publish to peers over MQTT so they receive the text.
+//
+// Why ONE funnel rather than scattering the wake / interpret logic across
+// each channel's handler: it keeps the command vocabulary in one place,
+// and any future channel (BLE keyboard Enter, web UI, etc.) just has to
+// call processMessage() with the right source to inherit all three steps.
+// ----------------------------------------------------------------------------
 
-    if (message == "dis") {
-      g_mqttClient.disconnect();
-    } else {
-      addConversationBlock(messageDate, message, ST77XX_YELLOW, LEFT);
-    }
-  } else {
-    ESP_LOGW(TAG_MQTT, "onMqttIncomingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
+const char* const CMD_DISCONNECT_WIFI = "cmd wifi";
+const char* const CMD_DISCONNECT_MQTT = "cmd mqtt";
+const char* const CMD_BONDS           = "cmd bonds";
+const char* const CMD_REDRAW          = "cmd redraw";
+
+bool processPayloadAsCommand(const String& message) {
+  if (message == CMD_DISCONNECT_WIFI) {
+    ESP_LOGI(TAG_MM, "Command [%s] — disconnecting WiFi", CMD_DISCONNECT_WIFI);
+    WiFi.disconnect();
+    return true;
   }
+  if (message == CMD_DISCONNECT_MQTT) {
+    ESP_LOGI(TAG_MM, "Command [%s] — disconnecting MQTT", CMD_DISCONNECT_MQTT);
+    g_mqttClient.disconnect();
+    return true;
+  }
+  if (message == CMD_BONDS) {
+    // Going through NimBLEDevice directly (rather than the keyboard wrapper's
+    // protected clearAllExistingBonds()) keeps mm_blekb's API surface intact.
+    ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BONDS);
+    NimBLEDevice::deleteAllBonds();
+    return true;
+  }
+  if (message == CMD_REDRAW) {
+    // Full repaint of the scroll area from the in-memory ring buffer.
+    // Useful to recover after a visual glitch, or after the framebuffer ring
+    // has drifted from the logical state. Status bar and footer are left
+    // untouched (the VSCRDEF partition protects them).
+    ESP_LOGI(TAG_MM, "Command [%s] — full redraw from ring buffer", CMD_REDRAW);
+    redrawAllConversations();
+    return true;
+  }
+  return false;
 }
 
-void onOutgoingMessage(String message) {
-  if (g_displayType == DisplayType::ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+void processMessage(const String& message, MessageSource source) {
+  // Step 1 — always wake the screen. We ignore noteActivity()'s "was sleeping"
+  // return value: unlike a stray keypress (which is swallowed on wake to avoid
+  // typing accidental characters), a command-or-message must actually run on
+  // wake-up too.
+  noteActivity();
 
+  // Step 2 — if it's a known command, execute and stop. No display, no
+  // republish — this is the whole point of the funnel.
+  if (processPayloadAsCommand(message)) return;
+
+  // Step 3 — render in the conversation; for LOCAL, also publish so peers see it.
+  if (source == MessageSource::REMOTE) {
+    addConversationBlock(getCurrentTime(), message, ST77XX_YELLOW, LEFT);
+  }
+  // LOCAL (serial ou BT)
+  else {
     addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
-
-  } else {
-    ESP_LOGW(TAG_MQTT, "onOutgoingMessage: DISPLAY_TYPE_NOT_CONFIGURED");
+    mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str());
   }
 }
+
+
 
 
 // ================================================================================
@@ -1744,7 +1812,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->setTextSize(1);
-    pDisp->print(ssid);
+    pDisp->print(g_wifiSSID);
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);
@@ -1894,7 +1962,7 @@ void resetSerialBuffer() {
   // Reset g_inNextCharIndex and clean buffer (then no need to add '\0' at end of current msg)
   g_inNextCharIndex = 0;
   for (int i = 0; i <= MAX_SERIAL_MSG_LENGTH; i++) {
-    g_contentFromSerial[i] = 0;
+    g_fullMsgFromSerial[i] = 0;
   }
 }
 
@@ -1956,10 +2024,13 @@ void loop() {
     // 'Enter key' : send message
     if (g_inChar == '\n') {
       if (g_inNextCharIndex > 0) {
-        ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s",  g_mqttOutputMsgId, g_contentFromSerial);
-        onOutgoingMessage(g_contentFromSerial);
-        mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, g_contentFromSerial);
-
+        ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s",  g_mqttOutputMsgId, g_fullMsgFromSerial);
+        // Hand the buffer to the common funnel: wakes the screen, intercepts
+        // CMD_* commands locally, otherwise renders RIGHT + publishes via
+        // MQTT. Don't inline displayLocalMessage + mqttPushFormattedMessage
+        // here — that would skip command interception and force every serial
+        // 'cmd ...' string to be echoed/published to peers.
+        processMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL);
         resetSerialBuffer();
       } else {
         // Message is empty. Do nothing
@@ -1972,7 +2043,7 @@ void loop() {
         ESP_LOGW(TAG_MM, "Serial: msg too long, dropping it");
         resetSerialBuffer();
       } else {
-        g_contentFromSerial[g_inNextCharIndex] = g_inChar;
+        g_fullMsgFromSerial[g_inNextCharIndex] = g_inChar;
         g_inNextCharIndex++;
       }
     }
@@ -2035,7 +2106,9 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
   // msg/unicast/<me> or msg/broadcast
   else if (topic[0] == 'm') {
     ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
-    onIncomingTextMessage(getCurrentTime(), "Jolan", message);
+    // Route through the common funnel: wakes the screen, intercepts CMD_*
+    // commands, otherwise renders LEFT.
+    processMessage(message, MessageSource::REMOTE);
 
   } else {
     ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());

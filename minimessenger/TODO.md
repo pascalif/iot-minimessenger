@@ -26,7 +26,12 @@ logs
 
 autre clavier BT ?
 
+========
 
+
+
+
+ajouter ce traitement en factorizant avec les msgs saisie sur serial/bt
 
 ================
 const int MAX_LINES = 40;   // nombre max de lignes gardées en mémoire
