@@ -4,6 +4,10 @@
 
 Wrap source-code comments at **up to 160 characters per line** (not the conventional 80/100). Use the full available width so each comment line carries more context, and **never break a sentence in the middle just to satisfy the wrap** — finish the sentence on the same line if it fits within 160, otherwise break at a natural clause boundary (after a comma, before a conjunction, etc.). Aim for prose that reads as continuous English/French paragraphs rather than fragmented snippets. Apply this to all `.ino`, `.h`, `.cpp` files in the project.
 
+## UI strings — command listing convention
+
+When rendering the help / command listing on the device screen (currently the `cmd help` handler in `processPayloadAsCommand`), **omit the `cmd ` prefix** from the displayed strings. Each line shows just the bare verb (`help`, `wifi`, `mqtt`, `bonds`, `redraw`, `status`, …) followed by its description. The `cmd ` prefix is implied — it's part of the input syntax, not the UI vocabulary. The actual `CMD_*` constants and the input-side matching keep the full `"cmd xxx"` string; only the rendered help strings strip it.
+
 ## What this is
 
 An Arduino sketch turning an ESP32 (or ESP8266 D1 mini) into a self-contained "messenger" appliance: BLE keyboard for input, ST7789 240×320 TFT for display, and MQTT over TLS (HiveMQ Cloud) as the transport between paired devices. There is no host-side build system — everything is a `.ino` plus headers compiled by the Arduino IDE.

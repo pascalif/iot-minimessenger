@@ -41,7 +41,6 @@ RUN    : ?
 Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-g_mqttClient
 
 TODO
-- renommer "lineCount", TextLine... en ConvoItem
 - tester perte de connection wifi (refaire boucle de co ?)
 - tester perte MQTT et affichage msg
 - couleur et affichage du pseudo remote (pour chan room multi )
@@ -62,26 +61,16 @@ MQ ok
 Friend present
 */
 
-
-//#define PAC_ON_D1MINI
-#define PAC_ON_ESP32
-
-
 // ================================================================================
 // Librairies
 // ================================================================================
 
-// Provided by Arduino IDE (with ESP8266 board plugins ?)
-#ifdef PAC_ON_D1MINI
-#include <ESP8266WiFi.h>
-#endif
-#ifdef PAC_ON_ESP32
+
 // Provided by ESP32 boards
 #include <WiFi.h>
 // For esp_read_mac() — reads MAC directly from eFuse without needing the
 // WiFi driver to be initialized.
 #include <esp_mac.h>
-#endif
 
 // Install from library manager: "PubSubClient" (2.8)
 #include <PubSubClient.h>
@@ -188,31 +177,10 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 
 // Pins configuration
 // ------------------
-// Pins OK:
-// D0 GPIO16 Attention : Ne supporte pas les interruptions. Doit être à HIGH au démarrage pour éviter les problèmes.
-// D5 GPIO14 Disponible.
-// D6 GPIO12 Disponible.
-// D7 GPIO13 Recommandée pour une LED.
-// D8 GPIO15 Attention : Doit être à LOW au démarrage pour le mode flash.
-// Pins Not OK:
-// Évite les broches D3 (GPIO0) et D4 (GPIO2) si tu utilises le WiFi ou le bootloader.
-// D1 GPIO5 : OLED shield pour la communication I2C (SCL)
-// D2 GPIO4 : OLED shield pour la communication I2C (SDA)
-// D3 GPIO0 Attention : Doit être à HIGH au démarrage (sinon, le D1 Mini passe en mode flash).
-// D4 GPIO2 LED intégrée (inversée : LOW = allumée). Peut être utilisée, mais la LED bleue intégrée s'allumera aussi.
 
-
-#ifdef PAC_ON_D1MINI
-//Préfère les broches D1, D2, D5, D6, D7 ou D8 pour une LED.
-#define LED_STATUS D8
-#define LED_FRIEND_1 D6
-#define LED_FRIEND_2 D1
-#endif
-#ifdef PAC_ON_ESP32
 #define LED_STATUS 32
 #define LED_FRIEND_1 33
 #define LED_FRIEND_2 25
-#endif
 
 
 // OLED configuration
@@ -227,21 +195,14 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 
 
 // On TFT to D1mini :
-//
 //   CS:  D1Mini pin D2 (GPIO4)
 //   RST: D1Mini pin D3 (GPIO0)
 //   DC:  D1Mini pin D4 (GPIO2)
 //   No need for constants if using std pins:
-#ifdef PAC_ON_D1MINI
 //     SCK (CLK) ---> D1Mini pin D5 (GPIO14, SLCK).  By default
 //     MOSI(DIN) ---> D1Mini pin D7 (GPIO13)
-#define TFT_RST D3
-#define TFT_CS D2
-#define TFT_DC D4
-#endif
 
 // On ESP32:
-#ifdef PAC_ON_ESP32
 // SCL : D18 GPIO18 "SCK". By default
 // SDA : D23 GPIO23 "MOSI"
 #define TFT_RST -1  // optional, can use RST pin
@@ -253,7 +214,6 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // is tied straight to 3.3 V — the dim phase becomes invisible but the OFF
 // state still works because it uses Adafruit_ST7789::enableDisplay(false).
 #define TFT_BL -1
-#endif
 
 
 
@@ -360,6 +320,11 @@ bool g_statusBarDirty   = true;
 unsigned long g_lastStatusBarPollMs = 0;
 #define STATUS_BAR_POLL_INTERVAL_MS 500
 
+// Non-zero value = the info screen is currently shown as a temporary overlay (triggered by "cmd status") and we should auto-revert to nominal once
+// millis() crosses it. Zero = not in the status-overlay state. The revert path is in loop() near the status bar polling block.
+unsigned long g_statusScreenEndMs = 0;
+#define STATUS_SCREEN_DURATION_MS 10000
+
 // Conversation mode = status bar + scroll area + input footer are all live.
 // Fullscreen modes (splash, info) set this to false to suppress the periodic
 // status bar repaint that would otherwise draw indicators over their content.
@@ -393,6 +358,8 @@ int g_lineCount = 0;
 
 #define CONVO_INFO_COLOR ST77XX_GREEN
 #define CONVO_ERROR_COLOR ST77XX_RED
+// Hot pink (RGB565 ≈ #FF69B4). Used by "cmd help" to make the listing visually distinct from regular messages and from info/error notices.
+#define CONVO_HELP_COLOR 0xFB56
 
 // When two messages (incoming or outgoing) land within this many seconds,
 // suppress the second one's timestamp to declutter the conversation view.
@@ -1667,6 +1634,8 @@ const char* const CMD_DISCONNECT_WIFI = "cmd wifi";
 const char* const CMD_DISCONNECT_MQTT = "cmd mqtt";
 const char* const CMD_BONDS           = "cmd bonds";
 const char* const CMD_REDRAW          = "cmd redraw";
+const char* const CMD_HELP            = "cmd help";
+const char* const CMD_STATUS          = "cmd status";
 
 bool processPayloadAsCommand(const String& message) {
   if (message == CMD_DISCONNECT_WIFI) {
@@ -1674,11 +1643,13 @@ bool processPayloadAsCommand(const String& message) {
     WiFi.disconnect();
     return true;
   }
+
   if (message == CMD_DISCONNECT_MQTT) {
     ESP_LOGI(TAG_MM, "Command [%s] — disconnecting MQTT", CMD_DISCONNECT_MQTT);
     g_mqttClient.disconnect();
     return true;
   }
+
   if (message == CMD_BONDS) {
     // Going through NimBLEDevice directly (rather than the keyboard wrapper's
     // protected clearAllExistingBonds()) keeps mm_blekb's API surface intact.
@@ -1686,13 +1657,35 @@ bool processPayloadAsCommand(const String& message) {
     NimBLEDevice::deleteAllBonds();
     return true;
   }
+
   if (message == CMD_REDRAW) {
-    // Full repaint of the scroll area from the in-memory ring buffer.
-    // Useful to recover after a visual glitch, or after the framebuffer ring
-    // has drifted from the logical state. Status bar and footer are left
-    // untouched (the VSCRDEF partition protects them).
-    ESP_LOGI(TAG_MM, "Command [%s] — full redraw from ring buffer", CMD_REDRAW);
-    redrawAllConversations();
+    // Full repaint: status bar + footer + scroll area refilled from the ring buffer. Same path as the auto-revert from "cmd status" so a user
+    // who lost faith in the screen state always has one single recovery command. Useful after visual glitches or framebuffer/state drift.
+    ESP_LOGI(TAG_MM, "Command [%s] — full redraw of the 3 zones", CMD_REDRAW);
+    returnToNominalScreen();
+    return true;
+  }
+
+  if (message == CMD_STATUS) {
+    // Switch to the info screen for STATUS_SCREEN_DURATION_MS, then auto-revert. The timer is honored by loop() (non-blocking, so MQTT/BLE keep
+    // running). Re-issuing "cmd status" during the overlay just resets the timer; "cmd redraw" cancels it explicitly via returnToNominalScreen.
+    ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned) STATUS_SCREEN_DURATION_MS);
+    showUpdatedInfoScreen(true);
+    g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
+    return true;
+  }
+
+  if (message == CMD_HELP) {
+    // Lists the available cmd vocabulary in the conversation, left-aligned and pink so it stands out from normal traffic. One block per row keeps
+    // each entry on its own line in the scroll area; the leading two spaces inside each string give the description column some breathing room.
+    ESP_LOGI(TAG_MM, "Command [%s] — listing commands", CMD_HELP);
+    addConversationBlock("", "Commands:",                   CONVO_HELP_COLOR, LEFT);
+    addConversationBlock("", "help    list cmds",         CONVO_HELP_COLOR, LEFT);
+    addConversationBlock("", "wifi    drop WiFi",         CONVO_HELP_COLOR, LEFT);
+    addConversationBlock("", "mqtt    drop MQTT",         CONVO_HELP_COLOR, LEFT);
+    addConversationBlock("", "bonds   clear BT bonds",    CONVO_HELP_COLOR, LEFT);
+    addConversationBlock("", "redraw  full repaint",      CONVO_HELP_COLOR, LEFT);
+    addConversationBlock("", "status  info screen",   CONVO_HELP_COLOR, LEFT);
     return true;
   }
   return false;
@@ -1741,6 +1734,15 @@ void cleanScreen() {
   }
 }
 
+// Returns to the nominal 3-zone screen (upper status bar + scroll area + footer) and repaints all three from their in-memory state. Called by
+// "cmd redraw" and by the "cmd status" timeout in loop(). Also clears g_statusScreenEndMs so a pending timeout doesn't fire a redundant revert
+// when the user triggers a manual redraw mid-overlay.
+void returnToNominalScreen() {
+  g_statusScreenEndMs = 0;
+  cleanScreen();              // HW scroll reset + repaint of status bar + footer
+  redrawAllConversations();   // refill the scroll area from the ring buffer
+}
+
 void showUpdatedInfoScreen(bool withMQTTInfo) {
   String mac = WiFi.macAddress();
 
@@ -1756,9 +1758,8 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     int colHeaders = 2;
     int colValues = 70;
     int lineHeight = 22;
-    // Values land 4 px below the header baseline so the smaller size-1 glyphs
-    // appear vertically centered against the size-2 header on the same row.
-    int valueYOffset = 4;
+    // Headers and values are both at setTextSize(2) — same glyph height, so they sit on the same baseline (offset = 0).
+    int valueYOffset = 0;
 
     int nextY = 0;
 
@@ -1768,7 +1769,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->print("ID:");
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->setTextSize(1);
+    pDisp->setTextSize(2);
     pDisp->print(g_deviceIdMe);
     nextY += lineHeight;
 
@@ -1778,7 +1779,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->print("Name:");
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->setTextSize(1);
+    pDisp->setTextSize(2);
     pDisp->print(g_deviceName);
     nextY += lineHeight;
 
@@ -1788,7 +1789,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->print("MAC:");
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->setTextSize(1);
+    pDisp->setTextSize(2);
     pDisp->print(mac);
     nextY += lineHeight;
 
@@ -1801,7 +1802,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->print("BTKB:");
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->setTextSize(1);
+    pDisp->setTextSize(2);
     pDisp->print(g_kb.isFullyConnected() ? "Connected" : "Not found");
     nextY += lineHeight;
 
@@ -1811,7 +1812,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->print("SSID:");
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->setTextSize(1);
+    pDisp->setTextSize(2);
     pDisp->print(g_wifiSSID);
     nextY += lineHeight;
 
@@ -1821,7 +1822,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
     pDisp->print("IP:");
     pDisp->setCursor(colValues, nextY + valueYOffset);
     pDisp->setTextColor(ST77XX_WHITE);
-    pDisp->setTextSize(1);
+    pDisp->setTextSize(2);
     if (WiFi.status() != WL_CONNECTED) {
       pDisp->print("NO WIFI");
     } else {
@@ -1837,7 +1838,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
       pDisp->print("MQTT: ");
       pDisp->setCursor(colValues, nextY + valueYOffset);
       pDisp->setTextColor(ST77XX_WHITE);
-      pDisp->setTextSize(1);
+      pDisp->setTextSize(2);
       if (!g_mqttClient.connected()) {
         pDisp->print("NOT OK");
       } else {
@@ -2072,6 +2073,12 @@ void loop() {
       && currentMillis - g_lastStatusBarPollMs >= STATUS_BAR_POLL_INTERVAL_MS) {
     g_lastStatusBarPollMs = currentMillis;
     redrawStatusBar();
+  }
+
+  // Auto-revert from the "cmd status" info-screen overlay back to the nominal 3-zone view after STATUS_SCREEN_DURATION_MS. Non-blocking so MQTT
+  // and BLE keep running during the overlay; the same returnToNominalScreen() path is used by "cmd redraw" for consistency.
+  if (g_statusScreenEndMs != 0 && currentMillis >= g_statusScreenEndMs) {
+    returnToConversationsScreen();
   }
 
   // Burn-in protection: advance the dim → off state machine based on idle time.
