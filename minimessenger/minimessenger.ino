@@ -799,7 +799,7 @@ boolean setupKeyboard() {
 
   return g_kb.setup(
     "Bluetooth Keyboard",
-    true, //false,
+    false, // clear bonds
     onBluetoothKeyboardConnectionCallback,
     onBluetoothKeyboardNotifyCallback);
 }

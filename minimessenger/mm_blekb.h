@@ -3,7 +3,7 @@
 #include <NimBLEDevice.h>
 
 
-typedef std::function<void(boolean isFullyConnected)> mm_btkb_on_connection_callback;
+typedef std::function<void(bool isFullyConnected)> mm_btkb_on_connection_callback;
 
 // Original notify_callback is defined in NimBLE-Arduino as:
 // typedef std::function<void(NimBLERemoteCharacteristic*, uint8_t*, size_t, bool)> notify_callback;
@@ -17,7 +17,10 @@ typedef std::function<void(uint8_t* pData, size_t length)> mm_btkb_on_keystroke_
  *
  * NimBLE-Arduino merges the security callbacks (passkey, auth complete) into
  * NimBLEClientCallbacks, so we only need to inherit two callback bases instead
- * of the three required by Bluedroid.
+ * of the three required by Bluedroid. We use Just Works pairing
+ * (IO_NO_INPUT_OUTPUT), so onPassKeyEntry / onConfirmPasskey are never invoked
+ * by the stack and are not overridden here — the base class no-op defaults
+ * are sufficient.
  */
 class MiniMessengerBLEKeyboardInterface
   : public NimBLEScanCallbacks,
@@ -45,19 +48,16 @@ protected:
   void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override;
   void onScanEnd(const NimBLEScanResults& scanResults, int reason) override;
 
-  // NimBLEClientCallbacks (connect + security callbacks merged)
+  // NimBLEClientCallbacks
   void onConnect(NimBLEClient* pClient) override;
   void onDisconnect(NimBLEClient* pClient, int reason) override;
-  void onPassKeyEntry(NimBLEConnInfo& connInfo) override;
-  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override;
   void onAuthenticationComplete(NimBLEConnInfo& connInfo) override;
 
 private:
   NimBLEAddress* pServerAddress = nullptr;
-  NimBLERemoteCharacteristic* pRemoteCharacteristic = nullptr;
-  boolean m_connectionDone = false;
-  boolean doConnect = false;
-  boolean doScan = true;
+  bool m_connectionDone = false;
+  bool doConnect = false;
+  bool doScan = true;
 
   static void bleNotifyCallback(
     NimBLERemoteCharacteristic* pChar,

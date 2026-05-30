@@ -33,7 +33,10 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& add
     return false;
   }
 
-  pRemoteCharacteristic = pRemoteService->getCharacteristic(NimBLEUUID((uint16_t)0x2A4D));  // HID Report
+  // Local: only ever used inside this function. No reason to live as a
+  // class member.
+  NimBLERemoteCharacteristic* pRemoteCharacteristic =
+      pRemoteService->getCharacteristic(NimBLEUUID((uint16_t)0x2A4D));  // HID Report
   if (pRemoteCharacteristic == nullptr) {
     Serial.println("BTKB: HID Report characteristic 0x2A4D not found!");
     return false;
@@ -65,6 +68,12 @@ void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* a
     Serial.println(']');
 
     NimBLEDevice::getScan()->stop();
+
+    // Free any address kept from a previous scan/disconnect cycle before
+    // allocating a new one — otherwise repeated re-pairings leak ~24 bytes
+    // of heap per cycle. `delete nullptr` is a no-op, so this is safe on the
+    // first call too.
+    delete pServerAddress;
     pServerAddress = new NimBLEAddress(advertisedDevice->getAddress());
 
     doConnect = true;
@@ -85,29 +94,6 @@ void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanR
 
 
 // ============================================================================
-// Security callbacks (merged into NimBLEClientCallbacks).
-// None of these will be called: we use IO_NO_INPUT_OUTPUT → "Just Works" pairing.
-// ============================================================================
-
-void MiniMessengerBLEKeyboardInterface::onPassKeyEntry(NimBLEConnInfo& connInfo) {
-  Serial.printf("BTKB: onPassKeyEntry() not implemented, injecting dummy passkey\n");
-  NimBLEDevice::injectPassKey(connInfo, 123456);
-}
-
-void MiniMessengerBLEKeyboardInterface::onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) {
-  Serial.printf("BTKB: onConfirmPasskey() not implemented, accepting %06u\n", pin);
-  NimBLEDevice::injectConfirmPasskey(connInfo, true);
-}
-
-void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
-  if (connInfo.isEncrypted()) {
-    Serial.println("BTKB: Authentication complete - Bonding success ✅ (saved in NVS).");
-  } else {
-    Serial.println("BTKB: Authentication failed ❌");
-  }
-}
-
-// ============================================================================
 // Client callbacks (NimBLEClientCallbacks)
 // ============================================================================
 
@@ -121,6 +107,14 @@ void MiniMessengerBLEKeyboardInterface::onDisconnect(NimBLEClient* pClient, int 
   m_clientOnConnectionCallback(m_connectionDone);
 
   doScan = true;
+}
+
+void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
+  if (connInfo.isEncrypted()) {
+    Serial.println("BTKB: Authentication complete - Bonding success ✅ (saved in NVS).");
+  } else {
+    Serial.println("BTKB: Authentication failed ❌");
+  }
 }
 
 
@@ -140,19 +134,21 @@ bool MiniMessengerBLEKeyboardInterface::setup(
   bool clearExistingBonds,
   mm_btkb_on_connection_callback onConnectionCallback,
   mm_btkb_on_keystroke_callback onKeystrokeCallback) {
-  Serial.println("MiniMessengerBLEKeyboardInterface::setup()...");
+  Serial.println("BTKB: MiniMessengerBLEKeyboardInterface::setup()...");
 
   NimBLEDevice::init("");
 
   // Bonding=true, MITM=false, Secure Connections=false.
-  // IO_NO_INPUT_OUTPUT → "Just Works" pairing (no PIN exchange).
+  // IO_NO_INPUT_OUTPUT → "Just Works" pairing (no PIN exchange, no user
+  // confirmation). That's why onPassKeyEntry / onConfirmPasskey are not
+  // overridden in this class — the stack never calls them in this mode.
   NimBLEDevice::setSecurityAuth(true, false, false);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 
   // Clear bonding info if you want fresh pairing
   if (clearExistingBonds) clearAllExistingBonds();
 
-  Serial.printf("BLKB: Starting scan for keyboard named [%s]\n...", keyboardBluetoothName.c_str());
+  Serial.printf("BTKB: Starting scan for keyboard named [%s]\n", keyboardBluetoothName.c_str());
   this->m_expectedKeyboardBluetoothName = keyboardBluetoothName;
 
   NimBLEScan* pBLEScan = NimBLEDevice::getScan();
@@ -175,16 +171,16 @@ void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
 
   if (doConnect) {
     if (connectToServer(*pServerAddress)) {
-      Serial.println("BTKB - tryToMaintainConnection() : We are now connected");
+      Serial.println("BTKB: tryToMaintainConnection() : We are now connected");
     } else {
-      Serial.println("BTKB - tryToMaintainConnection() : Failed to connect");
+      Serial.println("BTKB: tryToMaintainConnection() : Failed to connect");
       doScan = true;  // retry scan if connect failed
     }
     doConnect = false;
   }
 
   if (doScan) {
-    Serial.println("BLKB: Rescanning...");
+    Serial.println("BTKB: Rescanning...");
     NimBLEDevice::getScan()->start(m_scanningDurationSec * 1000, false);
     // NimBLE scan is async — flag it as "in flight" so we don't restart it
     // every loop iteration. onScanEnd() will re-arm doScan when the window
