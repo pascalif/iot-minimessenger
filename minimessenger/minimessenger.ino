@@ -3,6 +3,28 @@
 ESP32 Whatsapp
 avec le freebroker HiveMQ + BT keyboard +
 
+Screen layout (portrait, 240×320, see docs/howto_hardware_scrolling.md):
+
+  +---------------------------------------------+   ← y=0
+  |  ● ● ●                                ●     |   STATUS_BAR (25 px, VSCRDEF TFA)
+  |  WiFi BT MQTT                       Contact |   filled/empty per state
+  |  (wh) (bl) (yel)                    (red)   |
+  |.............................................|   ← y=23 (light gray hairline)
+  |                                             |   ← y=24 (1 px black breathing gap)
+  +---------------------------------------------+   ← y=25
+  |                                             |
+  |                                             |
+  |   Conversation messages — HW scroll up      |   SCROLL_AREA (272 px, VSCRDEF VSA)
+  |   (newest at the bottom, older above)       |   VSCSAD bumped on each new line
+  |                                             |
+  |                                             |
+  |                                             |
+  +---------------------------------------------+   ← y=296
+  |  ┌─────────────────────────────────────┐ |  |   FOOTER (24 px, VSCRDEF BFA)
+  |  │ typed_msg_buffer_here_              │ │  |   White frame + yellow cursor;
+  |  └─────────────────────────────────────┘ |  |   reflects g_currentMsg live
+  +---------------------------------------------+   ← y=320
+
 Old
 Tools > Boards :           D1Mini : Connecter avec "LOLIN(WEMOS) D1 R2 & mini", baud 115200
                            ESP32 : ESP32 Dev Module
@@ -288,18 +310,65 @@ const char* root_ca =
 // non-scroll redraw path: showUpdatedInfoScreen, splash, etc.)
 uint16_t g_nextTextTopY = 0;
 
-// === Hardware scroll state (ST7789, portrait, full-screen scroll area) ===
+// === Hardware scroll state (ST7789, portrait, partitioned framebuffer) ===
 // FB_HEIGHT is the ST7789 framebuffer height in its NATIVE portrait
 // orientation. The scroll commands (VSCRDEF / VSCSAD) always operate on
 // framebuffer coordinates, irrespective of setRotation().
-#define FB_WIDTH  240
-#define FB_HEIGHT 320
+//
+// We partition the 320 framebuffer lines into three regions:
+//   [0, 24)             Top Fixed Area     → status bar (indicators)
+//   [24, 296)           Vertical Scroll    → conversation messages
+//   [296, 320)          Bottom Fixed Area  → input feedback footer
+// The Top/Bottom Fixed areas are not affected by VSCSAD — we draw to them
+// directly with normal GFX calls.
+#define FB_WIDTH         240
+#define FB_HEIGHT        320
+// STATUS_BAR_H = 24 (icons + separator hairline) + 1 (black gap to aerate
+// before the scroll area). The separator is drawn at line STATUS_BAR_H - 2.
+#define STATUS_BAR_H     25
+#define FOOTER_H         24
+#define SCROLL_AREA_H    (FB_HEIGHT - STATUS_BAR_H - FOOTER_H)  // 271
+#define SCROLL_AREA_Y_FB STATUS_BAR_H                            // 25
+#define FOOTER_Y_FB      (FB_HEIGHT - FOOTER_H)                  // 296
 
-// g_scrollY: current VSCSAD value. Framebuffer Y of the visible top line.
-// g_drawY:   framebuffer Y where the next conversation block's top will be
-//            drawn. After a draw + scroll, g_drawY == g_scrollY (mod FB_HEIGHT).
+// g_scrollY: scroll OFFSET inside the scroll area, in [0, SCROLL_AREA_H).
+//            The absolute VSCSAD value sent to the controller is
+//            g_scrollY + STATUS_BAR_H.
+// g_drawY:   offset inside the scroll area where the next conversation
+//            block's top will be drawn. In [0, SCROLL_AREA_H).
+//            After a draw + scroll, g_drawY == g_scrollY (mod SCROLL_AREA_H).
 uint16_t g_scrollY = 0;
 uint16_t g_drawY   = 0;
+
+// === Status bar layout ===
+// Three small indicators on the left (WiFi white, BT blue, MQTT yellow) + one
+// chip on the right (contact, red). The radius is sized to fit comfortably in
+// the 24 px high bar with a few pixels of margin.
+#define ICON_RADIUS     7
+#define ICON_Y_CENTER   (STATUS_BAR_H / 2)        // 12
+// Order from left to right: WiFi, BT, MQTT.
+#define ICON_WIFI_X     12
+#define ICON_BT_X       30
+#define ICON_MQTT_X     48
+#define ICON_CONTACT_X  (FB_WIDTH - 12)           // 228
+
+// Light-gray hairline drawn on the bottom row of the status bar to visually
+// separate it from the scroll area. RGB565 of #DDDDDD = 0xDEFB.
+#define STATUS_BAR_SEPARATOR_COLOR 0xDEFB
+
+// Last drawn state — used to skip a redraw when nothing changed.
+bool g_lastDrawnBt      = false;
+bool g_lastDrawnWifi    = false;
+bool g_lastDrawnMqtt    = false;
+bool g_lastDrawnContact = true;   // placeholder until contact tracking exists
+bool g_statusBarDirty   = true;
+unsigned long g_lastStatusBarPollMs = 0;
+#define STATUS_BAR_POLL_INTERVAL_MS 500
+
+// Conversation mode = status bar + scroll area + input footer are all live.
+// Fullscreen modes (splash, info) set this to false to suppress the periodic
+// status bar repaint that would otherwise draw indicators over their content.
+bool g_inConversationMode = false;
 
 // Objet représentant une ligne
 #define BOX_X 0
@@ -328,6 +397,13 @@ int g_lineCount = 0;
 
 #define CONVO_INFO_COLOR ST77XX_GREEN
 #define CONVO_ERROR_COLOR ST77XX_RED
+
+// When two messages (incoming or outgoing) land within this many seconds,
+// suppress the second one's timestamp to declutter the conversation view.
+// The "last visible timestamp" tracking continues until a message arrives
+// outside the window, at which point the timestamp is shown again.
+#define CONVO_TS_HIDE_THRESHOLD_S 10
+time_t g_lastShownTsEpoch = 0;
 
 // WiFi
 WiFiClientSecure g_wifiClient;
@@ -421,6 +497,8 @@ String g_currentMsg = "";
 
 void setRecipient(int recipientDeviceId);
 void showUpdatedInfoScreen(bool withMQTTInfo);
+void redrawStatusBar();
+void redrawInputFooter();
 
 
 // ================================================================================
@@ -608,12 +686,14 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
       if (g_currentMsg.length() >= 1) {
         g_currentMsg.remove(g_currentMsg.length() - 1);
         Serial.printf("Current msg: [%s]\n", g_currentMsg.c_str());
+        redrawInputFooter();
       }
       return;
     } else if (key1 == KEY_ENTER) {
       Serial.println("ENTER key. Sending message buffer");
       Serial.println("TODO Send message !");
       g_currentMsg = "";
+      redrawInputFooter();
       return;
     } else if (key1 == KEY_LEFT) {
       Serial.println("TODO KEY_LEFT key. ");
@@ -626,6 +706,7 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
     else if (key1 == KEY_ESC) {
       Serial.println("ESC key. Resetting message buffer");
       g_currentMsg = "";
+      redrawInputFooter();
       return;
     }
     // Keys we don't want to deal with
@@ -651,6 +732,7 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
       Serial.printf("Key: [%c]\n", ascii);
       g_currentMsg.concat(ascii);
       Serial.printf("Current msg: [%s]\n", g_currentMsg.c_str());
+      redrawInputFooter();
 
     } else {
       Serial.print("Unknown HID code: ");
@@ -918,6 +1000,8 @@ void ledSetState(int pin, int requiredState) {
     digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
     //hlogn("details pin #", pin, " g_ledBlinkStateIsHigh[pin]=", g_ledBlinkStateIsHigh[pin], " g_ledBlinkLastTimestampMs[pin]=", g_ledBlinkLastTimestampMs[pin]);
   }
+
+  // drawIndicatorAt
 }
 
 void ledCommuteBlinkState(int pin) {
@@ -966,25 +1050,31 @@ void setupLeds() {
 void hwScrollSetupArea() {
   if (g_displayType != DisplayType::ST7789) return;
   Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-  // top_fixed = 0, scroll_area = FB_HEIGHT, bottom_fixed = 0 (full screen scrolls)
+  // TFA = STATUS_BAR_H, VSA = SCROLL_AREA_H, BFA = FOOTER_H.
+  // TFA + VSA + BFA must equal FB_HEIGHT (=320 for ST7789).
   uint8_t args[6] = {
-    0, 0,
-    (uint8_t)(FB_HEIGHT >> 8), (uint8_t)(FB_HEIGHT & 0xFF),
-    0, 0,
+    0, STATUS_BAR_H,
+    (uint8_t)(SCROLL_AREA_H >> 8), (uint8_t)(SCROLL_AREA_H & 0xFF),
+    0, FOOTER_H,
   };
   pDisp->sendCommand(0x33, args, 6);  // VSCRDEF
 }
 
-void hwScrollTo(uint16_t y) {
-  g_scrollY = y % FB_HEIGHT;
+// `scrollOffset` is the offset within the scroll area in [0, SCROLL_AREA_H).
+// The absolute VSCSAD value sent to the controller must be in [TFA, TFA+VSA).
+void hwScrollTo(uint16_t scrollOffset) {
+  g_scrollY = scrollOffset % SCROLL_AREA_H;
   if (g_displayType != DisplayType::ST7789) return;
   Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-  uint8_t args[2] = { (uint8_t)(g_scrollY >> 8), (uint8_t)(g_scrollY & 0xFF) };
+  uint16_t absoluteScrollY = g_scrollY + STATUS_BAR_H;
+  uint8_t args[2] = { (uint8_t)(absoluteScrollY >> 8), (uint8_t)(absoluteScrollY & 0xFF) };
   pDisp->sendCommand(0x37, args, 2);  // VSCSAD
 }
 
-// Reset scroll state and clear the framebuffer. Call this before any "static"
-// screen (splash, info, status) so it draws at known coordinates.
+// Reset scroll state and clear the ENTIRE framebuffer (status bar and footer
+// included). Used by splash / info screens that paint full-screen content.
+// cleanScreen() (the conversation-mode entry point) calls this AND then
+// redraws the status bar and footer borders on top.
 void hwScrollReset() {
   g_scrollY = 0;
   g_drawY   = 0;
@@ -993,6 +1083,95 @@ void hwScrollReset() {
   if (g_displayType == DisplayType::ST7789) {
     g_disp->fillScreen(ST77XX_BLACK);
   }
+  // Force status bar to redraw next time it's polled (state cache is now stale).
+  g_statusBarDirty = true;
+}
+
+
+// === Status bar (TFA) ===
+// Three indicators on the left, one chip on the right. Filled = ON, outline only = OFF.
+static void drawIndicatorAt(int x, bool filled, uint16_t color) {
+  if (filled) {
+    g_disp->fillCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
+  } else {
+    g_disp->drawCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
+  }
+}
+
+// Read current connection states and repaint the bar if any of them changed
+// since the last draw (or if forced by g_statusBarDirty). No-op when a
+// fullscreen mode (splash, info) is showing — would otherwise paint icons
+// over their content.
+void redrawStatusBar() {
+  if (!g_inConversationMode) return;
+
+  bool bt      = g_kb.isFullyConnected();
+  bool wifi    = (WiFi.status() == WL_CONNECTED);
+  bool mqtt    = g_mqttClient.connected();
+  bool contact = true;   // TODO wire to actual friend-presence tracking
+
+  if (!g_statusBarDirty
+      && bt      == g_lastDrawnBt
+      && wifi    == g_lastDrawnWifi
+      && mqtt    == g_lastDrawnMqtt
+      && contact == g_lastDrawnContact) {
+    return;
+  }
+
+  if (g_displayType != DisplayType::ST7789) return;
+
+  g_disp->fillRect(0, 0, FB_WIDTH, STATUS_BAR_H, ST77XX_BLACK);
+  drawIndicatorAt(ICON_WIFI_X, wifi, ST77XX_WHITE);
+  drawIndicatorAt(ICON_BT_X,   bt,   ST77XX_BLUE);
+  drawIndicatorAt(ICON_MQTT_X, mqtt, ST77XX_YELLOW);
+  // Contact chip: hardcoded ON for now (see TODO above).
+  drawIndicatorAt(ICON_CONTACT_X, contact, ST77XX_RED);
+  // Separator hairline, one pixel above the bottom of the bar — the very
+  // bottom row stays black to give the icons breathing room.
+  g_disp->drawFastHLine(0, STATUS_BAR_H - 2, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
+
+  g_lastDrawnBt      = bt;
+  g_lastDrawnWifi    = wifi;
+  g_lastDrawnMqtt    = mqtt;
+  g_lastDrawnContact = contact;
+  g_statusBarDirty   = false;
+}
+
+
+// === Input feedback footer (BFA) ===
+// Shows the current `g_currentMsg` being typed via the BT keyboard, framed
+// by a white rectangle, with a yellow cursor bar pinned to the right edge.
+// Repainted on every keystroke (Enter / Backspace / regular char).
+void redrawInputFooter() {
+  if (!g_inConversationMode) return;
+  if (g_displayType != DisplayType::ST7789) return;
+
+  // Wipe the whole footer strip.
+  g_disp->fillRect(0, FOOTER_Y_FB, FB_WIDTH, FOOTER_H, ST77XX_BLACK);
+
+  // White border, inset 2 px from the screen edges for breathing room.
+  g_disp->drawRect(2, FOOTER_Y_FB + 2, FB_WIDTH - 4, FOOTER_H - 4, ST77XX_WHITE);
+
+  // Typed text, default 5×7 font at size 1 → ~6 px per char, fits ~37 chars.
+  // If the message is longer we show the last N characters that fit, so the
+  // cursor on the right remains visually anchored to "where you're typing".
+  const int kCharWidth   = 6;
+  const int kInsideX     = 6;
+  const int kCursorX     = FB_WIDTH - 8;
+  const int kTextAreaW   = kCursorX - kInsideX - 2;
+  const int kMaxChars    = kTextAreaW / kCharWidth;
+  const char* full = g_currentMsg.c_str();
+  int len = g_currentMsg.length();
+  const char* shown = (len > kMaxChars) ? (full + (len - kMaxChars)) : full;
+
+  g_disp->setFont(NULL);
+  g_disp->setTextSize(1);
+  g_disp->setTextColor(ST77XX_WHITE);
+  g_disp->setCursor(kInsideX, FOOTER_Y_FB + (FOOTER_H - 8) / 2);
+  g_disp->print(shown);
+
+  // Yellow cursor bar pinned to the right of the input area.
+  g_disp->drawFastVLine(kCursorX, FOOTER_Y_FB + 6, FOOTER_H - 12, ST77XX_YELLOW);
 }
 
 
@@ -1097,6 +1276,7 @@ void showSplashScreen() {
   if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
+    g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
     hwScrollReset();  // ensure we draw at framebuffer Y = screen Y = 0
     pDisp->print("Splash!");
 
@@ -1204,6 +1384,18 @@ msgBuf[sizeof(msgBuf) - 1] = '\0';
 utf8ToLatin1(msgBuf);
 // Then use msgBuf everywhere instead of msg.c_str() for the on-screen draw.
 
+  // Timestamp clustering: if a timestamp was drawn less than
+  // CONVO_TS_HIDE_THRESHOLD_S ago, drop this one to declutter. Only "real"
+  // timestamps (non-empty ts) update the tracker — status lines like
+  // "Lost server" / "Ready !" pass ts="" and don't reset the window.
+  if (!ts.isEmpty()) {
+    time_t now = time(nullptr);
+    if (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S) {
+      ts = "";   // suppress the timestamp; the rest of the function handles it
+    }
+    // Reset dans tous les cas, on compare chaque message à la date de son précédent (meme si TS pas affiché)
+    g_lastShownTsEpoch = now;
+  }
 
   // Dimension TS
   uint16_t tsBlockHWithMargin = 0;
@@ -1281,26 +1473,30 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
   // ring, then bump VSCSAD by H. Old content scrolls off the top as the
   // controller re-maps the visible window — no full redraw. ===
 
-  // Wrap avoidance: if the block would cross the framebuffer top boundary,
-  // skip the remaining tail and start at fb_Y = 0. The skipped tail is
-  // wiped (otherwise stale content from a previous wrap would scroll back
+  // Wrap avoidance: if the block would cross the scroll-area top boundary,
+  // skip the remaining tail and restart at scroll-offset 0. The skipped tail
+  // is wiped (otherwise stale content from a previous wrap would scroll back
   // into view), and the same number of pixels is added to the scroll so the
   // user perceives a single (slightly bigger than H) smooth scroll.
-  if (g_drawY + H > FB_HEIGHT) {
-    uint16_t skipped = FB_HEIGHT - g_drawY;
-    g_disp->fillRect(0, g_drawY, FB_WIDTH, skipped, ST77XX_BLACK);
+  // NOTE: `g_drawY` and `g_scrollY` are offsets INSIDE the scroll area
+  // ([0, SCROLL_AREA_H)). All fillRect / setCursor positions are absolute
+  // framebuffer Y, so we add SCROLL_AREA_Y_FB (= STATUS_BAR_H) at draw time.
+  if (g_drawY + H > SCROLL_AREA_H) {
+    uint16_t skipped = SCROLL_AREA_H - g_drawY;
+    g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
     g_drawY = 0;
-    g_scrollY = (g_scrollY + skipped) % FB_HEIGHT;
+    g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
   }
 
-  // Wipe the strip we're about to overdraw (it's stale content from the
-  // last time this region of the framebuffer ring was used).
-  g_disp->fillRect(0, g_drawY, FB_WIDTH, H, ST77XX_BLACK);
+  // Wipe the strip we're about to overdraw (stale content from the previous
+  // wrap of the framebuffer ring).
+  g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, H, ST77XX_BLACK);
 
-  // Draw TS then MSG at framebuffer Y = g_drawY. getTextBounds returned
-  // negative tsBox/msgBox y for ascender-using fonts, so we offset the
-  // cursor by `- bounds[BOX_Y]` (cf. the big French comment above).
-  uint16_t fbY = g_drawY;
+  // Draw TS then MSG at framebuffer Y = g_drawY + SCROLL_AREA_Y_FB.
+  // getTextBounds returns negative tsBox/msgBox y for ascender-using fonts,
+  // so we offset the cursor by `- bounds[BOX_Y]` (cf. the big French comment
+  // above).
+  uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
   if (!ts.isEmpty()) {
     g_disp->setFont(NULL);
     g_disp->setTextSize(CONVO_TS_FONT_SIZE);
@@ -1315,9 +1511,9 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
   g_disp->setCursor(msgX - msgBox[BOX_X], fbY - msgBox[BOX_Y]);
   g_disp->print(msgBuf);
 
-  // Bump framebuffer cursor and the user-visible scroll register.
-  g_drawY   = (g_drawY   + H) % FB_HEIGHT;
-  g_scrollY = (g_scrollY + H) % FB_HEIGHT;
+  // Bump scroll-area cursor and the user-visible scroll register.
+  g_drawY   = (g_drawY   + H) % SCROLL_AREA_H;
+  g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
   hwScrollTo(g_scrollY);
 }
 
@@ -1333,8 +1529,15 @@ void setRecipient(int recipientDeviceId) {
   hlogn("MQTT: Setting recipient topic to [", g_mqttOutoingRecipientTopic, ']');
 }
 
-void onIncomingTextMessage(String messageDate, String pseudoOther, String message) {
+void onMQTTReconnected() {
+        //showUpdatedInfoScreen(true);
+        //delay(1000);
 
+        cleanScreen();
+        addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+}
+
+void onIncomingTextMessage(String messageDate, String pseudoOther, String message) {
   if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
@@ -1366,8 +1569,13 @@ void onOutgoingMessage(String message) {
 
 void cleanScreen() {
   if (g_displayType == DisplayType::ST7789) {
-    // hwScrollReset() does the scroll-register reset AND the fillScreen.
+    // hwScrollReset() wipes the entire framebuffer (status bar / footer
+    // included). Right after, we mark conversation mode and repaint the
+    // status bar + the empty input footer.
     hwScrollReset();
+    g_inConversationMode = true;
+    redrawStatusBar();
+    redrawInputFooter();
   } else {
     hlogn("cleanScreen: DISPLAY_TYPE_NOT_CONFIGURED");
   }
@@ -1381,6 +1589,7 @@ void showUpdatedInfoScreen(bool withMQTTInfo) {
 
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
+    g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
     hwScrollReset();  // info screen draws at fixed coordinates, scroll must be 0
 
     pDisp->setFont(NULL);  // font par défaut
@@ -1601,11 +1810,7 @@ void loop() {
       g_mqttLastReconnectTryTimestampMs = currentMillis;
 
       if (mqttReconnect()) {
-        showUpdatedInfoScreen(true);
-        delay(1000);
-
-        cleanScreen();
-        addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+          onMQTTReconnected();
       }
       // On failure: no delay() — the time gate above throttles the next retry.
     }
@@ -1676,6 +1881,16 @@ void loop() {
     }
   }
 
+  // Status bar refresh: poll BT/WiFi/MQTT state every ~500 ms — but only in
+  // conversation mode, so the indicators don't get painted over a splash or
+  // info screen. redrawStatusBar short-circuits internally if nothing changed
+  // since the last paint, so this is cheap on average.
+  if (g_inConversationMode
+      && currentMillis - g_lastStatusBarPollMs >= STATUS_BAR_POLL_INTERVAL_MS) {
+    g_lastStatusBarPollMs = currentMillis;
+    redrawStatusBar();
+  }
+
   // Burn-in protection: advance the dim → off state machine based on idle time.
   updateDisplayPowerState();
 
@@ -1700,23 +1915,23 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
 
   if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
     int remoteDeviceId = atoi(message.c_str());
-    onLiveness(remoteDeviceId, true);
+    onReceivedContactLiveness(remoteDeviceId, true);
   } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
     int remoteDeviceId = atoi(message.c_str());
-    onLiveness(remoteDeviceId, false);
+    onReceivedContactLiveness(remoteDeviceId, false);
   }
   // msg/unicast/<me> or msg/broadcast
   else if (topic[0] == 'm') {
     hlogn("MQTT: Incoming message [", message, ']');
 
-    onIncomingTextMessage("13:34:23", "Jolan", message);
+    onIncomingTextMessage(getCurrentTime(), "Jolan", message);
 
   } else {
     hlogn("MQTT: Message received in unknown topic [", topic, "] : [", message, ']');
   }
 }
 
-void onLiveness(int remoteDeviceId, bool isLive) {
+void onReceivedContactLiveness(int remoteDeviceId, bool isLive) {
   if (remoteDeviceId == g_deviceIdMe) {
     return;
   }
