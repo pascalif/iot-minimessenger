@@ -15,20 +15,26 @@ The view is from above, USB connector at the bottom — the way the board normal
                   GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser              │                                                          │
                   GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser              │                                                          │
                   GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                      │                                                          │
-   LED_STATUS ◄── GPIO32 ─┤ 6                    25 │     GND                                │                 ST7789 panel — 320 × 240                 │
- LED_FRIEND_1 ◄── GPIO33 ─┤ 7                    24 │     GPIO19 (free)                      │                                                          │
- LED_FRIEND_2 ◄── GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO18 ────────────────────── SCL ──►│                                                          │
-                  GPIO26 ─┤ 9 (DAC2)             22 ├── GPIO5  ────────────────────── CS  ──►│                                                          │
-                  GPIO27 ─┤ 10                   21 │     GPIO17 (free)                      │                                                          │
-                  GPIO14 ─┤ 11                   20 │     GPIO16 (free)                      │                                                          │
-                  GPIO12 ─┤ 12 *strap            19 ├── GPIO4  ────────────────────── BL  ──►│                                                          │
-                  GPIO13 ─┤ 13                   18 │     GPIO0  *strap                      │                                                          │
-                     GND ─┤ 14                   17 ├── GPIO2  ────────────────────── DC  ──►│                                                          │
-                  5V/VIN ─┤ 15                   16 │     GPIO15 *strap                      │                                                          │
-                          └────────────┬────────────┘                                        └──────────────────────────────────────────────────────────┘
-                                    ┌──┴──┐
-                                    │ USB │ ◄── plug end (5 V → AMS1117 LDO → 3V3 rail, console serial)
-                                    └─────┘
+  GND ─[220Ω]─|◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                      │                 ST7789 panel — 320 × 240                 │
+  GND ─[220Ω]─|◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ────────────────────── SCL ──►│                                                          │
+  GND ─[220Ω]─|◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ────────────────────── CS  ──►│                                                          │
+                  GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                      │                                                          │
+                  GPIO27 ─┤ 10                   21 │     GPIO16 (free)                      │                                                          │
+                  GPIO14 ─┤ 11                   20 ├── GPIO4  ────────────────────── BL  ──►│                                                          │
+                  GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ────────────────────── DC  ──►│                                                          │
+                  GPIO13 ─┤ 13                   18 │     GPIO15 *strap                      │                                                          │
+                     GND ─┤ 14                   17 │     GND ─────────┐                     │                                                          │
+                  5V/VIN ─┤ 15                   16 │     3V3          │                     │                                                          │
+                          └─────────┬─────────────┘                    │                     └────────────────────────────────┬─────────────────────────┘
+                                 ┌──┴┐                                 │                                                       │
+                                 │USB│                                 │                                                       │  (TFT GND)
+                                 └───┘                                 │                                                       │
+                                                                       │                                                       │
+══════════════════════════════════════════════════════════════════════╧═══════════════════════════════════════════════════════╧══════════════════════════════ GND rail
+                                                                                            (common ground — tied to ESP32 GND pin 17 (right header),
+                                                                                             the three LED cathodes via 220 Ω each, and the TFT GND pin.
+                                                                                             Pin 14 (left header) is internally bonded to pin 17 on the
+                                                                                             ESP32 module, so a single wire suffices.)
 
                                                                                              pin header on this short (240-px) left edge ▲
                                                                                              the 320-px long edge extends to the right
@@ -37,13 +43,14 @@ The view is from above, USB connector at the bottom — the way the board normal
 **Legend**
 
 - `──►` an active wire entering a peripheral (ESP32 GPIO → TFT pin, or external → ESP32).
-- `◄──` a wire leaving the ESP32 toward an output peripheral (LEDs on the left header).
+- `─[220Ω]─|◄─` an inline LED branch: `[220Ω]` is the current-limit resistor, `|◄` is the LED diode symbol (cathode-bar on the left, triangle-anode opening on the right). Current flows GPIO → anode → cathode → resistor → GND. The cathode side ties into the common GND rail at the bottom of the diagram.
 - `(free)` no wire connected today — available for future expansion.
 - `*strap` strapping pin — the bootloader samples it at reset. Don't drive it unconditionally LOW/HIGH at startup; reusing these for outputs requires extra care (pull-ups, late init).
 - `(input only)` GPIO34–39 cannot be driven, only read (no PWM, no `digitalWrite`).
 - `DAC1`, `DAC2` only on these two GPIOs (25, 26).
 - The TFT is drawn as a **landscape rectangle**: the pin header (the short 240-px edge) is on the left, facing the ESP32; the active area extends 320 px to the right. The physical module is portrait (pins on a short edge); rotate it 90° clockwise on the bench and the orientation matches the diagram. Only the wires entering the rectangle on its left edge are connected — everything inside is just empty panel area.
-- TFT power (VCC, GND) is **not** drawn on the wire bus to keep the diagram clean: VCC ties to the 3V3 rail and GND to common ground. See §2 for the full pin mapping.
+- The bottom `══════` line is the **GND rail** — a single equipotential bus that ties together every ground in the system: both ESP32 GND pins (pin 14 on the left header, pin 17 on the right header — note this is the order on the user's HW-394 / DOIT V1 variant, see §5), the three LED cathodes via their 220 Ω resistors, and the TFT module's GND pin. In practice this is just the breadboard's blue rail; on a custom PCB it would be the ground plane.
+- TFT VCC ties to the **3V3 pin on the right header (pin 16, bottom-rightmost on this board)** — not drawn on the wire bus to keep the diagram clean. See §2 for the full pin mapping.
 
 ---
 
@@ -104,9 +111,11 @@ Alternative candidates if GPIO4 is needed for something else later: `GPIO13`, `G
 
 ## 5. Pin reservation summary
 
+Note on this board (HW-394 / DOIT-V1 variant — see photo): unlike the canonical 30-pin pinout, **GPIO0 is not broken out on the right header**, GND lives at pin 17 (not pin 25 as on most variants), and the right header ends with a dedicated **3V3 pin at position 16** (closest to USB). The GPIO numbers below are still correct for the chip itself; only the *physical position* on the header changed.
+
 | GPIO | Status | Used by |
 |---|---|---|
-| 0     | strapping | bootloader (USB upload) |
+| 0     | strapping | bootloader (USB upload) — only via the BOOT button on this board, not broken out on the header |
 | 1     | UART      | USB-Serial TX (console) |
 | 2     | TFT       | `TFT_DC` |
 | 3     | UART      | USB-Serial RX (console) |
@@ -132,6 +141,8 @@ Alternative candidates if GPIO4 is needed for something else later: `GPIO13`, `G
 | 35    | free      | input-only, ADC1_7 |
 | 36    | free      | input-only (`VP`), ADC1_0 |
 | 39    | free      | input-only (`VN`), ADC1_3 |
+
+Power pins on this board: **5V/VIN** on the left header (bottom, pin 15 near USB) takes the raw USB voltage; **3V3** on the right header (bottom, pin 16 near USB) is the AMS1117-3.3 LDO output — that's the pin to use for TFT VCC and any other 3.3 V peripheral.
 
 In-radio peripherals (no pin cost):
 

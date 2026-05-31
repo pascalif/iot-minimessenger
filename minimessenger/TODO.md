@@ -1,7 +1,7 @@
 # Features à faire
 
 
-# Prompts à passer plus tard
+# Features à modifier
 
 Mettre en cohérence la status bar et les leds sachant que les leds sont structurées differement:
 - une led de status LED_STATUS pour indiquer visuellement quand on est loin du device s'il est opérationnel à 100% ou si il y a un probleme
@@ -11,12 +11,12 @@ Règles:
 
 ================
 
+Extraire fichiers de constantes
 
-Quel est le cout CPU et memoire d'encoder et décoder des messages MQTT au format json ?
-~~~~
-~~~~
-- ================
+================
 
+
+================
 
 ❯ a quoi sert dans loop() le timer pour faire un redrawStatusBar ?  N'est ce pas dessiné à la demande qd un toggle change ou qu'on revient sur l'écran de conversations?
 ⎿  ⧉ Selected 1 lines from minimessenger.ino in IntelliJ IDEA

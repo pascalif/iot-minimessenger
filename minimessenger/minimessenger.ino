@@ -41,10 +41,7 @@ RUN    : ?
 Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-g_mqttClient
 
 TODO
-- tester perte de connection wifi (refaire boucle de co ?)
-- tester perte MQTT et affichage msg
 - couleur et affichage du pseudo remote (pour chan room multi )
-- gerer un delta de temps contre le réaffichage du timestamp
 - utiliser WiFiManager (cf mistral) pour configurer le wifi - https://github.com/tzapu/WiFiManager, sinon déplacer la connection dans loop
 
 - taille program:
@@ -706,7 +703,7 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
       break;
     }
   }
-  if (anyKeyHeld && noteActivity()) {
+  if (anyKeyHeld && noteUserActivity()) {
     memcpy(s_prevKeys, curKeys, 6);
     return;
   }
@@ -750,7 +747,7 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
     } else if (key == KEY_ENTER) {
       if (g_currentMsgFromKeyboard.length() > 0) {
         ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsgFromKeyboard.c_str());
-        processMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL);
+        routeMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL);
         currentMsgClear();
       } else {
         ESP_LOGD(TAG_BTKB, "ENTER on empty buffer — nothing to send");
@@ -1019,7 +1016,10 @@ void mqttSendAlive(int liveType) {
 }
 
 
-void mqttPushFormattedMessage(const char* topic, const char* payload) {
+// Returns true if the publish was accepted by PubSubClient (sent on the wire — no broker ACK at QoS 0 so this is best-effort). Callers that need
+// to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
+// safely ignore it — the next interval will retry.
+bool mqttPushFormattedMessage(const char* topic, const char* payload) {
   snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE,
            "%s ### ts:%s deviceId:%d msgId:%d",
            payload,
@@ -1031,11 +1031,19 @@ void mqttPushFormattedMessage(const char* topic, const char* payload) {
     ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]",
              g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
   } else {
-    ESP_LOGE(TAG_MQTT, "Publish FAILED for #%u to [%s]: [%s]",
-             g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
+    // On failure, include state() and the payload size so we can tell apart the four PubSubClient failure modes (see CLAUDE.md / discussions):
+    //   state =  0 (MQTT_CONNECTED)         → write to the socket failed mid-send (TCP buffer full, TLS error, link dropped between connected()
+    //                                          check and write). If size > ~240 bytes, may also be MQTT_MAX_PACKET_SIZE = 256 rejecting it.
+    //   state = -1 (MQTT_DISCONNECTED)      → we called disconnect() ourselves.
+    //   state = -3 (MQTT_CONNECTION_LOST)   → broker / WiFi dropped; connected() detected it on this call.
+    //   state = -4 (MQTT_CONNECTION_TIMEOUT)→ TCP-level timeout. Mostly during a fresh connect, not on publish.
+    ESP_LOGE(TAG_MQTT, "Publish FAILED for #%u to [%s] state=%d size=%u : [%s]",
+             g_mqttOutputMsgId, topic, g_mqttClient.state(),
+             (unsigned)strlen(g_mqttOutgoingMsg), g_mqttOutgoingMsg);
   }
 
   g_mqttOutputMsgId++;
+  return ok;
 }
 
 
@@ -1367,7 +1375,7 @@ void setDisplayPowerState(DisplayPowerState nextState) {
 
 // Reset the idle timer. If the screen was dim or off, restore it to ON and
 // return true so callers can swallow the input that caused the wake.
-bool noteActivity() {
+bool noteUserActivity() {
   g_lastActivityMs = millis();
   if (g_displayPowerState != DISPLAY_ON) {
     setDisplayPowerState(DISPLAY_ON);
@@ -1512,9 +1520,9 @@ size_t utf8ToLatin1(char* s) {
 
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align) {
   // Any new block on screen counts as activity — wakes the panel if it was off.
-  noteActivity();
+  noteUserActivity();
 
-  //   Adapt the message right after the noteActivity() call:
+  //   Adapt the message right after the noteUserActivity() call:
   char msgBuf[CONVO_MSG_MAX_LEN];
   strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
   msgBuf[sizeof(msgBuf) - 1] = '\0';
@@ -1681,12 +1689,12 @@ void onMQTTReconnected() {
 // ----------------------------------------------------------------------------
 // Local commands + message funnel
 //
-// processMessage() is the SINGLE insertion point for any complete payload
+// routeMessage() is the SINGLE insertion point for any complete payload
 // landing in this device, whether it arrived over MQTT (REMOTE) or was just
 // composed locally on the serial monitor (LOCAL). Both channels converge here
 // so the same three steps happen exactly once:
 //
-//   1. Wake the screen via noteActivity() — every payload is a real
+//   1. Wake the screen via noteUserActivity() — every payload is a real
 //      user-initiated event and must be visible, regardless of dim/off state.
 //   2. Try to interpret the payload as a local command (CMD_* below).
 //      Commands run locally and are NEITHER displayed in the conversation
@@ -1699,7 +1707,7 @@ void onMQTTReconnected() {
 // Why ONE funnel rather than scattering the wake / interpret logic across
 // each channel's handler: it keeps the command vocabulary in one place,
 // and any future channel (BLE keyboard Enter, web UI, etc.) just has to
-// call processMessage() with the right source to inherit all three steps.
+// call routeMessage() with the right source to inherit all three steps.
 // ----------------------------------------------------------------------------
 
 const char* const CMD_DISCONNECT_WIFI = "/wifi";
@@ -1763,12 +1771,12 @@ bool processPayloadAsCommand(const String& message) {
   return false;
 }
 
-void processMessage(const String& message, MessageSource source) {
-  // Step 1 — always wake the screen. We ignore noteActivity()'s "was sleeping"
+void routeMessage(const String& message, MessageSource source) {
+  // Step 1 — always wake the screen. We ignore noteUserActivity()'s "was sleeping"
   // return value: unlike a stray keypress (which is swallowed on wake to avoid
   // typing accidental characters), a command-or-message must actually run on
   // wake-up too.
-  noteActivity();
+  noteUserActivity();
 
   // Step 2 — if it's a known command, execute and stop. No display, no
   // republish — this is the whole point of the funnel.
@@ -1781,7 +1789,13 @@ void processMessage(const String& message, MessageSource source) {
   // LOCAL (serial ou BT)
   else {
     addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
-    mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str());
+    bool published = mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str());
+    if (!published) {
+      // Naive WhatsApp-style "send failed" indicator: append a second block right under the original one, in error red, prefixed with [ERROR] so
+      // the user knows that specific message didn't reach the broker. To be replaced later with a per-message status icon (sending / sent / failed)
+      // overlaid on the original block — but the present block-pair is enough to surface the failure without any new UI machinery.
+      addConversationBlock("", "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT);
+    }
   }
 }
 
@@ -2094,7 +2108,7 @@ void loop() {
 
     // Wake screen on any serial char. If we were sleeping, swallow this char:
     // the user typed it to light the screen, not to compose a message.
-    if (noteActivity()) {
+    if (noteUserActivity()) {
       continue;
     }
 
@@ -2107,7 +2121,7 @@ void loop() {
         // MQTT. Don't inline displayLocalMessage + mqttPushFormattedMessage
         // here — that would skip command interception and force every serial
         // 'cmd ...' string to be echoed/published to peers.
-        processMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL);
+        routeMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL);
         resetSerialBuffer();
       } else {
         // Message is empty. Do nothing
@@ -2198,7 +2212,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
     // Route through the common funnel: wakes the screen, intercepts CMD_*
     // commands, otherwise renders LEFT.
-    processMessage(message, MessageSource::REMOTE);
+    routeMessage(message, MessageSource::REMOTE);
 
   } else {
     ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
