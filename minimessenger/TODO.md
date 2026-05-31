@@ -13,106 +13,42 @@ Règles:
 
 
 Quel est le cout CPU et memoire d'encoder et décoder des messages MQTT au format json ?
-
-
+~~~~
+~~~~
 - ================
 
 
-logs
--encore du nimble
-
-================
-
-
-autre clavier BT ?
-
-========
-
-
-
-
-ajouter ce traitement en factorizant avec les msgs saisie sur serial/bt
-
-================
-const int MAX_LINES = 40;   // nombre max de lignes gardées en mémoire
-quid si trop ?
-
-❯ redrawAllConversations ne sert vraiment plus a rien, ni le buffer de MAX_LINES ?
+❯ a quoi sert dans loop() le timer pour faire un redrawStatusBar ?  N'est ce pas dessiné à la demande qd un toggle change ou qu'on revient sur l'écran de conversations?
 ⎿  ⧉ Selected 1 lines from minimessenger.ino in IntelliJ IDEA
 
-Searched for 2 patterns (ctrl+o to expand)
+Read 1 file (ctrl+o to expand)
 
-● Vérifié au grep. Tu as raison, tout le truc « ring buffer de TextLine » est mort depuis qu'on est passé en HW scroll.
-Voici l'inventaire précis.
+● Bonne question — réponse honnête : aujourd'hui ce timer est nécessaire parce que les changements d'état réseau/BT ne lèvent aucun flag dirty. Le polling sert de filet :
 
-Dead code identifié
+- WiFi : WiFi.status() peut passer de WL_CONNECTED à autre chose à tout moment (perte/reconnexion auto par le driver ESP), et aucun WiFi.onEvent() n'est enregistré dans
+  le sketch → on ne saurait pas qu'il faut repeindre sans relire l'état.
+- MQTT : PubSubClient::connected() est un getter, pas un callback. Une déconnexion réseau passive (broker timeout, TCP RST) est détectée par PubSubClient en interne mais
+  n'appelle rien chez nous.
+- BT : NimBLE expose bien onConnect/onDisconnect dans mm_blekb.cpp, mais ces callbacks ne touchent pas g_statusBarDirty aujourd'hui.
+- CapsLock : maintenant 100 % event-driven (le toggle qu'on vient d'ajouter dirty le flag). Pas besoin du polling pour celui-là.
+- Retour à l'écran conversation : déjà couvert — hwScrollReset() met g_statusBarDirty = true.
 
-┌───────────────────────────────────┬─────────────────────────────┬───────────────────────────────────────────────┐
-│              Élément              │            Ligne            │                    Statut                     │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ redrawAllConversations() (~70     │ minimessenger.ino:1307      │ Jamais appelée                                │
-│ lignes)                           │                             │                                               │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ TextLine lines[MAX_LINES]         │ minimessenger.ino:384       │ Écrit jamais lu (sauf dans                    │
-│                                   │                             │ redrawAllConversations morte)                 │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ g_lineHead, g_lineCount           │ minimessenger.ino:385-386   │ Maintenus pour rien — ne servent qu'à indexer │
-│                                   │                             │  lines[] qui ne se lit pas                    │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ MAX_LINES = 3                     │ minimessenger.ino:378       │ Ne sert qu'à dimensionner le tableau mort     │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ Boucle while (g_lineCount >=      │ minimessenger.ino:1470-1473 │ Évince l'ancienne ligne d'un tableau qu'on ne │
-│ MAX_LINES) {...}                  │                             │  lit pas                                      │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ lines[writeIdx] = TextLine(...)   │ minimessenger.ino:1475      │ Construit un TextLine jeté immédiatement      │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ class TextLine dans display.h     │ display.h:10-50             │ Plus aucune utilité — instancié dans la ligne │
-│                                   │                             │  morte ci-dessus uniquement                   │
-├───────────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────────┤
-│ CONVO_TS_MAX_LEN = 20             │ display.h:7                 │ Ne sert qu'à dimensionner TextLine::ts[]      │
-└───────────────────────────────────┴─────────────────────────────┴───────────────────────────────────────────────┘
+Donc oui, en principe on pourrait supprimer le timer si on poussait g_statusBarDirty = true aux trois endroits manquants :
+1. Dans les callbacks NimBLE onConnect/onDisconnect du clavier (mm_blekb.cpp).
+2. Aux points où MQTT (re)connecte/échoue (autour de mqttReconnect / dans onMqttIncomingMessage quand "dis" déclenche un disconnect).
+3. Enregistrer un WiFi.onEvent() pour ARDUINO_EVENT_WIFI_STA_GOT_IP / ..._DISCONNECTED.
 
-Ce qui DOIT rester (faux positifs)
+Tant que ces trois branchements n'existent pas, le polling 500 ms est le seul mécanisme qui rattrape les pertes silencieuses. Et comme redrawStatusBar court-circuite
+immédiatement quand rien n'a changé, le coût est négligeable (4 lectures de bool + comparaisons toutes les 500 ms).
 
-- CONVO_MSG_MAX_LEN = 128 (display.h:8) — utilisé aussi à minimessenger.ino:1388 pour dimensionner le buffer local
-  char msgBuf[CONVO_MSG_MAX_LEN] (la conversion UTF-8 → Latin-1 avant l'affichage). Donc cette constante reste utile
-  indépendamment de TextLine.
-- tsBox, msgBox, tsX, msgX, tsBlockHWithMargin, msgBlockHWithMargin — variables locales dans addConversationBlock qui
-  calculent les positions de dessin direct dans le framebuffer. Rien à voir avec le ring buffer.
-- BOX_X / BOX_Y / BOX_W / BOX_H (minimessenger.ino:291-294) — indices dans les arrays bounds. Utilisés partout.
+Tu veux qu'on bascule en full event-driven en branchant les 3 endroits ci-dessus, ou on laisse le polling tel quel pour la robustesse ?
 
-Pourquoi le ring buffer était nécessaire avant
 
-Le pattern initial était : addConversationBlock mettait juste à jour le ring, puis redrawAllConversations repaintait
-tout en parcourant lines[]. La source de vérité était le ring. Avec le HW scroll, on dessine directement dans le
-framebuffer du contrôleur ST7789, qui devient à son tour la source de vérité (jusqu'à 320 lignes en mémoire vidéo,
-suffisant pour scroller). On n'a plus besoin d'une copie applicative.
 
-Ce qu'on gagnerait à nettoyer
+================
 
-- ~80 lignes de code supprimées dans le .ino (la fonction redrawAllConversations + le ring buffer ops)
-- display.h peut disparaître complètement si on déplace CONVO_MSG_MAX_LEN dans le .ino (~50 lignes en moins, un
-  include en moins)
-- 3 × ~170 octets BSS libérés (3 TextLine pour rien dans le tableau actuel, peanuts)
-- Simplification cognitive : plus de double système (ring + framebuffer) à mentaliser
 
-Coût de garder
 
-- Zéro fonctionnel — c'est juste du code mort qui compile
-- Petite confusion possible pour quelqu'un qui découvre le code et se demande à quoi sert le ring
-- Une "réserve" si tu voulais un jour réintroduire un mode où on doit reconstruire l'écran depuis l'historique (theme
-  switch, re-render après orientation change…). Mais à ce moment-là tu repartirais probablement d'une stratégie
-  différente, donc ce n'est pas vraiment un investissement.
 
-Recommandation
-
-Si tu veux que je nettoie, je peux faire en une passe :
-1. Supprimer redrawAllConversations()
-2. Supprimer lines[], g_lineHead, g_lineCount, MAX_LINES, la boucle drop-oldest et la construction de TextLine dans
-   addConversationBlock
-3. Migrer CONVO_MSG_MAX_LEN de display.h vers le .ino
-4. Supprimer display.h et son #include
-
-Dis-moi go/no-go.
 
 =================

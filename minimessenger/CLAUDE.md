@@ -6,7 +6,7 @@ Wrap source-code comments at **up to 160 characters per line** (not the conventi
 
 ## UI strings — command listing convention
 
-When rendering the help / command listing on the device screen (currently the `cmd help` handler in `processPayloadAsCommand`), **omit the `cmd ` prefix** from the displayed strings. Each line shows just the bare verb (`help`, `wifi`, `mqtt`, `bonds`, `redraw`, `status`, …) followed by its description. The `cmd ` prefix is implied — it's part of the input syntax, not the UI vocabulary. The actual `CMD_*` constants and the input-side matching keep the full `"cmd xxx"` string; only the rendered help strings strip it.
+Commands are invoked by typing **`/<verb>`** (slash prefix, no space) — e.g. `/wifi`, `/mqtt`, `/help`, `/status`. The `CMD_*` constants and the matching in `processPayloadAsCommand` hold the full `"/verb"` string. When rendering the help listing on the device screen, **omit the leading `/`** from the displayed strings — each line shows just the bare verb (`help`, `wifi`, `mqtt`, `bonds`, `redraw`, `status`, …) followed by its description. The slash is implied: it's part of the input syntax, not the UI vocabulary. (Historically the prefix was `cmd `; it was swapped to `/` to feel more like a chat-slash-command. The "strip the prefix from display" rule survives the swap.)
 
 ## What this is
 
@@ -37,7 +37,7 @@ Required libraries (Library Manager, exact versions known to work in comments):
 
 `identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It branches on the device's MAC and assigns: `g_deviceIdMe`, `g_deviceName` (e.g. `D1M_001`, `E32_004`), `g_userPseudo`, the two `g_deviceIdFriend*` IDs, the default recipient, and `g_displayType`. **Adding or moving a physical device requires editing this function** — there is no config file. An unknown MAC falls back to a random ID and pseudo "JohnDoe".
 
-On ESP32 the MAC is read via `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` (from `<esp_mac.h>`), which hits the eFuse directly and works at any point in `setup()` — no need to initialize the WiFi driver first. Avoid `WiFi.macAddress()` in core 3.x: it depends on the driver being up and silently returns `00:00:00:00:00:00` (or partial garbage like `00:00:03:00:00:00`) if called too early. On D1mini the legacy `WiFi.macAddress()` path is kept under `#else`.
+On ESP32 (arduino-esp32 3.3.8) reading the MAC reliably requires the WiFi driver to be in STA mode first. `identifyDevice()` therefore calls `WiFi.mode(WIFI_STA)` before `WiFi.macAddress(buffer)` — this brings up the netif without connecting and lets the MAC read return the real address. `setupWifi()` later issues `WiFi.disconnect(true,true) + mode + begin` on top of that already-initialised STA mode, which is well-defined. We initially tried `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` from `<esp_mac.h>` per the IDF docs (which claim the eFuse path is dependency-free), but on this core/version it silently returns `00:00:00:00:00:00` until the WiFi driver is up — so we stopped relying on it. On D1mini the legacy `WiFi.macAddress()` path is kept under `#else`.
 
 ## MQTT topology
 

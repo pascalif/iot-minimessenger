@@ -28,23 +28,19 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& add
 
   ESP_LOGI(TAG_BTKB, "Connected");
 
-  NimBLERemoteService* pRemoteService = pClient->getService(NimBLEUUID((uint16_t)0x1812));
+  NimBLERemoteService* pRemoteService = pClient->getService(NimBLEUUID(BT_SERVICE_HID_1812));
   if (pRemoteService == nullptr) {
     ESP_LOGE(TAG_BTKB, "HID service 0x1812 not found");
     return false;
   }
 
-  // HID over GATT keyboards expose MULTIPLE characteristics with UUID 0x2A4D
-  // (HID Report) inside the HID service — one per Report ID (keyboard input
-  // report, LEDs output report, possibly feature reports, etc.). We don't
-  // know upfront which one is the keyboard input report, so we iterate the
-  // whole list and subscribe to every 0x2A4D that has notify capability.
-  // The non-input reports' callbacks simply stay silent in practice.
+  // HID over GATT keyboards expose MULTIPLE characteristics with UUID BT_CHAR_HID_REPORT_2A4D inside the HID service — one per Report ID (keyboard
+  // input report, LEDs output report, possibly feature reports, etc.). We don't know upfront which one is the keyboard input report, so we iterate
+  // the whole list and subscribe to every 0x2A4D that has notify capability. The non-input reports' callbacks simply stay silent in practice.
   //
-  // Picking only the first match (the old `getCharacteristic(0x2A4D)`
-  // shortcut) is fragile: Bluedroid often returned the input report first
-  // by chance, NimBLE may not.
-  const NimBLEUUID hidReportUuid((uint16_t)0x2A4D);
+  // Picking only the first match (the old `getCharacteristic(0x2A4D)` shortcut) is fragile: Bluedroid often returned the input report first by chance,
+  // NimBLE may not.
+  const NimBLEUUID hidReportUuid(BT_CHAR_HID_REPORT_2A4D);
   const std::vector<NimBLERemoteCharacteristic*>& chars =
       pRemoteService->getCharacteristics(true);
   int subscribed = 0;
@@ -73,22 +69,41 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& add
 // ============================================================================
 
 void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
-  if (advertisedDevice->haveName()
-      && String(advertisedDevice->getName().c_str()) == m_expectedKeyboardBluetoothName) {
-    ESP_LOGI(TAG_BTKB, "Found target keyboard [%s]", advertisedDevice->toString().c_str());
-
-    NimBLEDevice::getScan()->stop();
-
-    // Free any address kept from a previous scan/disconnect cycle before
-    // allocating a new one — otherwise repeated re-pairings leak ~24 bytes
-    // of heap per cycle. `delete nullptr` is a no-op, so this is safe on the
-    // first call too.
-    delete pServerAddress;
-    pServerAddress = new NimBLEAddress(advertisedDevice->getAddress());
-
-    doConnect = true;
-    doScan = false;
+  // Filter by HID-over-GATT service UUID rather than by advertised device name. This means we accept any vendor/model whose firmware exposes the
+  // standard HID service — Logitech, Apple, generic ChiCony, you name it — without recompiling. The previous name filter ("Bluetooth Keyboard")
+  // worked only for the one specific keyboard model that was set up at flashing time, which blocked any swap to a differently-named device.
+  //
+  // With setActiveScan(true) (set in setup() below), NimBLE issues a SCAN_REQ on every adv it sees and merges the SCAN_RSP payload into the
+  // NimBLEAdvertisedDevice. So even keyboards that advertise the HID UUID only in the scan response (and not in the primary adv data) are detected
+  // here. isAdvertisingService() inspects the merged service list.
+  //
+  // Trade-off: this also matches BLE mice / gamepads / etc. that happen to be in pairing mode within range. In practice such collisions are rare
+  // (the user usually puts only their target keyboard into pairing mode), and even if a mouse bonds by accident, its 3–4-byte HID reports are
+  // silently dropped by decodeHIDReport's `length < 8` guard. The slot can be freed afterwards with the `cmd bonds` command.
+  if (!advertisedDevice->isAdvertisingService(NimBLEUUID(BT_SERVICE_HID_1812))) {
+    return;
   }
+
+  // Negative filter on Appearance: if the device explicitly advertises itself as a Mouse, skip it without attempting a connection. Appearance is
+  // OPTIONAL in BLE adv data — many devices don't publish it, in which case haveAppearance() is false and we fall through to connect. We only act
+  // on a POSITIVE signal that the device is a mouse; absence of Appearance is never used as evidence of "this is a keyboard". The same pattern
+  // could be extended later to BT_APPEARANCE_JOYSTICK_03C3 / GAMEPAD_03C4 if those start showing up in your environment.
+  if (advertisedDevice->haveAppearance() && advertisedDevice->getAppearance() == BT_APPEARANCE_MOUSE_03C2) {
+    ESP_LOGI(TAG_BTKB, "Skipping mouse (appearance 0x%04X) [%s]", BT_APPEARANCE_MOUSE_03C2, advertisedDevice->toString().c_str());
+    return;
+  }
+
+  ESP_LOGI(TAG_BTKB, "Found HID device [%s]", advertisedDevice->toString().c_str());
+
+  NimBLEDevice::getScan()->stop();
+
+  // Free any address kept from a previous scan/disconnect cycle before allocating a new one — otherwise repeated re-pairings leak ~24 bytes
+  // of heap per cycle. `delete nullptr` is a no-op, so this is safe on the first call too.
+  delete pServerAddress;
+  pServerAddress = new NimBLEAddress(advertisedDevice->getAddress());
+
+  doConnect = true;
+  doScan = false;
 }
 
 void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanResults, int reason) {
@@ -139,7 +154,6 @@ void MiniMessengerBLEKeyboardInterface::bleNotifyCallback(
 
 
 bool MiniMessengerBLEKeyboardInterface::setup(
-  String keyboardBluetoothName,
   bool clearExistingBonds,
   mm_btkb_on_connection_callback onConnectionCallback,
   mm_btkb_on_keystroke_callback onKeystrokeCallback) {
@@ -147,26 +161,24 @@ bool MiniMessengerBLEKeyboardInterface::setup(
 
   NimBLEDevice::init("");
 
-  // Bonding=true, MITM=false, Secure Connections=false.
-  // IO_NO_INPUT_OUTPUT → "Just Works" pairing (no PIN exchange, no user
-  // confirmation). That's why onPassKeyEntry / onConfirmPasskey are not
-  // overridden in this class — the stack never calls them in this mode.
+  // Bonding=true, MITM=false, Secure Connections=false. IO_NO_INPUT_OUTPUT → "Just Works" pairing (no PIN exchange, no user confirmation).
+  // That's why onPassKeyEntry / onConfirmPasskey are not overridden in this class — the stack never calls them in this mode.
   NimBLEDevice::setSecurityAuth(true, false, false);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 
   // Clear bonding info if you want fresh pairing
   if (clearExistingBonds) clearAllExistingBonds();
 
-  ESP_LOGI(TAG_BTKB, "Starting scan for keyboard named [%s]", keyboardBluetoothName.c_str());
-  this->m_expectedKeyboardBluetoothName = keyboardBluetoothName;
+  // setActiveScan(true) is what makes the HID-UUID filter in onResult() reliable: NimBLE sends a SCAN_REQ on every adv received, and the SCAN_RSP
+  // payload — where many keyboards put their service UUIDs — gets merged into the NimBLEAdvertisedDevice before onResult() runs.
+  ESP_LOGI(TAG_BTKB, "Starting scan for any device advertising HID service 0x%04X", BT_SERVICE_HID_1812);
 
   NimBLEScan* pBLEScan = NimBLEDevice::getScan();
   pBLEScan->setScanCallbacks(this, false);
   pBLEScan->setActiveScan(true);
   // NimBLE-Arduino 2.x: scan duration is in MILLISECONDS (1.x was in seconds)
   pBLEScan->start(m_scanningDurationSec * 1000);
-  // Scan already running; onScanEnd() will re-arm doScan if it ends without
-  // finding the keyboard.
+  // Scan already running; onScanEnd() will re-arm doScan if it ends without finding the keyboard.
   doScan = false;
 
   m_clientOnConnectionCallback = onConnectionCallback;
