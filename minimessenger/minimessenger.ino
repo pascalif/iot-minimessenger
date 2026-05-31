@@ -36,14 +36,12 @@ Tools > Core Debug Level : "Verbose"  (flasher après tout changement - pour les
 COMPILE: OK
 LINK   : OK
 UPLOAD : OK
-RUN    : ?
+RUN    : OK
 
 Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-g_mqttClient
 
 TODO
 - couleur et affichage du pseudo remote (pour chan room multi )
-- utiliser WiFiManager (cf mistral) pour configurer le wifi - https://github.com/tzapu/WiFiManager, sinon déplacer la connection dans loop
-
 - taille program:
   Remove Debug Code: Strip out all Serial.print() and debug code for production.
   Use PROGMEM: Store large constants (e.g., strings, images) in PROGMEM.
@@ -65,6 +63,13 @@ Friend present
 
 // Provided by ESP32 boards
 #include <WiFi.h>
+// esp_efuse_mac_get_default(): reads the factory MAC straight from the eFuse with zero dependency on the WiFi driver — works in setup() before
+// any WiFi init, which WiFi.macAddress() / esp_read_mac(ESP_MAC_WIFI_STA) do not on arduino-esp32 3.3.8 (both return all zeros if the driver
+// hasn't been brought up yet).
+#include <esp_mac.h>
+// For the /dbg chip command: silicon model / revision / features (esp_chip_info, esp_get_idf_version, esp_reset_reason). See docs/howto_efuse.md.
+#include <esp_chip_info.h>
+#include <esp_system.h>
 
 // WiFi state machine + onboarding (NVS / WiFiMulti / WiFiManager) lives in wifi.ino. This header pulls in the shared enum and the function
 // prototypes that minimessenger.ino calls (setupWifi, wifiTick, wifiGetState, drawPortalInstructions, /wifi-* command helpers).
@@ -110,6 +115,10 @@ Friend present
 // severity is set by setupLogging() in setup().
 #include "mm_log.h"
 
+// Auto-generated splash bitmap (see docs/howto_logo.md). Must be a .h, not a .ino: Arduino IDE concatene les .ino apres minimessenger.ino, donc un splash.ino
+// arrive trop tard pour que showSplashScreen() voie les declarations de splash_bmp / splash_bmp_w / splash_bmp_h.
+#include "splash.h"
+
 
 // ================================================================================
 // Toggles
@@ -154,18 +163,18 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // Configurable behaviour
 // ================================================================================
 
-#define LED_BLINK_FAST_DURATION 150
-#define LED_BLINK_SLOW_DURATION 700
+#define LED_BLINK_FAST_DURATION_MS 150
+#define LED_BLINK_SLOW_DURATION_MS 700
 
 // Period between sending 2 "keepalive" messages
-#define MQTT_KEEPALIVE_INTERVAL 30000
+#define MQTT_KEEPALIVE_INTERVAL_MS 120'000
 // Period between retring connection to MQTT broker
-#define MQTT_CONNECT_RETRY_INTERVAL 5000
+#define MQTT_CONNECT_RETRY_INTERVAL_MS 5'000
 
 // "Screen saver" Burn-in protection: time without local input (BT keystroke / serial) and
 // without a remote message before the screen dims, then fully turns off.
-#define DISPLAY_IDLE_BEFORE_DIM_MS 60000UL   // 5 min  -> dim to 50%
-#define DISPLAY_IDLE_BEFORE_OFF_MS 800000UL  // 5 + 1 min -> panel off
+#define DISPLAY_IDLE_BEFORE_DIM_MS 60'000UL   // 5 min  -> dim to 50%
+#define DISPLAY_IDLE_BEFORE_OFF_MS 800'000UL  // 5 + 1 min -> panel off
 
 
 // ================================================================================
@@ -319,12 +328,12 @@ unsigned long g_lastStatusBarPollMs = 0;
 // transitions are visible while the user waits. Once MQTT comes up for the first time, onMQTTReconnected() flips into conversation mode and this
 // refresh stops (the status bar takes over the live status display from then on, see redrawStatusBar). Subsequent MQTT drops do NOT come back here.
 unsigned long g_lastInfoScreenRefreshMs = 0;
-#define INFO_SCREEN_REFRESH_INTERVAL_MS 2000
+#define INFO_SCREEN_REFRESH_INTERVAL_MS 2'000
 
 // Non-zero value = the info screen is currently shown as a temporary overlay (triggered by "/status") and we should auto-revert to nominal once
 // millis() crosses it. Zero = not in the status-overlay state. The revert path is in loop() near the status bar polling block.
 unsigned long g_statusScreenEndMs = 0;
-#define STATUS_SCREEN_DURATION_MS 10000
+#define STATUS_SCREEN_DURATION_MS 10'000
 
 // Conversation mode = status bar + scroll area + input footer are all live.
 // Fullscreen modes (splash, info) set this to false to suppress the periodic
@@ -468,10 +477,30 @@ size_t g_msgCursorIdx = 0;
 // H zzz
 // ================================================================================
 
+// Forward declarations — needed because the Arduino IDE's auto-prototype generator can be flaky when the sketch has multiple .ino files / mixes
+// modern C++ types in headers. List functions called from earlier in the file than their definition.
 void setRecipient(int recipientDeviceId);
 void showUpdatedInfoScreen();
 void redrawStatusBar();
 void redrawInputFooter();
+bool noteUserActivity();
+void routeMessage(const String& message, MessageSource source);
+void ledSetState(int pin, int requiredState);
+void mqttSendAlive(int liveType);
+bool mqttPushFormattedMessage(const char* topic, const char* payload);
+void goAndResetConversationScreen();
+void returnToConversationsScreen();
+void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);
+void resetSerialBuffer();
+void onReceivedContactOnline(int remoteDeviceId, bool isLive);
+// Command layer — defined in commands.ino. routeMessage() (this file) calls processPayloadAsCommand() to interpret /cmd payloads; the rest is
+// internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
+bool processPayloadAsCommand(const String& message);
+bool processWifiSubcommand(const String& message);
+bool processDbgSubcommand(const String& message);
+void printHelpGlobal();
+void printHelpWifi();
+void printHelpDbg();
 
 
 // ================================================================================
@@ -804,15 +833,17 @@ static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
 // ================================================================================
 
 void identifyDevice() {
-  // Read the MAC. On arduino-esp32 3.3.8, esp_read_mac(ESP_MAC_WIFI_STA) returns 00:00:00:00:00:00 when called before any WiFi driver init,
-  // despite the IDF docs claiming the eFuse path is dependency-free. The reliable workaround is to bring the WiFi driver up in STA mode FIRST
-  // (no AP connection, just netif registration) so WiFi.macAddress() can read the address. setupWifi() later issues disconnect(true,true) +
-  // mode + begin which is well-defined on top of the already-initialised STA mode, so this early init has no side effect on the connect flow.
+  // Read the MAC via esp_efuse_mac_get_default(): goes straight to the silicon eFuse where the factory MAC is burned, no driver init required.
+  // We previously tried WiFi.macAddress() and esp_read_mac(ESP_MAC_WIFI_STA), both of which are wrappers that consult the WiFi runtime state and
+  // return 00:00:00:00:00:00 on this core (3.3.8) when called before WiFi has been initialised. eFuse has no such dependency — it works in
+  // setup() at any point, on any ESP32 variant, regardless of WiFi/BT/Ethernet state.
   String mac;
 #ifdef PAC_ON_ESP32
-  uint8_t macBytes[6] = {0};
-  WiFi.mode(WIFI_STA);
-  WiFi.macAddress(macBytes);
+  uint8_t macBytes[6] = { 0 };
+  esp_err_t err = esp_efuse_mac_get_default(macBytes);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG_MM, "esp_efuse_mac_get_default failed: err=%d", err);
+  }
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
@@ -938,16 +969,16 @@ bool mqttReconnect() {
            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   unsigned long t0 = millis();
-  bool connected = g_mqttClient.connect(
+  bool isMQTTConnected = g_mqttClient.connect(
     g_deviceName,
     mqtt_user, mqtt_password,
     g_mqttOutgoingTopicWill, MQTT_QOS_0, MQTT_MSG_NOT_RETAINED, g_deviceIdChars,
     MQTT_SESSION_VOLATILE);
   ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d",
-           connected ? 1 : 0, millis() - t0, g_mqttClient.state());
+           isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
 
-  if (connected) {
-    ESP_LOGI(TAG_MQTT, "Connected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
+  if (isMQTTConnected) {
+    ESP_LOGI(TAG_MQTT, "isMQTTConnected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
 
     g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
 
@@ -967,8 +998,7 @@ bool mqttReconnect() {
   } else {
     // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
     // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
-    ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms",
-             g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL);
+    ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms", g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL_MS);
     return false;
   }
 }
@@ -1372,26 +1402,34 @@ void updateDisplayPowerState() {
 void showSplashScreen() {
   // Show image buffer on the display hardware.
   // Since the buffer is intialized with an Adafruit splashscreen internally, this will display the splashscreen.
-  int duration = 1000;
 
   if (g_displayType == DisplayType::ST7789) {
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
     g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
     hwScrollReset();               // ensure we draw at framebuffer Y = screen Y = 0
-    pDisp->print("MiniMessenger !");
+
+    // Title centered horizontally near the top of the panel. Default 5×7 font at setTextSize(2) → 12 px advance per glyph, 16 px tall.
+    // Text width = strlen × 12 ; centered X = (FB_WIDTH - textW) / 2.
+    pDisp->setFont(NULL);
+    pDisp->setTextSize(2);
+    pDisp->setTextColor(ST77XX_WHITE);
+    const char* title = "MiniMessenger !";
+    int16_t titleW = (int16_t)strlen(title) * 12;
+    pDisp->setCursor((FB_WIDTH - titleW) / 2, 32);
+    pDisp->print(title);
 
     // Center the 16×16 splash bitmap on the panel. drawBitmap() paints monochrome pixels in the given foreground color where the bit is 1 and leaves
     // the existing background untouched where the bit is 0 — no need to pre-fill a rectangle.
-    pDisp->drawBitmap((FB_WIDTH - 16) / 2, (FB_HEIGHT - 16) / 2, logo16_glcd_bmp, 16, 16, ST77XX_WHITE);
+    //pDisp->drawBitmap((FB_WIDTH - 16) / 2, (FB_HEIGHT - 16) / 2, logo16_glcd_bmp, 16, 16, ST77XX_WHITE);
 
-    duration = 1000;
+    // Logo Goku
+    pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2, splash_bmp, splash_bmp_w, splash_bmp_h);
+
+    delay(2'000);
   } else {
     ESP_LOGW(TAG_MM, "Display: no splash screen (display not configured)");
-    duration = 0;
   }
-
-  delay(duration);
 }
 
 
@@ -1661,133 +1699,91 @@ void onMQTTReconnected() {
 // ----------------------------------------------------------------------------
 // Local commands + message funnel
 //
-// routeMessage() is the SINGLE insertion point for any complete payload
-// landing in this device, whether it arrived over MQTT (REMOTE) or was just
-// composed locally on the serial monitor (LOCAL). Both channels converge here
-// so the same three steps happen exactly once:
-//
-//   1. Wake the screen via noteUserActivity() — every payload is a real
-//      user-initiated event and must be visible, regardless of dim/off state.
-//   2. Try to interpret the payload as a local command (CMD_* below).
-//      Commands run locally and are NEITHER displayed in the conversation
-//      NOR republished to peers, so an MQTT 'cmd wifi' cleanly disconnects
-//      the recipient without polluting anyone's screen, and a serial 'cmd
-//      bonds' wipes BLE bonds without leaking that string to other devices.
-//   3. Otherwise route to display: LEFT for REMOTE, RIGHT for LOCAL — and
-//      for LOCAL, also publish to peers over MQTT so they receive the text.
-//
-// Why ONE funnel rather than scattering the wake / interpret logic across
-// each channel's handler: it keeps the command vocabulary in one place,
-// and any future channel (BLE keyboard Enter, web UI, etc.) just has to
-// call routeMessage() with the right source to inherit all three steps.
+// routeMessage() (below) is the SINGLE insertion point for any complete payload landing in this device. It wakes the screen, hands the message
+// to processPayloadAsCommand() (defined in commands.ino) for /cmd interpretation, and only routes to display / MQTT-republish if the message
+// wasn't consumed as a command. The full command vocabulary (CMD_* / GROUP_* constants, dispatchers, help printers) lives in commands.ino.
 // ----------------------------------------------------------------------------
 
-const char* const CMD_DISCONNECT_WIFI = "/wifi";
-const char* const CMD_DISCONNECT_MQTT = "/mqtt";
-const char* const CMD_BT_CLEAN        = "/bt-clean";
-const char* const CMD_REDRAW          = "/redraw";
-const char* const CMD_HELP            = "/help";
-const char* const CMD_STATUS          = "/status";
-// WiFi config commands — match the verbs in wifi.ino. /wifi-forget takes an SSID argument so it's matched via startsWith() rather than equality.
-const char* const CMD_WIFI_CLEAN      = "/wifi-clean";
-const char* const CMD_WIFI_LIST       = "/wifi-list";
-const char* const CMD_WIFI_FORGET     = "/wifi-forget";   // payload: "/wifi-forget <ssid>"
-const char* const CMD_WIFI_PORTAL     = "/wifi-portal";
 
-bool processPayloadAsCommand(const String& message) {
-  if (message == CMD_DISCONNECT_WIFI) {
-    ESP_LOGI(TAG_MM, "Command [%s] — disconnecting WiFi", CMD_DISCONNECT_WIFI);
-    WiFi.disconnect();
-    return true;
+// Diagnostic dump of silicon identity (chip model, revision, cores, features, package, MACs, flash, IDF version, reset reason). Sent both to the
+// serial log (multi-line, with structured fields) and to the conversation in compact form so the info is visible on the device too. See
+// docs/howto_efuse.md for what each line means and which API gives it.
+void dumpChipInfo() {
+  esp_chip_info_t info;
+  esp_chip_info(&info);
+
+  ESP_LOGI(TAG_MM, "--- /dbg chip ---");
+  ESP_LOGI(TAG_MM, "Chip: model=%d revision=%d cores=%d features=0x%lx",
+           (int)info.model, info.revision, info.cores, (unsigned long)info.features);
+  ESP_LOGI(TAG_MM, "Caps: WiFi:%s BT:%s BLE:%s EmbFlash:%s EmbPSRAM:%s",
+           (info.features & CHIP_FEATURE_WIFI_BGN) ? "y" : "-",
+           (info.features & CHIP_FEATURE_BT) ? "y" : "-",
+           (info.features & CHIP_FEATURE_BLE) ? "y" : "-",
+           (info.features & CHIP_FEATURE_EMB_FLASH) ? "y" : "-",
+           (info.features & CHIP_FEATURE_EMB_PSRAM) ? "y" : "-");
+  ESP_LOGI(TAG_MM, "CPU: %u MHz", ESP.getCpuFreqMHz());
+  ESP_LOGI(TAG_MM, "Flash: size=%u mode=%d speed=%u Hz",
+           ESP.getFlashChipSize(), ESP.getFlashChipMode(), ESP.getFlashChipSpeed());
+
+  uint8_t mac[6];
+  esp_efuse_mac_get_default(mac);
+  ESP_LOGI(TAG_MM, "MAC base/STA: %02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  esp_read_mac(mac, ESP_MAC_BT);
+  ESP_LOGI(TAG_MM, "MAC BT:       %02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
+  ESP_LOGI(TAG_MM, "IDF: %s", esp_get_idf_version());
+  ESP_LOGI(TAG_MM, "Last reset reason: %d", (int)esp_reset_reason());
+
+  // Echo a compact summary into the conversation so it's visible on-device too.
+  char line[64];
+  snprintf(line, sizeof(line), "chip model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
+  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+  snprintf(line, sizeof(line), "flash=%uKB reset=%d", ESP.getFlashChipSize() / 1024, (int)esp_reset_reason());
+  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+}
+
+
+// Diagnostic dump of heap state. "free" is the sum of all free bytes; "largest" is the biggest single contiguous run (the one mbedtls /
+// TLS / SPI buffers need). "min ever" is the historical low-water mark — a value that keeps dropping over time is the classic signature
+// of a leak. Sketch / partition counters are flash-side, not RAM, but useful in the same diagnostic dump.
+void dumpMemInfo() {
+  uint32_t totalHeap = ESP.getHeapSize();
+  uint32_t freeHeap = ESP.getFreeHeap();
+  uint32_t largest = ESP.getMaxAllocHeap();
+  uint32_t minEverFree = ESP.getMinFreeHeap();
+  uint32_t usedHeap = totalHeap - freeHeap;
+
+  ESP_LOGI(TAG_MM, "--- /dbg mem ---");
+  ESP_LOGI(TAG_MM, "Heap: total=%u used=%u free=%u largest=%u min-ever-free=%u",
+           totalHeap, usedHeap, freeHeap, largest, minEverFree);
+  ESP_LOGI(TAG_MM, "Heap fragmentation: %u%% (= 1 - largest/free)",
+           freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
+
+  // PSRAM is only present on certain ESP32 variants (e.g. WROVER). On chips without PSRAM these calls return 0.
+  if (ESP.getPsramSize() > 0) {
+    ESP_LOGI(TAG_MM, "PSRAM: total=%u free=%u largest=%u",
+             ESP.getPsramSize(), ESP.getFreePsram(), ESP.getMaxAllocPsram());
+  } else {
+    ESP_LOGI(TAG_MM, "PSRAM: none");
   }
 
-  if (message == CMD_DISCONNECT_MQTT) {
-    ESP_LOGI(TAG_MM, "Command [%s] — disconnecting MQTT", CMD_DISCONNECT_MQTT);
-    g_mqttClient.disconnect();
-    return true;
-  }
+  // Stack high-water-mark for the task currently running this code (typically the Arduino loop task). Lower number = closer to overflow.
+  // Returns the minimum free stack the task has ever had since boot, in WORDS (uint32_t units on ESP32) — multiply by 4 for bytes.
+  UBaseType_t stackHWMWords = uxTaskGetStackHighWaterMark(NULL);
+  ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)(stackHWMWords * 4));
 
-  if (message == CMD_BT_CLEAN) {
-    // Going through NimBLEDevice directly (rather than the keyboard wrapper's protected clearAllExistingBonds()) keeps mm_blekb's API surface
-    // intact. Renamed from /bonds to /bt-clean for symmetry with /wifi-clean.
-    ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BT_CLEAN);
-    NimBLEDevice::deleteAllBonds();
-    return true;
-  }
+  ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
 
-  if (message == CMD_WIFI_CLEAN) {
-    // Wipes the entire NVS WiFi namespace. On the next boot the compile-time defaults in compiled_wifi.h re-seed (if any); otherwise the device
-    // boots straight into the captive portal. The current STA connection survives this call — only future boots are affected.
-    ESP_LOGI(TAG_MM, "Command [%s] — clearing NVS WiFi list", CMD_WIFI_CLEAN);
-    wifiClearNvs();
-    addConversationBlock("", "NVS WiFi cleared — reboot to re-seed", CONVO_CMD_COLOR, LEFT);
-    return true;
-  }
-
-  if (message == CMD_WIFI_LIST) {
-    // Prints each saved SSID into the conversation in pink. Handy when the user wants to see what's in NVS without rebooting / opening serial.
-    ESP_LOGI(TAG_MM, "Command [%s] — listing saved WiFi networks", CMD_WIFI_LIST);
-    wifiPrintListToConversation();
-    return true;
-  }
-
-  if (message.startsWith(String(CMD_WIFI_FORGET) + " ")) {
-    // Parse the SSID argument: anything after the first space. We use startsWith with a trailing space so "/wifi-forget-x" doesn't match.
-    String ssid = message.substring(strlen(CMD_WIFI_FORGET) + 1);
-    ssid.trim();
-    ESP_LOGI(TAG_MM, "Command [%s] — forgetting SSID [%s]", CMD_WIFI_FORGET, ssid.c_str());
-    if (ssid.length() == 0) {
-      addConversationBlock("", "Usage: /wifi-forget <ssid>", CONVO_ERROR_COLOR, LEFT);
-    } else if (wifiForgetFromNvs(ssid.c_str())) {
-      addConversationBlock("", String("Forgot: ") + ssid, CONVO_CMD_COLOR, LEFT);
-    } else {
-      addConversationBlock("", String("Not found: ") + ssid, CONVO_ERROR_COLOR, LEFT);
-    }
-    return true;
-  }
-
-  if (message == CMD_WIFI_PORTAL) {
-    // Force the captive portal open right now — useful to add a new network without waiting for the current connection to fail.
-    ESP_LOGI(TAG_MM, "Command [%s] — forcing portal", CMD_WIFI_PORTAL);
-    wifiForcePortal();
-    return true;
-  }
-
-  if (message == CMD_REDRAW) {
-    // Full repaint: status bar + footer + scroll area refilled from the ring buffer. Same path as the auto-revert from "/status" so a user
-    // who lost faith in the screen state always has one single recovery command. Useful after visual glitches or framebuffer/state drift.
-    ESP_LOGI(TAG_MM, "Command [%s] — full redraw of the 3 zones", CMD_REDRAW);
-    returnToConversationsScreen();
-    return true;
-  }
-
-  if (message == CMD_STATUS) {
-    // Switch to the info screen for STATUS_SCREEN_DURATION_MS, then auto-revert. The timer is honored by loop() (non-blocking, so MQTT/BLE keep
-    // running). Re-issuing "/status" during the overlay just resets the timer; "/redraw" cancels it explicitly via returnToNominalScreen.
-    ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
-    showUpdatedInfoScreen();
-    g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
-    return true;
-  }
-
-  if (message == CMD_HELP) {
-    // Lists the available command vocabulary in the conversation, left-aligned and pink so it stands out from normal traffic. One block per row keeps
-    // each entry on its own line in the scroll area; the leading two spaces inside each string give the description column some breathing room.
-    ESP_LOGI(TAG_MM, "Command [%s] — listing commands", CMD_HELP);
-    addConversationBlock("", "Commands:",                  CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "help          list cmds",    CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "status        info screen",  CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "redraw        full repaint", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "mqtt          drop MQTT",    CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "bt-clean      clear bonds",  CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "wifi          drop WiFi",    CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "wifi-clean    wipe NVS",     CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "wifi-list     known nets",   CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "wifi-forget <ssid>",         CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "wifi-portal   open portal",  CONVO_CMD_COLOR, LEFT);
-    return true;
-  }
-  return false;
+  // Echo a compact summary into the conversation.
+  char line[64];
+  snprintf(line, sizeof(line), "heap free=%u largest=%u", freeHeap, largest);
+  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+  snprintf(line, sizeof(line), "min-ever-free=%u frag=%u%%",
+           minEverFree, freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
+  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
 }
 
 void routeMessage(const String& message, MessageSource source) {
@@ -1840,7 +1836,7 @@ void goAndResetConversationScreen() {
 }
 
 // Returns to the nominal 3-zone screen (upper status bar + scroll area + footer) and repaints all three from their in-memory state. Called by
-// "/redraw" and by the "/status" timeout in loop(). Also clears g_statusScreenEndMs so a pending timeout doesn't fire a redundant revert
+// "/dbg redraw" and by the "/status" timeout in loop(). Also clears g_statusScreenEndMs so a pending timeout doesn't fire a redundant revert
 // when the user triggers a manual redraw mid-overlay.
 void returnToConversationsScreen() {
   g_statusScreenEndMs = 0;
@@ -1916,24 +1912,26 @@ void showUpdatedInfoScreen() {
     nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe), colHeaders, colValues, nextY, lineHeight);
     nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
     nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found",
-                         colHeaders, colValues, nextY, lineHeight);
 
-    // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
-    // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
-    // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
-    WifiState st = wifiGetState();
+    nextY += 5 nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found",
+                                    colHeaders, colValues, nextY, lineHeight);
+    nextY += 5
+
+      // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
+      // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
+      // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
+      WifiState st = wifiGetState();
     if (st == WifiState::PORTAL) {
       drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
     } else {
       String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
       String ipStr;
-      if (WiFi.status() == WL_CONNECTED)       ipStr = WiFi.localIP().toString();
-      else if (st == WifiState::TRYING_KNOWN)  ipStr = "Connecting...";
-      else if (st == WifiState::LOST)          ipStr = "Lost, retrying";
-      else                                     ipStr = "Booting...";
+      if (WiFi.status() == WL_CONNECTED) ipStr = WiFi.localIP().toString();
+      else if (st == WifiState::TRYING_KNOWN) ipStr = "Connecting...";
+      else if (st == WifiState::LOST) ipStr = "Lost, retrying";
+      else ipStr = "Booting...";
       nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
-      nextY += drawInfoRow(pDisp, "IP:",   ipStr,   colHeaders, colValues, nextY, lineHeight);
+      nextY += drawInfoRow(pDisp, "IP:", ipStr, colHeaders, colValues, nextY, lineHeight);
       nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK",
                            colHeaders, colValues, nextY, lineHeight);
       nextY += drawInfoRow(pDisp, "TIME:", String(getTimezoneLabel()),
@@ -2087,8 +2085,10 @@ void loop() {
       }
     }
 
-    // Time to try to reconnect ?
-    if (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL) {
+    // Don't even try to reconnect while the WiFi link is down. Without an IP the TLS connect just fails on DNS (errno 118 / "Host is unreachable",
+    // lwIP rc -54) after wasting heap and spamming the serial console. The wifi state machine in wifi.ino is the one driving re-association; as soon
+    // as it transitions back to CONNECTED, the time gate below will fire a fresh attempt within MQTT_CONNECT_RETRY_INTERVAL_MS.
+    if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL_MS)) {
       // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
       // up to ~30 s; starting the timer from the call's *end* would compound.
       g_mqttLastReconnectTryTimestampMs = currentMillis;
@@ -2102,7 +2102,7 @@ void loop() {
     g_mqttClient.loop();
 
     // MQTT: Send keep-alive
-    if (currentMillis - g_mqttPreviousKeepAliveTimestampMs >= MQTT_KEEPALIVE_INTERVAL) {
+    if (currentMillis - g_mqttPreviousKeepAliveTimestampMs >= MQTT_KEEPALIVE_INTERVAL_MS) {
       // Met à jour le temps de la dernière exécution
       g_mqttPreviousKeepAliveTimestampMs = currentMillis;
 
@@ -2158,11 +2158,11 @@ void loop() {
   // Blinking leds management
   for (int pin = 0; pin < LED_QTY; pin++) {
     if (g_ledRequiredState[pin] == LED_STATE_BLINK_FAST) {
-      if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_FAST_DURATION) {
+      if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_FAST_DURATION_MS) {
         ledCommuteBlinkState(pin);
       }
     } else if (g_ledRequiredState[pin] == LED_STATE_BLINK_SLOW) {
-      if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_SLOW_DURATION) {
+      if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_SLOW_DURATION_MS) {
         ledCommuteBlinkState(pin);
       }
     }
@@ -2186,7 +2186,7 @@ void loop() {
   }
 
   // Auto-revert from the "/status" info-screen overlay back to the nominal 3-zone view after STATUS_SCREEN_DURATION_MS. Non-blocking so MQTT
-  // and BLE keep running during the overlay; the same returnToNominalScreen() path is used by "/redraw" for consistency.
+  // and BLE keep running during the overlay; the same returnToNominalScreen() path is used by "/dbg redraw" for consistency.
   if (g_statusScreenEndMs != 0 && currentMillis >= g_statusScreenEndMs) {
     returnToConversationsScreen();
   }

@@ -4,12 +4,12 @@
 // Fixed-size storage for one conversation entry. Putting these in char[] (BSS)
 // instead of String (heap) is what makes the conversation buffer immune to
 // heap fragmentation — see MEM-001 in docs/audit_claude.md.
-#define CONVO_TS_MAX_LEN  20   // "YYYY-MM-DD|HH:MM:SS\0" is 20 bytes
+#define CONVO_TS_MAX_LEN 20    // "YYYY-MM-DD|HH:MM:SS\0" is 20 bytes
 #define CONVO_MSG_MAX_LEN 128  // a bit above MAX_SERIAL_MSG_LENGTH (100)
 
 class TextLine {
 public:
-  char ts[CONVO_TS_MAX_LEN];   // empty when ts[0] == '\0'
+  char ts[CONVO_TS_MAX_LEN];  // empty when ts[0] == '\0'
   uint16_t tsColor;
   const GFXfont* tsFont;
   byte tsFontSize;

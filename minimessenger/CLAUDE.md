@@ -43,6 +43,10 @@ On ESP32 (arduino-esp32 3.3.8) reading the MAC reliably requires the WiFi driver
 
 All WiFi-related code lives in **`wifi.ino`** (concatenated with `minimessenger.ino` by the Arduino IDE — they share one translation unit). The state machine, NVS-backed network list (Preferences namespace `"wifi"`), WiFiMulti integration, and WiFiManager captive portal are isolated there. The shared `WifiState` enum and exported function prototypes live in `wifi_state.h`, included by both files. Compile-time defaults come from `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`). The main sketch only calls `setupWifi()` once in `setup()` then `wifiTick(currentMillis)` every `loop()` — boot is non-blocking. The status screen (`showUpdatedInfoScreen`) branches on `wifiGetState()` to either show normal SSID/IP/MQTT/TIME rows or the captive-portal instructions. **See `docs/howto_wifi.md` for the full workflow documentation.**
 
+## Command layer
+
+All `/cmd` vocabulary lives in **`commands.ino`**: the CMD_*/GROUP_* constants, the top-level dispatcher `processPayloadAsCommand()`, the per-group sub-dispatchers (`processWifiSubcommand`, `processDbgSubcommand`), and the three help printers (`printHelpGlobal`, `printHelpWifi`, `printHelpDbg`). Same split philosophy as `wifi.ino`: the file is concatenated into the same TU as `minimessenger.ino` so it shares `addConversationBlock`, `g_mqttClient`, `dumpChipInfo`, etc. without exports. `routeMessage()` in `minimessenger.ino` is the single funnel that calls `processPayloadAsCommand()`. Two orphan commands (`/help`, `/status`, `/mqtt-drop`, `/bt-clean`) and two groups (`/wifi *`, `/dbg *`); typing the bare group prefix (e.g. just `/wifi`) prints the partial help for that group.
+
 ## MQTT topology
 
 All devices share one HiveMQ Cloud broker (credentials and root CA are hardcoded in the sketch). Topics:

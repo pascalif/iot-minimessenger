@@ -42,7 +42,7 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& add
   // NimBLE may not.
   const NimBLEUUID hidReportUuid(BT_CHAR_HID_REPORT_2A4D);
   const std::vector<NimBLERemoteCharacteristic*>& chars =
-      pRemoteService->getCharacteristics(true);
+    pRemoteService->getCharacteristics(true);
   int subscribed = 0;
   for (NimBLERemoteCharacteristic* pChar : chars) {
     if (pChar->getUUID() == hidReportUuid && pChar->canNotify()) {

@@ -104,18 +104,18 @@ Cas typique: la box maison a été reset, le password est nouveau.
 3. Côté NVS, `wifiSaveToNvs()` détecte que le SSID existe déjà et **remplace le password en place** (pas de doublon)
 4. À chaque boot suivant, le nouveau password en NVS gagne sur l'ancien dans compile defaults (règle de dédup)
 
-Alternative manuelle: `/wifi-forget MyHomeWiFi` puis `/wifi-portal` pour ouvrir immédiatement le portail.
+Alternative manuelle: `/wifi forget MyHomeWiFi` puis `/wifi portal` pour ouvrir immédiatement le portail.
 
-**⚠️ Cas particulier**: si tu fais `/wifi-forget MyHomeWiFi` et que `MyHomeWiFi` est aussi déclaré dans `compiled_wifi.h`, l'entrée disparaît de NVS mais reste injectée dans WiFiMulti au prochain boot via les compile defaults (avec le password compilé, possiblement périmé). Pour vraiment ne plus s'y connecter du tout, supprime aussi l'entrée de `compiled_wifi.h` et reflashe.
+**⚠️ Cas particulier**: si tu fais `/wifi forget MyHomeWiFi` et que `MyHomeWiFi` est aussi déclaré dans `compiled_wifi.h`, l'entrée disparaît de NVS mais reste injectée dans WiFiMulti au prochain boot via les compile defaults (avec le password compilé, possiblement périmé). Pour vraiment ne plus s'y connecter du tout, supprime aussi l'entrée de `compiled_wifi.h` et reflashe.
 
 ### Déménagement complet / reset du device
 
 ```
-/wifi-clean  → vide NVS uniquement
+/wifi clean  → vide NVS uniquement
 [reboot]     → WiFiMulti rechargé avec les compile defaults seuls (portail si template vide)
 ```
 
-`/wifi-clean` n'efface PAS la connexion en cours et n'efface PAS les compile defaults — c'est juste un wipe NVS. Le device garde son lien actuel jusqu'au prochain reboot. Au prochain boot, seuls les compile defaults sont disponibles dans WiFiMulti (puisque NVS est vide).
+`/wifi clean` n'efface PAS la connexion en cours et n'efface PAS les compile defaults — c'est juste un wipe NVS. Le device garde son lien actuel jusqu'au prochain reboot. Au prochain boot, seuls les compile defaults sont disponibles dans WiFiMulti (puisque NVS est vide).
 
 ### Reconnexion automatique (panne courte de la box)
 
@@ -139,27 +139,33 @@ Si le SSID **n'est pas** dans la liste NVS → après 15s de TRYING_KNOWN → PO
 
 Toutes les commandes peuvent venir du **clavier BLE** (Enter pour valider), de **Serial** (via cable USB et console à 115200), ou de **MQTT** (broadcast vers tous les peers — utile pour scripter à distance).
 
+Les commandes sont organisées en 4 commandes orphelines (`/help`, `/status`, `/mqtt-drop`, `/bt-clean`) et 2 groupes (`/wifi *`, `/dbg *`). Taper la racine du groupe seule (ex: `/wifi` sans argument) affiche l'aide partielle du groupe.
+
 | Commande | Effet |
 |----------|-------|
-| `/help` | Liste toutes les commandes |
-| `/wifi` | Force un disconnect WiFi (test de résilience). Le device passe en LOST puis tente de se reconnecter |
-| `/wifi-list` | Affiche en rose les SSIDs sauvés en NVS |
-| `/wifi-forget <ssid>` | Supprime un SSID précis de NVS (laisse les autres). Ex: `/wifi-forget OldWiFi` |
-| `/wifi-clean` | Vide totalement NVS WiFi. Au prochain reboot, re-seed depuis `compiled_wifi.h` ou portail |
-| `/wifi-portal` | Force l'ouverture du portail captif immédiatement, sans attendre un échec |
-| `/mqtt` | Disconnect MQTT (test) |
-| `/bt-clean` | Vide les bonds BLE (clavier doit re-pair après reboot) |
+| `/help` | Liste les commandes orphelines + les racines de groupes |
 | `/status` | Affiche l'écran d'info pendant 10s |
-| `/redraw` | Repaint complet des 3 zones (status bar + scroll + footer) |
+| `/mqtt-drop` | Disconnect MQTT (test de résilience). MQTT se reconnecte automatiquement via la boucle de retry |
+| `/bt-clean` | Vide les bonds BLE (clavier doit re-pair après reboot) |
+| `/wifi` | Aide partielle: liste uniquement les sous-commandes du groupe `/wifi *` |
+| `/wifi drop` | Force un disconnect WiFi (test de résilience). Le device passe en LOST puis tente de se reconnecter |
+| `/wifi list` | Affiche en rose les SSIDs sauvés en NVS |
+| `/wifi forget <ssid>` | Supprime un SSID précis de NVS (laisse les autres). Ex: `/wifi forget OldWiFi` |
+| `/wifi clean` | Vide totalement NVS WiFi. Au prochain reboot, re-seed depuis `compiled_wifi.h` ou portail |
+| `/wifi portal` | Force l'ouverture du portail captif immédiatement, sans attendre un échec |
+| `/dbg` | Aide partielle: liste uniquement les sous-commandes du groupe `/dbg *` |
+| `/dbg redraw` | Repaint complet des 3 zones (status bar + scroll + footer) |
+| `/dbg chip` | Diagnostic: chip model, revision, MACs, IDF version, reset reason |
+| `/dbg mem` | Diagnostic: heap libre, fragmentation, stack high-water-mark |
 
 ## Schéma NVS
 
 Namespace `wifi` (via Arduino `Preferences`). Clés:
 
-- `count` (uint8): nombre de slots **alloués**. Borne supérieure quand on itère; certains slots intermédiaires peuvent être vides (trous laissés par `/wifi-forget`, réclamés au prochain `wifiSaveToNvs`).
+- `count` (uint8): nombre de slots **alloués**. Borne supérieure quand on itère; certains slots intermédiaires peuvent être vides (trous laissés par `/wifi forget`, réclamés au prochain `wifiSaveToNvs`).
 - `ssid_0`, `pwd_0`, …, `ssid_4`, `pwd_4` (String): jusqu'à `MAX_WIFI_NETWORKS=5` paires. SSID vide = slot libre.
 
-Les `COMPILED_WIFI_DEFAULTS` ne sont **jamais écrits en NVS** — ils sont injectés directement dans WiFiMulti au boot par `wifiLoadNVSAndCompiledIntoMulti()`. Modifier `compiled_wifi.h` + reflasher est donc immédiatement effectif au prochain boot, sans dépendre de l'état NVS. `/wifi-list` ne montre que les entrées NVS (les compile defaults sont des constantes du code, pas des données utilisateur).
+Les `COMPILED_WIFI_DEFAULTS` ne sont **jamais écrits en NVS** — ils sont injectés directement dans WiFiMulti au boot par `wifiLoadNVSAndCompiledIntoMulti()`. Modifier `compiled_wifi.h` + reflasher est donc immédiatement effectif au prochain boot, sans dépendre de l'état NVS. `/wifi list` ne montre que les entrées NVS (les compile defaults sont des constantes du code, pas des données utilisateur).
 
 ## Que dit chaque ligne du status screen ?
 
@@ -197,12 +203,12 @@ Pour ajuster les timeouts, voir les `#define` en tête de `wifi.ino`:
 
 - **WiFiManager portal est HTTP only**, pas HTTPS. Acceptable pour un réseau privé domestique, pas pour un usage en environnement non-trust.
 - **Pas de WPA Enterprise** supporté côté NVS (juste WPA/WPA2 PSK). Les réseaux Eduroam et co. ne marchent pas via ce système.
-- **Pas de detection automatique de "mauvais password"**: si tu changes le password d'un AP côté router sans toucher au device, WiFiMulti continue d'essayer indéfiniment. Workaround: `/wifi-forget <ssid>` + portail, ou attendre 60s pour le fallback PORTAL.
+- **Pas de detection automatique de "mauvais password"**: si tu changes le password d'un AP côté router sans toucher au device, WiFiMulti continue d'essayer indéfiniment. Workaround: `/wifi forget <ssid>` + portail, ou attendre 60s pour le fallback PORTAL.
 - **AP générique `minimessenger-config`**: si plusieurs minimessenger sont en mode portail simultanément dans le même lieu, il n'y aura qu'un seul AP visible — configurer les devices un par un.
 - **Portal save callback fragile au stack WiFiManager**: si la lib est upgradée, vérifier que `WiFi.SSID()` / `WiFi.psk()` retournent toujours des valeurs valides à l'appel du callback.
 
 ## Pour aller plus loin
 
 - Ajouter un OTA (Over-The-Air update) basé sur la même connexion: hors scope ce PR, mais l'architecture non-bloquante le permet maintenant.
-- Hot-reload de `compiled_wifi.h` sans `/wifi-clean`: faudrait un hash des defaults stocké en NVS, comparer au boot, re-seeder si différent. Pas implémenté.
-- Filtrer les commandes destructives (`/wifi-clean`, `/bt-clean`) selon le canal d'entrée: un `/wifi-clean` venu de MQTT broadcast efface NVS sur tous les peers. Pour l'instant, accepté tel quel.
+- Hot-reload de `compiled_wifi.h` sans `/wifi clean`: faudrait un hash des defaults stocké en NVS, comparer au boot, re-seeder si différent. Pas implémenté.
+- Filtrer les commandes destructives (`/wifi clean`, `/dbg bt-clean`) selon le canal d'entrée: un `/wifi clean` venu de MQTT broadcast efface NVS sur tous les peers. Pour l'instant, accepté tel quel.

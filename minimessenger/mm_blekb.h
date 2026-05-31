@@ -13,10 +13,10 @@
 // — see https://www.bluetooth.com/specifications/assigned-numbers/ if you need
 // to add more.
 // ----------------------------------------------------------------------------
-constexpr uint16_t BT_SERVICE_HID_1812         = 0x1812;  // HID over GATT — top-level service exposed by all BLE keyboards / mice / gamepads.
-constexpr uint16_t BT_CHAR_HID_REPORT_2A4D     = 0x2A4D;  // HID Report — there is ONE characteristic instance per Report ID (input / output / feature).
+constexpr uint16_t BT_SERVICE_HID_1812 = 0x1812;          // HID over GATT — top-level service exposed by all BLE keyboards / mice / gamepads.
+constexpr uint16_t BT_CHAR_HID_REPORT_2A4D = 0x2A4D;      // HID Report — there is ONE characteristic instance per Report ID (input / output / feature).
 constexpr uint16_t BT_APPEARANCE_KEYBOARD_03C1 = 0x03C1;  // Generic HID → Keyboard. Optional in adv data but a strong positive signal when present.
-constexpr uint16_t BT_APPEARANCE_MOUSE_03C2    = 0x03C2;  // Generic HID → Mouse. Not used to filter today, kept for symmetry / future negative filtering.
+constexpr uint16_t BT_APPEARANCE_MOUSE_03C2 = 0x03C2;     // Generic HID → Mouse. Not used to filter today, kept for symmetry / future negative filtering.
 
 
 typedef std::function<void(bool isFullyConnected)> mm_btkb_on_connection_callback;
@@ -50,6 +50,8 @@ public:
     mm_btkb_on_connection_callback onConnectionCallback,
     mm_btkb_on_keystroke_callback onKeystrokeCallback);
 
+  void clearAllExistingBonds();
+
   void tryToMaintainConnection();
 
   bool isFullyConnected();
@@ -58,7 +60,6 @@ public:
 protected:
   uint8_t m_scanningDurationSec = 30;
 
-  void clearAllExistingBonds();
   bool connectToServer(const NimBLEAddress& address);
 
   // NimBLEScanCallbacks

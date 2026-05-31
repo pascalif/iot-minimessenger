@@ -4,11 +4,11 @@
 // Kept in its own tiny header so both translation units see the same complete enum definition without dragging in the WiFiManager / WiFiMulti
 // headers from wifi.ino into the main .ino.
 enum class WifiState {
-  BOOTING,        // setup() not finished — NVS not read yet, WiFiMulti not populated.
-  TRYING_KNOWN,   // WiFiMulti is iterating over the known networks (NVS + compiled defaults). Retries every WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS.
-  PORTAL,         // No known network reachable; WiFiManager captive portal is open at AP "minimessenger-config" → http://192.168.4.1.
-  CONNECTED,      // STA associated. NTP and MQTT can run. UI may transition to conversation mode once MQTT is also up.
-  LOST            // Was CONNECTED, now disconnected. WiFiMulti.run() called periodically; falls back to PORTAL after WIFI_LOST_TO_PORTAL_MS.
+  BOOTING,       // setup() not finished — NVS not read yet, WiFiMulti not populated.
+  TRYING_KNOWN,  // WiFiMulti is iterating over the known networks (NVS + compiled defaults). Retries every WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS.
+  PORTAL,        // No known network reachable; WiFiManager captive portal is open at AP "minimessenger-config" → http://192.168.4.1.
+  CONNECTED,     // STA associated. NTP and MQTT can run. UI may transition to conversation mode once MQTT is also up.
+  LOST           // Was CONNECTED, now disconnected. WiFiMulti.run() called periodically; falls back to PORTAL after WIFI_LOST_TO_PORTAL_MS.
 };
 
 // Adafruit_ST7789 forward declaration so we can take a pointer in the portal renderer's signature without pulling Adafruit_GFX into wifi_state.h.
@@ -33,7 +33,7 @@ void wifiClearNvs();
 // returning a std::vector<String> across the .ino boundary (which would complicate the forward declaration).
 void wifiPrintListToConversation();
 
-// Force the state machine into PORTAL right now (used by /wifi-portal). Closes any active STA attempt and opens the captive AP.
+// Force the state machine into PORTAL right now (used by /wifi portal). Closes any active STA attempt and opens the captive AP.
 void wifiForcePortal();
 
 // Render the portal instructions block on the info screen. Caller advances nextY itself based on the lines added (the function updates it via the
