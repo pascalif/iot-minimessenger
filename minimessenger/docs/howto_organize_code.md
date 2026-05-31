@@ -19,7 +19,11 @@ auto-generates function prototypes. Globals are shared without ceremony.
 2. It concatenates them all into one virtual source file, in this order:
    - the main sketch (the one matching the folder name, e.g.
      `minimessenger.ino` in folder `minimessenger/`)
-   - all other `.ino` files **alphabetically**.
+   - all other `.ino` files **alphabetically**. (No need for a numeric prefix
+     convention like `10-foo.ino` / `20-bar.ino` to enforce an order: the
+     auto-prototype pass at step 4 below resolves all forward references
+     within the concatenated source, so the relative order of the secondary
+     `.ino` files does not affect compilation or behavior.)
 3. It prepends `#include <Arduino.h>` to the result.
 4. It scans the concatenated source for function definitions and auto-emits
    forward prototypes at the top (this is the Arduino "magic" that lets you

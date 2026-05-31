@@ -46,11 +46,11 @@
 // Column widths. Tags happen to be 4 chars; func is space-padded if shorter
 // and truncated if longer.
 #define MM_LOG_TAG_W   4
-#define MM_LOG_FUNC_W  20
+#define MM_LOG_FUNC_W  30
 
 // Set to 1 to insert "<file>:<line> " between the TAG and func columns.
 #define MM_LOG_SHOW_FILE 1
-#define MM_LOG_FILE_W    20
+#define MM_LOG_FILE_W    18
 
 // Single-line emit helper. Builds the full line in one buffer before writing
 // to Serial so it lands atomically (a second log call from another task
@@ -78,15 +78,16 @@ static inline void mm_log_emit(char level, const char* tag, const char* func,
   size_t fLen = strlen(fileShort);
   memcpy(fileBuf, fileShort, fLen < MM_LOG_FILE_W ? fLen : MM_LOG_FILE_W);
 
-  n = snprintf(buf, sizeof(buf), "%02d:%02d:%02d %c %-*s %-*s:%-4d %-*s: ",
-    tm_info.tm_hour, tm_info.tm_min, tm_info.tm_sec, level,
+  n = snprintf(buf, sizeof(buf), "%02d:%02d:%02d %c  %-*s  %-*s:%-5d  %-*s: ",
+    tm_info.tm_hour, tm_info.tm_min, tm_info.tm_sec,
+    level,
     MM_LOG_TAG_W, tag,
     MM_LOG_FILE_W, fileBuf, line,
     MM_LOG_FUNC_W, funcBuf);
 #else
   (void) file;
   (void) line;
-  n = snprintf(buf, sizeof(buf), "%02d:%02d:%02d %c %-*s %-*s: ",
+  n = snprintf(buf, sizeof(buf), "%02d:%02d:%02d %c  %-*s  %-*s: ",
     tm_info.tm_hour, tm_info.tm_min, tm_info.tm_sec, level,
     MM_LOG_TAG_W, tag,
     MM_LOG_FUNC_W, funcBuf);

@@ -66,6 +66,10 @@ Friend present
 // Provided by ESP32 boards
 #include <WiFi.h>
 
+// WiFi state machine + onboarding (NVS / WiFiMulti / WiFiManager) lives in wifi.ino. This header pulls in the shared enum and the function
+// prototypes that minimessenger.ino calls (setupWifi, wifiTick, wifiGetState, drawPortalInstructions, /wifi-* command helpers).
+#include "wifi_state.h"
+
 // Install from library manager: "PubSubClient" (2.8)
 #include <PubSubClient.h>
 
@@ -121,11 +125,8 @@ Friend present
 // User configuration
 // ================================================================================
 
-// WiFi credentials
-const char* g_wifiSSID = "SatelliteThree";  // Wifi SSID
-const char* g_wifiPassword = "xxxxxxx";  // WiFi Password
-//const char* g_wifiSSID = "AndroidPACPAC5";          // Wifi SSID
-//const char* g_wifiPassword = "apapapap";          // WiFi Password
+// WiFi credentials are no longer kept here — see wifi.ino + compiled_wifi.h (gitignored) + NVS for the new onboarding flow. WiFiMulti picks the
+// strongest known network at boot; if none respond, the WiFiManager captive portal opens automatically. See docs/howto_wifi.md.
 
 // MQTT Broker details
 const char* mqtt_server = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
@@ -371,12 +372,8 @@ time_t g_lastShownTsEpoch = 0;
 // WiFi
 WiFiClientSecure g_wifiClient;
 
-// WiFi reconnection state — mirrors the MQTT pattern below. g_wifiWasConnected tracks the previous loop()'s status so we only log / show a UI
-// notice on the connected→disconnected edge. g_wifiLastReconnectTryTimestampMs gates the retry cadence so we don't hammer WiFi.reconnect() on
-// every loop iteration when the AP is unreachable.
-bool g_wifiWasConnected = false;
-unsigned long g_wifiLastReconnectTryTimestampMs = 0;
-#define WIFI_CONNECT_RETRY_INTERVAL 5000
+// WiFi reconnection state moved to wifi.ino along with the rest of the WiFi machinery. The state machine there drives banners on rising / falling
+// edges; this .ino just exposes UI surfaces.
 
 // MQTT
 PubSubClient g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
@@ -890,36 +887,11 @@ void identifyDevice() {
 // ================================================================================
 // WIFI
 // ================================================================================
-
-void setupWifi() {
-  ESP_LOGI(TAG_WIFI, "setupWifi()...");
-  WiFi.disconnect(true, true);  // clear any prior config & stop in-flight attempts
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname(g_deviceName);  // ESP32 core 3.x: setHostname() must be called before begin()
-
-  WiFi.begin(g_wifiSSID, g_wifiPassword);
-
-  ESP_LOGI(TAG_WIFI, "Connecting...");
-  unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-  }
-  g_wifiWasConnected = true;
-  ESP_LOGI(TAG_WIFI, "Connected after %lums, IP=%s",
-           millis() - t0, WiFi.localIP().toString().c_str());
-
-  setupNTP();  // For ESP32 boards, this call must be done after the Wifi is connected (was not important on D1mini though)
-
-
-  // Il n'est pas indispensable d'avoir le TLS, mais ca évite une attack man in the middle.
-  // Le code tourne dans les cas.
-  if (false) {
-    g_wifiClient.setInsecure();  // Use this if you don't have a certificate
-  } else {
-    // For HiveMQ TLS
-    g_wifiClient.setCACert(g_hiveMQRootCA);
-  }
-}
+//
+// The connection state machine and the NVS-backed network list live in wifi.ino (concatenated into the same translation unit by the Arduino IDE).
+// setupWifi() is defined there and handles the whole WiFi bringup in one call: driver mode + hostname + NVS seed/load + WiFiManager config +
+// state machine kick. The TLS root CA wiring stays below in setup() since it's an MQTT concern, not a WiFi one. wifiTick() in loop() drives the
+// async association and reconnection.
 
 // ================================================================================
 // BLUETOOTH KEYBOARD
@@ -1009,7 +981,7 @@ void mqttSendAlive(int liveType) {
            g_deviceIdMe,
            (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
            WiFi.macAddress().c_str(),
-           g_wifiSSID,
+           WiFi.SSID().c_str(),
            WiFi.localIP().toString().c_str(),
            g_mqttConnectionId);
   mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload);
@@ -1712,10 +1684,15 @@ void onMQTTReconnected() {
 
 const char* const CMD_DISCONNECT_WIFI = "/wifi";
 const char* const CMD_DISCONNECT_MQTT = "/mqtt";
-const char* const CMD_BONDS = "/bonds";
-const char* const CMD_REDRAW = "/redraw";
-const char* const CMD_HELP = "/help";
-const char* const CMD_STATUS = "/status";
+const char* const CMD_BT_CLEAN        = "/bt-clean";
+const char* const CMD_REDRAW          = "/redraw";
+const char* const CMD_HELP            = "/help";
+const char* const CMD_STATUS          = "/status";
+// WiFi config commands — match the verbs in wifi.ino. /wifi-forget takes an SSID argument so it's matched via startsWith() rather than equality.
+const char* const CMD_WIFI_CLEAN      = "/wifi-clean";
+const char* const CMD_WIFI_LIST       = "/wifi-list";
+const char* const CMD_WIFI_FORGET     = "/wifi-forget";   // payload: "/wifi-forget <ssid>"
+const char* const CMD_WIFI_PORTAL     = "/wifi-portal";
 
 bool processPayloadAsCommand(const String& message) {
   if (message == CMD_DISCONNECT_WIFI) {
@@ -1730,11 +1707,49 @@ bool processPayloadAsCommand(const String& message) {
     return true;
   }
 
-  if (message == CMD_BONDS) {
-    // Going through NimBLEDevice directly (rather than the keyboard wrapper's
-    // protected clearAllExistingBonds()) keeps mm_blekb's API surface intact.
-    ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BONDS);
+  if (message == CMD_BT_CLEAN) {
+    // Going through NimBLEDevice directly (rather than the keyboard wrapper's protected clearAllExistingBonds()) keeps mm_blekb's API surface
+    // intact. Renamed from /bonds to /bt-clean for symmetry with /wifi-clean.
+    ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BT_CLEAN);
     NimBLEDevice::deleteAllBonds();
+    return true;
+  }
+
+  if (message == CMD_WIFI_CLEAN) {
+    // Wipes the entire NVS WiFi namespace. On the next boot the compile-time defaults in compiled_wifi.h re-seed (if any); otherwise the device
+    // boots straight into the captive portal. The current STA connection survives this call — only future boots are affected.
+    ESP_LOGI(TAG_MM, "Command [%s] — clearing NVS WiFi list", CMD_WIFI_CLEAN);
+    wifiClearNvs();
+    addConversationBlock("", "NVS WiFi cleared — reboot to re-seed", CONVO_CMD_COLOR, LEFT);
+    return true;
+  }
+
+  if (message == CMD_WIFI_LIST) {
+    // Prints each saved SSID into the conversation in pink. Handy when the user wants to see what's in NVS without rebooting / opening serial.
+    ESP_LOGI(TAG_MM, "Command [%s] — listing saved WiFi networks", CMD_WIFI_LIST);
+    wifiPrintListToConversation();
+    return true;
+  }
+
+  if (message.startsWith(String(CMD_WIFI_FORGET) + " ")) {
+    // Parse the SSID argument: anything after the first space. We use startsWith with a trailing space so "/wifi-forget-x" doesn't match.
+    String ssid = message.substring(strlen(CMD_WIFI_FORGET) + 1);
+    ssid.trim();
+    ESP_LOGI(TAG_MM, "Command [%s] — forgetting SSID [%s]", CMD_WIFI_FORGET, ssid.c_str());
+    if (ssid.length() == 0) {
+      addConversationBlock("", "Usage: /wifi-forget <ssid>", CONVO_ERROR_COLOR, LEFT);
+    } else if (wifiForgetFromNvs(ssid.c_str())) {
+      addConversationBlock("", String("Forgot: ") + ssid, CONVO_CMD_COLOR, LEFT);
+    } else {
+      addConversationBlock("", String("Not found: ") + ssid, CONVO_ERROR_COLOR, LEFT);
+    }
+    return true;
+  }
+
+  if (message == CMD_WIFI_PORTAL) {
+    // Force the captive portal open right now — useful to add a new network without waiting for the current connection to fail.
+    ESP_LOGI(TAG_MM, "Command [%s] — forcing portal", CMD_WIFI_PORTAL);
+    wifiForcePortal();
     return true;
   }
 
@@ -1759,13 +1774,17 @@ bool processPayloadAsCommand(const String& message) {
     // Lists the available command vocabulary in the conversation, left-aligned and pink so it stands out from normal traffic. One block per row keeps
     // each entry on its own line in the scroll area; the leading two spaces inside each string give the description column some breathing room.
     ESP_LOGI(TAG_MM, "Command [%s] — listing commands", CMD_HELP);
-    addConversationBlock("", "Commands:", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "help    list cmds", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "wifi    drop WiFi", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "mqtt    drop MQTT", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "bonds   clear BT bonds", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "redraw  full repaint", CONVO_CMD_COLOR, LEFT);
-    addConversationBlock("", "status  info screen", CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "Commands:",                  CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "help          list cmds",    CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "status        info screen",  CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "redraw        full repaint", CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "mqtt          drop MQTT",    CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "bt-clean      clear bonds",  CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "wifi          drop WiFi",    CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "wifi-clean    wipe NVS",     CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "wifi-list     known nets",   CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "wifi-forget <ssid>",         CONVO_CMD_COLOR, LEFT);
+    addConversationBlock("", "wifi-portal   open portal",  CONVO_CMD_COLOR, LEFT);
     return true;
   }
   return false;
@@ -1893,21 +1912,33 @@ void showUpdatedInfoScreen() {
 
     int nextY = 0;
 
+    // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
     nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe), colHeaders, colValues, nextY, lineHeight);
     nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
     nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
-
     nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found",
                          colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "SSID:", String(g_wifiSSID), colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "IP:",
-                         (WiFi.status() != WL_CONNECTED) ? String("NO WIFI") : WiFi.localIP().toString(),
-                         colHeaders, colValues, nextY, lineHeight);
 
-    nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK",
-                         colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "TIME:", String(getTimezoneLabel()),
-                         colHeaders, colValues, nextY, lineHeight);
+    // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
+    // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
+    // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
+    WifiState st = wifiGetState();
+    if (st == WifiState::PORTAL) {
+      drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
+    } else {
+      String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
+      String ipStr;
+      if (WiFi.status() == WL_CONNECTED)       ipStr = WiFi.localIP().toString();
+      else if (st == WifiState::TRYING_KNOWN)  ipStr = "Connecting...";
+      else if (st == WifiState::LOST)          ipStr = "Lost, retrying";
+      else                                     ipStr = "Booting...";
+      nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
+      nextY += drawInfoRow(pDisp, "IP:",   ipStr,   colHeaders, colValues, nextY, lineHeight);
+      nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK",
+                           colHeaders, colValues, nextY, lineHeight);
+      nextY += drawInfoRow(pDisp, "TIME:", String(getTimezoneLabel()),
+                           colHeaders, colValues, nextY, lineHeight);
+    }
 
     nextY += lineHeight * 2;
     nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
@@ -2006,13 +2037,12 @@ void setup() {
   // Connect to BT
   setupKeyboard();
 
-  // Connect to WiFi
+  // WiFi: full bringup — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (TRYING_KNOWN or PORTAL). Non-blocking;
+  // wifiTick() in loop() drives the actual association. The info screen polled every 2 s reflects each WifiState transition.
   setupWifi();
 
-  showUpdatedInfoScreen();
-
-
-  // Set up MQTT with TLS
+  // MQTT (server + callback registration) and TLS root CA — independent of the WiFi link being up, safe at any point after setupWifi().
+  g_wifiClient.setCACert(g_hiveMQRootCA);
   g_mqttClient.setServer(mqtt_server, mqtt_port);
   g_mqttClient.setCallback(onMqttIncomingMessage);
 
@@ -2040,26 +2070,9 @@ void loop() {
 
   g_kb.tryToMaintainConnection();
 
-  // WiFi auto-reconnect: triggered after "/wifi" or any spontaneous drop (AP reboot, signal loss, etc.). Same shape as the MQTT block below
-  // — log the falling edge once, then keep retrying every WIFI_CONNECT_RETRY_INTERVAL ms via WiFi.reconnect(). On ESP32 the call is non-blocking,
-  // so loop() keeps spinning and the BT keyboard / serial input stay responsive while the radio re-associates in the background.
-  if (WiFi.status() != WL_CONNECTED) {
-    if (g_wifiWasConnected) {
-      g_wifiWasConnected = false;
-      ESP_LOGW(TAG_WIFI, "Connection lost — will retry every %ums", (unsigned)WIFI_CONNECT_RETRY_INTERVAL);
-      addConversationBlock("", "WiFi lost — Retrying...", CONVO_ERROR_COLOR, CENTER);
-    }
-    if (currentMillis - g_wifiLastReconnectTryTimestampMs > WIFI_CONNECT_RETRY_INTERVAL) {
-      g_wifiLastReconnectTryTimestampMs = currentMillis;
-      ESP_LOGI(TAG_WIFI, "Reconnect attempt to SSID [%s]", g_wifiSSID);
-      WiFi.reconnect();
-    }
-  } else if (!g_wifiWasConnected) {
-    // Rising edge: we just came back online. Re-arm the edge tracker and let the user know; MQTT will pick up by itself on its own retry cadence.
-    g_wifiWasConnected = true;
-    ESP_LOGI(TAG_WIFI, "Reconnected, IP=%s", WiFi.localIP().toString().c_str());
-    addConversationBlock("", "WiFi back", CONVO_INFO_COLOR, CENTER);
-  }
+  // WiFi: drive the state machine in wifi.ino. Handles TRYING_KNOWN → CONNECTED / PORTAL transitions, portal HTTP traffic, rising/falling edge
+  // banners, and the LOST → PORTAL fallback after extended outages. Non-blocking — BT keyboard and serial input keep running through outages.
+  wifiTick(currentMillis);
 
   if (!g_mqttClient.connected()) {
     if (g_mqttWasConnected) {

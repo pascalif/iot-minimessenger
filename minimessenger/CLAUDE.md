@@ -39,6 +39,10 @@ Required libraries (Library Manager, exact versions known to work in comments):
 
 On ESP32 (arduino-esp32 3.3.8) reading the MAC reliably requires the WiFi driver to be in STA mode first. `identifyDevice()` therefore calls `WiFi.mode(WIFI_STA)` before `WiFi.macAddress(buffer)` — this brings up the netif without connecting and lets the MAC read return the real address. `setupWifi()` later issues `WiFi.disconnect(true,true) + mode + begin` on top of that already-initialised STA mode, which is well-defined. We initially tried `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` from `<esp_mac.h>` per the IDF docs (which claim the eFuse path is dependency-free), but on this core/version it silently returns `00:00:00:00:00:00` until the WiFi driver is up — so we stopped relying on it. On D1mini the legacy `WiFi.macAddress()` path is kept under `#else`.
 
+## WiFi onboarding (multi-network + portal)
+
+All WiFi-related code lives in **`wifi.ino`** (concatenated with `minimessenger.ino` by the Arduino IDE — they share one translation unit). The state machine, NVS-backed network list (Preferences namespace `"wifi"`), WiFiMulti integration, and WiFiManager captive portal are isolated there. The shared `WifiState` enum and exported function prototypes live in `wifi_state.h`, included by both files. Compile-time defaults come from `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`). The main sketch only calls `setupWifi()` once in `setup()` then `wifiTick(currentMillis)` every `loop()` — boot is non-blocking. The status screen (`showUpdatedInfoScreen`) branches on `wifiGetState()` to either show normal SSID/IP/MQTT/TIME rows or the captive-portal instructions. **See `docs/howto_wifi.md` for the full workflow documentation.**
+
 ## MQTT topology
 
 All devices share one HiveMQ Cloud broker (credentials and root CA are hardcoded in the sketch). Topics:
@@ -79,4 +83,4 @@ Custom variadic templates `hlog` / `hlogn` / `log` / `logn` (in the sketch) pref
 
 ## Secrets
 
-WiFi SSID/password, MQTT user/password, and the HiveMQ Let's Encrypt root CA are hardcoded in `minimessenger.ino`. Treat the file as sensitive when sharing diffs externally; don't commit alternate credentials without the user's say-so.
+WiFi SSID/password are no longer in `minimessenger.ino` — they live in `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`) and/or NVS at runtime. See `docs/howto_wifi.md`. MQTT user/password and the HiveMQ Let's Encrypt root CA are still hardcoded in `minimessenger.ino`; treat the file as sensitive when sharing diffs externally and don't commit alternate credentials without the user's say-so.

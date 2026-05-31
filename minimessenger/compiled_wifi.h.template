@@ -1,0 +1,30 @@
+#pragma once
+
+// Compile-time WiFi defaults. Copy this file to "compiled_wifi.h", fill in the entries below with your real networks, and DO NOT commit
+// compiled_wifi.h (it's in .gitignore). The networks listed here are ALWAYS loaded into WiFiMulti at every boot, in addition to whatever is
+// saved in NVS — they act as a permanent safety-net fallback. A "/wifi-clean" wipes NVS but the compile-time defaults remain available, so the
+// device can always come back up on a known network without recompiling.
+//
+// Deduplication: if a SSID appears in both this file and NVS, the NVS entry wins (its password may be fresher — typically updated via the
+// captive portal after the home router's password changed).
+//
+// Workflow:
+//   1. cp compiled_wifi.h.template compiled_wifi.h
+//   2. Edit compiled_wifi.h, uncomment / add entries
+//   3. Flash → at every boot, these networks are merged with NVS into WiFiMulti
+//   4. The device tries the strongest match across (NVS ∪ defaults), opens portal if none responds
+//
+// Keep the list <= MAX_WIFI_NETWORKS (defined in wifi.ino, currently 5). An empty list is fine: the device relies entirely on NVS / portal.
+
+struct CompiledWifiEntry {
+  const char* ssid;
+  const char* pwd;
+};
+
+static const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[] = {
+  // { "MyHomeWiFi",     "homepassword"  },
+  // { "MyPhoneHotspot", "hotspotpass"   },
+  // { "OfficeWiFi",     "officepass"    },
+};
+
+static const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / sizeof(COMPILED_WIFI_DEFAULTS[0]);
