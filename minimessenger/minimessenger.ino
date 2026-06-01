@@ -95,10 +95,12 @@ Friend present
 
 // Cf howto_fond pour la bascule vers une font buildée pour les accents
 //#include <Fonts/FreeSans9pt8b.h>  // Police SANS accents 9x7 au lieu de 7x5 de la font par defaut
-//#include "FreeSans9pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
+#include "FreeSans9pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
 #include "FreeSans10pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
+
 // Alias to decouple the sketch from the specific generated font. To switch
 // font size or range (7b/8b), change ONLY the #include above + this #define.
+#define CONVO_CMD_FONT FreeSans9pt8b
 #define CONVO_MSG_FONT FreeSans10pt8b
 
 
@@ -138,14 +140,14 @@ Friend present
 // strongest known network at boot; if none respond, the WiFiManager captive portal opens automatically. See docs/howto_wifi.md.
 
 // MQTT Broker details
-const char* mqtt_server = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
-const int mqtt_port = 8883;                                                       // TLS Port
-const char* mqtt_user = "xxxxx";                                                  // Credential Username
-const char* mqtt_password = "xxxxxxx";                                           // Credential Password
+const char* mqtt_server   = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
+const int   mqtt_port     = 8883;                                                   // TLS Port
+const char* mqtt_user     = "xxxxx";                                                // Credential Username
+const char* mqtt_password = "xxxxxxx";                                             // Credential Password
 
-const char* g_mqttOutgoingTopicLogs = "admin/logs";
-const char* g_mqttOutgoingTopicLive = "admin/live";
-const char* g_mqttOutgoingTopicWill = "admin/dead";
+const char* g_mqttOutgoingTopicLogs      = "admin/logs";
+const char* g_mqttOutgoingTopicLive      = "admin/live";
+const char* g_mqttOutgoingTopicWill      = "admin/dead";
 const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 //                                         "msg/unicast/12"
 
@@ -184,7 +186,7 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // Pins configuration
 // ------------------
 
-#define LED_STATUS 32
+#define LED_STATUS   32
 #define LED_FRIEND_1 33
 #define LED_FRIEND_2 25
 
@@ -212,8 +214,8 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // SCL : D18 GPIO18 "SCK". By default
 // SDA : D23 GPIO23 "MOSI"
 #define TFT_RST -1  // optional, can use RST pin
-#define TFT_DC 2    // GPIO2 : Data/Command select
-#define TFT_CS 5    // GPIO5 : chip select, optionnal, can tie to GND if only one device
+#define TFT_DC  2   // GPIO2 : Data/Command select
+#define TFT_CS  5   // GPIO5 : chip select, optionnal, can tie to GND if only one device
 
 // Backlight pin for PWM dimming. Set to a GPIO if the BL/LED pin of the panel
 // is wired to one (then dim = 50% PWM, off = 0% PWM). Set to -1 if the BL pin
@@ -229,38 +231,37 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 
 
 // Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
-const char* g_hiveMQRootCA =
-  "-----BEGIN CERTIFICATE-----\n"
-  "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
-  "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
-  "cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n"
-  "WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\n"
-  "ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\n"
-  "MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\n"
-  "h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n"
-  "0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\n"
-  "A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\n"
-  "T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\n"
-  "B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\n"
-  "B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\n"
-  "KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\n"
-  "OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\n"
-  "jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\n"
-  "qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\n"
-  "rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\n"
-  "HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\n"
-  "hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\n"
-  "ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n"
-  "3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\n"
-  "NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\n"
-  "ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\n"
-  "TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\n"
-  "jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\n"
-  "oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n"
-  "4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\n"
-  "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
-  "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
-  "-----END CERTIFICATE-----\n";
+const char* g_hiveMQRootCA = "-----BEGIN CERTIFICATE-----\n"
+                             "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
+                             "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
+                             "cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n"
+                             "WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\n"
+                             "ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\n"
+                             "MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\n"
+                             "h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n"
+                             "0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\n"
+                             "A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\n"
+                             "T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\n"
+                             "B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\n"
+                             "B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\n"
+                             "KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\n"
+                             "OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\n"
+                             "jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\n"
+                             "qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\n"
+                             "rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\n"
+                             "HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\n"
+                             "hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\n"
+                             "ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n"
+                             "3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\n"
+                             "NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\n"
+                             "ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\n"
+                             "TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\n"
+                             "jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\n"
+                             "oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n"
+                             "4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\n"
+                             "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
+                             "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
+                             "-----END CERTIFICATE-----\n";
 
 
 // === Hardware scroll state (ST7789, portrait, partitioned framebuffer) ===
@@ -274,7 +275,7 @@ const char* g_hiveMQRootCA =
 //   [301, 320)          Bottom Fixed Area  → input feedback footer
 // The Top/Bottom Fixed areas are not affected by VSCSAD — we draw to them
 // directly with normal GFX calls.
-#define FB_WIDTH 240
+#define FB_WIDTH  240
 #define FB_HEIGHT 320
 // STATUS_BAR_H = 24 (icons + separator hairline) + 1 (black gap to aerate
 // before the scroll area). The separator is drawn at line STATUS_BAR_H - 2.
@@ -282,10 +283,10 @@ const char* g_hiveMQRootCA =
 // FOOTER_H = 1 (top aération) + 1 (white hairline) + 1 (margin) + 16 (size-2
 // text) + 0 (text flush with screen bottom). See the diagram at the top of
 // this file for the row-by-row breakdown.
-#define FOOTER_H 19
-#define SCROLL_AREA_H (FB_HEIGHT - STATUS_BAR_H - FOOTER_H)  // 276
-#define SCROLL_AREA_Y_FB STATUS_BAR_H                        // 25
-#define FOOTER_Y_FB (FB_HEIGHT - FOOTER_H)                   // 301
+#define FOOTER_H         19
+#define SCROLL_AREA_H    (FB_HEIGHT - STATUS_BAR_H - FOOTER_H)  // 276
+#define SCROLL_AREA_Y_FB STATUS_BAR_H                           // 25
+#define FOOTER_Y_FB      (FB_HEIGHT - FOOTER_H)                 // 301
 
 // g_scrollY: scroll OFFSET inside the scroll area, in [0, SCROLL_AREA_H).
 //            The absolute VSCSAD value sent to the controller is
@@ -294,20 +295,20 @@ const char* g_hiveMQRootCA =
 //            block's top will be drawn. In [0, SCROLL_AREA_H).
 //            After a draw + scroll, g_drawY == g_scrollY (mod SCROLL_AREA_H).
 uint16_t g_scrollY = 0;
-uint16_t g_drawY = 0;
+uint16_t g_drawY   = 0;
 
 // === Status bar layout ===
 // Two network-state chips on the left (WiFi white, MQTT yellow), a 50 px visual spacer, two input-state chips (BT blue + CapsLock A/a in white), then
 // the contact silhouette in red on the right. The radius is sized to fit comfortably in the 24 px high bar with a few pixels of margin.
-#define ICON_RADIUS 6
+#define ICON_RADIUS   6
 #define ICON_Y_CENTER (STATUS_BAR_H / 2)  // 12
 // Order from left to right: WiFi, MQTT, [50 px spacer], BT, CapsLock, …, Contact. The 50 px gap separates "network reachability" indicators (left
 // cluster) from "keyboard input" indicators (right cluster) so the user can scan their meaning at a glance.
 #define ICON_WIFI_X 12
 #define ICON_MQTT_X 32
 // BT sits 50 px right of MQTT's right edge: ICON_MQTT_X + ICON_RADIUS + 50 + ICON_RADIUS = 32 + 6 + 50 + 6 = 94.
-#define ICON_BT_X 94
-#define ICON_CAPS_X 114
+#define ICON_BT_X      94
+#define ICON_CAPS_X    114
 #define ICON_CONTACT_X (FB_WIDTH - 12)  // 228
 
 // Light-gray hairline drawn on the bottom row of the status bar to visually
@@ -315,12 +316,12 @@ uint16_t g_drawY = 0;
 #define STATUS_BAR_SEPARATOR_COLOR 0xDEFB
 
 // Last drawn state — used to skip a redraw when nothing changed.
-bool g_lastDrawnBt = false;
-bool g_lastDrawnWifi = false;
-bool g_lastDrawnMqtt = false;
-bool g_lastDrawnCaps = false;
-bool g_lastDrawnContact = true;  // placeholder until contact tracking exists
-bool g_statusBarDirty = true;
+bool          g_lastDrawnBt         = false;
+bool          g_lastDrawnWifi       = false;
+bool          g_lastDrawnMqtt       = false;
+bool          g_lastDrawnCaps       = false;
+bool          g_lastDrawnContact    = true;  // placeholder until contact tracking exists
+bool          g_statusBarDirty      = true;
 unsigned long g_lastStatusBarPollMs = 0;
 #define STATUS_BAR_POLL_INTERVAL_MS 500
 
@@ -356,20 +357,26 @@ const int MAX_LINES = 13;  // nombre max de lignes gardées en mémoire. Utile u
 // Adding a line: write at (g_lineHead + g_lineCount) % MAX_LINES, ++g_lineCount.
 // Dropping the oldest: ++g_lineHead, --g_lineCount.
 TextLine lines[MAX_LINES];
-int g_lineHead = 0;
-int g_lineCount = 0;
+int      g_lineHead  = 0;
+int      g_lineCount = 0;
 
-#define CONVO_TS_FONT_SIZE 1
+#define CONVO_TS_FONT_SIZE     1
 #define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
-#define CONV0_TS_COLOR ST77XX_CYAN
+#define CONV0_TS_COLOR         ST77XX_CYAN
 
-#define CONVO_MSG_FONT_SIZE 1      // 2 est vraiment trop énorme avec la font FreeSans9pt8b
+#define CONVO_MSG_FONT_SIZE     1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
 #define CONVO_MSG_MARGIN_BOTTOM 7  //
+#define CONVO_HELP_MARGIN_BOTTOM 4  //
 
-#define CONVO_INFO_COLOR ST77XX_GREEN
+#define CONVO_INFO_COLOR  ST77XX_GREEN
 #define CONVO_ERROR_COLOR ST77XX_RED
 // Hot pink (RGB565 ≈ #FF69B4). Used by command-output listings (help / cmd echoes) to make them visually distinct from regular messages and from info/error notices.
 #define CONVO_CMD_COLOR 0xFB56
+
+// Pixel column where the right-hand text starts when printInfoLine() is called with two strings (cmd-name + description in /help listings).
+// Mirrors the colValues=70 fixed-column layout of the status info screen, slightly shifted because /help uses the proportional CONVO_CMD_FONT
+// instead of the default 5×7 font: the longest command name "/wifi forget" is ~75 px wide in FreeSans 9pt — 90 px leaves a clean ~15 px gap.
+#define INFO_LINE_RIGHT_COL_X 90
 
 // When two messages (incoming or outgoing) land within this many seconds,
 // suppress the second one's timestamp to declutter the conversation view.
@@ -385,11 +392,11 @@ WiFiClientSecure g_wifiClient;
 // edges; this .ino just exposes UI surfaces.
 
 // MQTT
-PubSubClient g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
-int g_mqttConnectionId = -1;
-unsigned int g_mqttOutputMsgId = 0;
-bool g_mqttWasConnected = false;
-unsigned long g_mqttLastReconnectTryTimestampMs = 0;
+PubSubClient  g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
+int           g_mqttConnectionId                 = -1;
+unsigned int  g_mqttOutputMsgId                  = 0;
+bool          g_mqttWasConnected                 = false;
+unsigned long g_mqttLastReconnectTryTimestampMs  = 0;
 unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
 
 
@@ -408,24 +415,12 @@ Adafruit_GFX* g_disp = NULL;
 
 // Burn-in protection state
 DisplayPowerState g_displayPowerState = DISPLAY_ON;
-unsigned long g_lastActivityMs = 0;
+unsigned long     g_lastActivityMs    = 0;
 
-static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000,
-                                                         B00000001, B11000000,
-                                                         B00000001, B11000000,
-                                                         B00000011, B11100000,
-                                                         B11110011, B11100000,
-                                                         B11111110, B11111000,
-                                                         B01111110, B11111111,
-                                                         B00110011, B10011111,
-                                                         B00011111, B11111100,
-                                                         B00001101, B01110000,
-                                                         B00011011, B10100000,
-                                                         B00111111, B11100000,
-                                                         B00111111, B11110000,
-                                                         B01111100, B11110000,
-                                                         B01110000, B01110000,
-                                                         B00000000, B00110000 };
+static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000, B00000001, B11000000, B00000001, B11000000, B00000011, B11100000,
+                                                         B11110011, B11100000, B11111110, B11111000, B01111110, B11111111, B00110011, B10011111,
+                                                         B00011111, B11111100, B00001101, B01110000, B00011011, B10100000, B00111111, B11100000,
+                                                         B00111111, B11110000, B01111100, B11110000, B01110000, B01110000, B00000000, B00110000 };
 
 
 // format "YYYY-MM-DD HH:MM:SS"
@@ -444,7 +439,7 @@ byte g_inNextCharIndex = 0;
 // Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — any
 // real device gets a small positive ID assigned in identifyDevice().
 #define DEVICE_ID_UNSET 0xFF
-byte g_deviceIdMe = DEVICE_ID_UNSET;
+byte g_deviceIdMe      = DEVICE_ID_UNSET;
 byte g_deviceIdFriend1 = DEVICE_ID_UNSET;
 byte g_deviceIdFriend2 = DEVICE_ID_UNSET;
 char g_deviceIdChars[4];
@@ -453,17 +448,17 @@ char g_userPseudo[40];
 
 
 #define LED_STATE_NOT_CONFIGURED -1
-#define LED_STATE_OFF 0
-#define LED_STATE_ON 1
-#define LED_STATE_BLINK_FAST 2
-#define LED_STATE_BLINK_SLOW 3
-#define LED_QTY 17
-byte g_ledRequiredState[LED_QTY];
-bool g_ledBlinkStateIsHigh[LED_QTY];
+#define LED_STATE_OFF            0
+#define LED_STATE_ON             1
+#define LED_STATE_BLINK_FAST     2
+#define LED_STATE_BLINK_SLOW     3
+#define LED_QTY                  17
+byte          g_ledRequiredState[LED_QTY];
+bool          g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 
 // Keyboard
-bool kbIsCapsLockOn = false;
+bool   kbIsCapsLockOn           = false;
 String g_currentMsgFromKeyboard = "";
 
 // Insertion point inside g_currentMsgFromKeyboard, range [0, g_currentMsgFromKeyboard.length()].
@@ -474,11 +469,10 @@ size_t g_msgCursorIdx = 0;
 
 
 // ================================================================================
-// H zzz
-// ================================================================================
-
 // Forward declarations — needed because the Arduino IDE's auto-prototype generator can be flaky when the sketch has multiple .ino files / mixes
 // modern C++ types in headers. List functions called from earlier in the file than their definition.
+// ================================================================================
+
 void setRecipient(int recipientDeviceId);
 void showUpdatedInfoScreen();
 void redrawStatusBar();
@@ -493,6 +487,14 @@ void returnToConversationsScreen();
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);
 void resetSerialBuffer();
 void onReceivedContactOnline(int remoteDeviceId, bool isLive);
+// Two overloads — see definitions for the contract.
+//   single-string: prints `msg` left-aligned, full line. Used for banners / status messages.
+//   two-string:    prints `left` left-aligned and `right` at a fixed column (INFO_LINE_RIGHT_COL_X). Used for /help listings: cmd + description.
+// The compiler picks via overload resolution: a const-char* literal as 2nd arg → 2-string ; a numeric color as 2nd arg → 1-string. See the
+// String-vs-uint16_t ambiguity analysis in the .cpp impl docstring.
+void printInfoLine(const String& msg, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
+void printInfoLine(const String& left, const String& right, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
+
 // Command layer — defined in commands.ino. routeMessage() (this file) calls processPayloadAsCommand() to interpret /cmd payloads; the rest is
 // internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
 bool processPayloadAsCommand(const String& message);
@@ -510,9 +512,9 @@ void printHelpDbg();
 // configured in setup() through setupLogging().
 
 void assertTrue(bool condition, String msg) {
-  if (!condition) {
-    ESP_LOGE(TAG_MM, "ASSERT FAILED: %s", msg.c_str());
-  }
+    if (!condition) {
+        ESP_LOGE(TAG_MM, "ASSERT FAILED: %s", msg.c_str());
+    }
 }
 
 // ================================================================================
@@ -520,78 +522,82 @@ void assertTrue(bool condition, String msg) {
 // ================================================================================
 
 char* trim(char* str) {
-  // Left trim
-  while (isspace((unsigned char)*str)) str++;
+    // Left trim
+    while (isspace((unsigned char)*str)) {
+        str++;
+    }
 
-  if (*str == 0)  // all spaces?
+    if (*str == 0) {  // all spaces?
+        return str;
+    }
+
+    // Right trim
+    char* end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) {
+        end--;
+    }
+
+    // Write new null terminator
+    *(end + 1) = '\0';
+
     return str;
-
-  // Right trim
-  char* end = str + strlen(str) - 1;
-  while (end > str && isspace((unsigned char)*end)) end--;
-
-  // Write new null terminator
-  *(end + 1) = '\0';
-
-  return str;
 }
 
 // ================================================================================
 // Time
 // ================================================================================
 void setupNTP() {
-  ESP_LOGI(TAG_MM, "Init NTP...");
-  // configTzTime (vs configTime with a fixed offset) installs a POSIX TZ rule that auto-switches between CET and CEST. localtime_r will then
-  // populate tm.tm_isdst correctly twice a year without us touching anything.
-  configTzTime(TZ_PARIS, "europe.pool.ntp.org", "pool.ntp.org");
+    ESP_LOGI(TAG_MM, "Init NTP...");
+    // configTzTime (vs configTime with a fixed offset) installs a POSIX TZ rule that auto-switches between CET and CEST. localtime_r will then
+    // populate tm.tm_isdst correctly twice a year without us touching anything.
+    configTzTime(TZ_PARIS, "europe.pool.ntp.org", "pool.ntp.org");
 
-  // Block until SNTP returns a plausible epoch (after 2023-11) so the first
-  // TLS handshake doesn't run with a 1970 clock and reject the broker cert.
-  time_t now = 0;
-  int tries = 0;
-  while ((now = time(nullptr)) < 1700000000 && tries++ < 30) {
-    delay(500);
-  }
-  ESP_LOGI(TAG_MM, "NTP synced after %d tries, epoch=%ld", tries, (long)now);
+    // Block until SNTP returns a plausible epoch (after 2023-11) so the first
+    // TLS handshake doesn't run with a 1970 clock and reject the broker cert.
+    time_t now   = 0;
+    int    tries = 0;
+    while ((now = time(nullptr)) < 1700000000 && tries++ < 30) {
+        delay(500);
+    }
+    ESP_LOGI(TAG_MM, "NTP synced after %d tries, epoch=%ld", tries, (long)now);
 }
 
 char* getCurrentDateTime() {
-  time_t epochTime = time(nullptr);
-  struct tm timeInfo;
-  localtime_r(&epochTime, &timeInfo);
+    time_t    epochTime = time(nullptr);
+    struct tm timeInfo;
+    localtime_r(&epochTime, &timeInfo);
 
-  snprintf(g_ts, sizeof(g_ts), "%04d-%02d-%02d|%02d:%02d:%02d",
-           timeInfo.tm_year + 1900,
-           timeInfo.tm_mon + 1,
-           timeInfo.tm_mday,
-           timeInfo.tm_hour,
-           timeInfo.tm_min,
-           timeInfo.tm_sec);
+    snprintf(g_ts,
+             sizeof(g_ts),
+             "%04d-%02d-%02d|%02d:%02d:%02d",
+             timeInfo.tm_year + 1900,
+             timeInfo.tm_mon + 1,
+             timeInfo.tm_mday,
+             timeInfo.tm_hour,
+             timeInfo.tm_min,
+             timeInfo.tm_sec);
 
-  return g_ts;
+    return g_ts;
 }
 
 char* getCurrentTime() {
-  time_t epochTime = time(nullptr);
-  struct tm timeInfo;
-  localtime_r(&epochTime, &timeInfo);
+    time_t    epochTime = time(nullptr);
+    struct tm timeInfo;
+    localtime_r(&epochTime, &timeInfo);
 
-  snprintf(g_ts, sizeof(g_ts), "%02d:%02d:%02d",
-           timeInfo.tm_hour,
-           timeInfo.tm_min,
-           timeInfo.tm_sec);
+    snprintf(g_ts, sizeof(g_ts), "%02d:%02d:%02d", timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
 
-  return g_ts;
+    return g_ts;
 }
 
 // Returns "Paris (UTC+1)" in winter (CET) or "Paris (UTC+2)" in summer (CEST). Relies on the POSIX TZ rule installed by setupNTP() via
 // configTzTime(TZ_PARIS, ...): the libc populates tm.tm_isdst correctly and we just translate it to the human label.
 const char* getTimezoneLabel() {
-  time_t epochTime = time(nullptr);
-  struct tm timeInfo;
-  localtime_r(&epochTime, &timeInfo);
-  // tm_isdst > 0 → DST in effect (CEST, UTC+2). 0 → standard (CET, UTC+1). < 0 → unknown (would happen if TZ isn't set; we still default to UTC+1).
-  return (timeInfo.tm_isdst > 0) ? "Paris (UTC+2)" : "Paris (UTC+1)";
+    time_t    epochTime = time(nullptr);
+    struct tm timeInfo;
+    localtime_r(&epochTime, &timeInfo);
+    // tm_isdst > 0 → DST in effect (CEST, UTC+2). 0 → standard (CET, UTC+1). < 0 → unknown (would happen if TZ isn't set; we still default to UTC+1).
+    return (timeInfo.tm_isdst > 0) ? "Paris (UTC+2)" : "Paris (UTC+1)";
 }
 
 
@@ -601,21 +607,15 @@ const char* getTimezoneLabel() {
 
 // USB HID keycode to ASCII lookup tables
 char keymapLower[128] = {
-  0, 0, 0, 0, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',
-  'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
-  '\n', 0, '\b', '\t', ' ', '-', '=', '[', ']', '\\',
-  '#', ';', '\'', '`', ',', '.', '/',
-  // extend if needed
+    0,   0,   0,   0,   'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',  'i', 'j',  'k',  'l', 'm', 'n', 'o', 'p', 'q',  'r', 's', 't',  'u', 'v', 'w', 'x', 'y',
+    'z', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\n', 0,   '\b', '\t', ' ', '-', '=', '[', ']', '\\', '#', ';', '\'', '`', ',', '.', '/',
+    // extend if needed
 };
 
 char keymapUpper[128] = {
-  0, 0, 0, 0, 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-  'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-  '!', '@', '#', '$', '%', '^', '&', '*', '(', ')',
-  '\n', 0, '\b', '\t', ' ', '_', '+', '{', '}', '|',
-  '~', ':', '"', '~', '<', '>', '?',
-  // extend if needed
+    0,   0,   0,   0,   'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',  'I', 'J',  'K',  'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
+    'Z', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '\n', 0,   '\b', '\t', ' ', '_', '+', '{', '}', '|', '~', ':', '"', '~', '<', '>', '?',
+    // extend if needed
 };
 
 
@@ -626,204 +626,209 @@ char keymapUpper[128] = {
 // Each helper redraws the footer at the end so callers don't have to.
 
 void currentMsgClear() {
-  g_currentMsgFromKeyboard = "";
-  g_msgCursorIdx = 0;
-  redrawInputFooter();
+    g_currentMsgFromKeyboard = "";
+    g_msgCursorIdx           = 0;
+    redrawInputFooter();
 }
 
 void currentMsgInsertCharAtCursor(char c) {
-  g_currentMsgFromKeyboard = g_currentMsgFromKeyboard.substring(0, g_msgCursorIdx)
-                             + c
-                             + g_currentMsgFromKeyboard.substring(g_msgCursorIdx);
-  g_msgCursorIdx++;
-  ESP_LOGD(TAG_BTKB, "Insert [%c] at %u → msg=[%s] cur=%u",
-           c, (unsigned)(g_msgCursorIdx - 1), g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
-  redrawInputFooter();
+    g_currentMsgFromKeyboard = g_currentMsgFromKeyboard.substring(0, g_msgCursorIdx) + c + g_currentMsgFromKeyboard.substring(g_msgCursorIdx);
+    g_msgCursorIdx++;
+    ESP_LOGD(TAG_BTKB, "Insert [%c] at %u → msg=[%s] cur=%u", c, (unsigned)(g_msgCursorIdx - 1), g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
+    redrawInputFooter();
 }
 
 // Backspace: removes the character just left of the cursor (and the cursor
 // follows). No-op when at the beginning of the buffer. Uses String::remove()
 // to shrink in place — no reallocation, friendly to the reserved capacity.
 void currentMsgDeleteCharBeforeCursor() {
-  if (g_msgCursorIdx == 0) return;
-  g_currentMsgFromKeyboard.remove(g_msgCursorIdx - 1, 1);
-  g_msgCursorIdx--;
-  ESP_LOGD(TAG_BTKB, "Backspace → msg=[%s] cur=%u",
-           g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
-  redrawInputFooter();
+    if (g_msgCursorIdx == 0) {
+        return;
+    }
+    g_currentMsgFromKeyboard.remove(g_msgCursorIdx - 1, 1);
+    g_msgCursorIdx--;
+    ESP_LOGD(TAG_BTKB, "Backspace → msg=[%s] cur=%u", g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
+    redrawInputFooter();
 }
 
 // Delete (Suppr): removes the character under the cursor. Cursor stays put.
 // No-op when at the end of the buffer (nothing to the right).
 void currentMsgDeleteCharAtCursor() {
-  if (g_msgCursorIdx >= g_currentMsgFromKeyboard.length()) return;
-  g_currentMsgFromKeyboard.remove(g_msgCursorIdx, 1);
-  ESP_LOGD(TAG_BTKB, "Delete → msg=[%s] cur=%u",
-           g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
-  redrawInputFooter();
+    if (g_msgCursorIdx >= g_currentMsgFromKeyboard.length()) {
+        return;
+    }
+    g_currentMsgFromKeyboard.remove(g_msgCursorIdx, 1);
+    ESP_LOGD(TAG_BTKB, "Delete → msg=[%s] cur=%u", g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
+    redrawInputFooter();
 }
 
 void currentMsgMoveCursorLeft() {
-  if (g_msgCursorIdx == 0) {
-    ESP_LOGD(TAG_BTKB, "LEFT at cur=0 — no-op");
-    return;
-  }
-  g_msgCursorIdx--;
-  ESP_LOGD(TAG_BTKB, "LEFT → cur=%u", (unsigned)g_msgCursorIdx);
-  redrawInputFooter();
+    if (g_msgCursorIdx == 0) {
+        ESP_LOGD(TAG_BTKB, "LEFT at cur=0 — no-op");
+        return;
+    }
+    g_msgCursorIdx--;
+    ESP_LOGD(TAG_BTKB, "LEFT → cur=%u", (unsigned)g_msgCursorIdx);
+    redrawInputFooter();
 }
 
 void currentMsgMoveCursorRight() {
-  if (g_msgCursorIdx >= g_currentMsgFromKeyboard.length()) {
-    ESP_LOGD(TAG_BTKB, "RIGHT at cur=%u (end) — no-op", (unsigned)g_msgCursorIdx);
-    return;
-  }
-  g_msgCursorIdx++;
-  ESP_LOGD(TAG_BTKB, "RIGHT → cur=%u", (unsigned)g_msgCursorIdx);
-  redrawInputFooter();
+    if (g_msgCursorIdx >= g_currentMsgFromKeyboard.length()) {
+        ESP_LOGD(TAG_BTKB, "RIGHT at cur=%u (end) — no-op", (unsigned)g_msgCursorIdx);
+        return;
+    }
+    g_msgCursorIdx++;
+    ESP_LOGD(TAG_BTKB, "RIGHT → cur=%u", (unsigned)g_msgCursorIdx);
+    redrawInputFooter();
 }
 
 
 void decodeHIDReport(uint8_t* pData, size_t length) {
-  if (length < 8) return;  // HID boot keyboard report is 8 bytes
-
-  // HID Boot Keyboard report layout:
-  //   pData[0]    = modifier bitmask (Shift/Ctrl/Alt/GUI, left+right)
-  //   pData[1]    = reserved (always 0)
-  //   pData[2..7] = up to 6 currently-held key codes (6KRO — 6-key rollover)
-  //
-  // IMPORTANT: a report describes the CURRENT STATE (which keys are held
-  // right now), not an event. The keyboard emits a new report on every
-  // state change — press OR release. Slots [2..7] are unordered and a given
-  // key can migrate between slots from one report to the next.
-  //
-  // To turn this state stream into discrete keypresses we keep the previous
-  // report's key set and only fire for keys that are NEWLY present. This
-  // fixes two real-world bugs:
-  //
-  //   1. Duplicates on dwell / HID auto-repeat
-  //      Holding a key past ~500 ms makes the keyboard re-emit the same
-  //      report periodically. Reading pData[2] naively appended the same
-  //      character on every notification. With press-edge diffing, the key
-  //      stays in s_prevKeys[] for the whole hold and triggers exactly once.
-  //
-  //   2. Lost keys on fast two-hand typing
-  //      When B is pressed before A is released, a single report carries
-  //      [A, B] together — and the old code (which only looked at pData[2])
-  //      never saw B. The diff loop below walks all 6 slots and catches
-  //      every newly-pressed one, even when several arrive in the same
-  //      notification.
-
-  static uint8_t s_prevKeys[6] = { 0 };
-  uint8_t curKeys[6] = { pData[2], pData[3], pData[4], pData[5], pData[6], pData[7] };
-  uint8_t modifiers = pData[0];
-
-  // Wake screen on any keystroke. If we were sleeping, discard this report:
-  // the user pressed a key to light the screen, not to type. We still commit
-  // curKeys into s_prevKeys so a key held across the wake-up boundary isn't
-  // mistakenly seen as "newly pressed" on the next report.
-  bool anyKeyHeld = false;
-  for (int i = 0; i < 6; i++) {
-    if (curKeys[i] != 0) {
-      anyKeyHeld = true;
-      break;
+    if (length < 8) {
+        return;  // HID boot keyboard report is 8 bytes
     }
-  }
-  if (anyKeyHeld && noteUserActivity()) {
+
+    // HID Boot Keyboard report layout:
+    //   pData[0]    = modifier bitmask (Shift/Ctrl/Alt/GUI, left+right)
+    //   pData[1]    = reserved (always 0)
+    //   pData[2..7] = up to 6 currently-held key codes (6KRO — 6-key rollover)
+    //
+    // IMPORTANT: a report describes the CURRENT STATE (which keys are held
+    // right now), not an event. The keyboard emits a new report on every
+    // state change — press OR release. Slots [2..7] are unordered and a given
+    // key can migrate between slots from one report to the next.
+    //
+    // To turn this state stream into discrete keypresses we keep the previous
+    // report's key set and only fire for keys that are NEWLY present. This
+    // fixes two real-world bugs:
+    //
+    //   1. Duplicates on dwell / HID auto-repeat
+    //      Holding a key past ~500 ms makes the keyboard re-emit the same
+    //      report periodically. Reading pData[2] naively appended the same
+    //      character on every notification. With press-edge diffing, the key
+    //      stays in s_prevKeys[] for the whole hold and triggers exactly once.
+    //
+    //   2. Lost keys on fast two-hand typing
+    //      When B is pressed before A is released, a single report carries
+    //      [A, B] together — and the old code (which only looked at pData[2])
+    //      never saw B. The diff loop below walks all 6 slots and catches
+    //      every newly-pressed one, even when several arrive in the same
+    //      notification.
+
+    static uint8_t s_prevKeys[6] = { 0 };
+    uint8_t        curKeys[6]    = { pData[2], pData[3], pData[4], pData[5], pData[6], pData[7] };
+    uint8_t        modifiers     = pData[0];
+
+    // Wake screen on any keystroke. If we were sleeping, discard this report:
+    // the user pressed a key to light the screen, not to type. We still commit
+    // curKeys into s_prevKeys so a key held across the wake-up boundary isn't
+    // mistakenly seen as "newly pressed" on the next report.
+    bool anyKeyHeld = false;
+    for (int i = 0; i < 6; i++) {
+        if (curKeys[i] != 0) {
+            anyKeyHeld = true;
+            break;
+        }
+    }
+    if (anyKeyHeld && noteUserActivity()) {
+        memcpy(s_prevKeys, curKeys, 6);
+        return;
+    }
+
+    bool usingSomeShift = (modifiers & 0x22);  // LeftShift(0x02) or RightShift(0x20)
+
+    // Walk every slot in the new report; handle each key that wasn't already
+    // present in the previous report. Order within [2..7] is whatever the
+    // keyboard firmware chose — in practice it matches the press order for the
+    // common alternating-fingers case.
+    for (int i = 0; i < 6; i++) {
+        uint8_t key = curKeys[i];
+        if (key == 0) {
+            continue;
+        }
+
+        bool wasHeldBefore = false;
+        for (int j = 0; j < 6; j++) {
+            if (s_prevKeys[j] == key) {
+                wasHeldBefore = true;
+                break;
+            }
+        }
+        if (wasHeldBefore) {
+            continue;  // still held since the previous report, not a new press
+        }
+
+        // --- Press edge: handle this newly-pressed key ---
+
+        // Log every press at DEBUG so missing keys (e.g. KEY_RIGHT not reaching us
+        // at all) are distinguishable from "received but unhandled by our dispatch".
+        ESP_LOGD(TAG_BTKB, "HID press code=%u modifiers=%u shift=%d", key, modifiers, usingSomeShift ? 1 : 0);
+
+        if (key == KEY_CAPSLOCK) {
+            kbIsCapsLockOn   = !kbIsCapsLockOn;
+            g_statusBarDirty = true;  // pousse un repaint immédiat de la barre pour faire basculer le glyphe 'A'/'a' sans attendre le tick périodique.
+            ESP_LOGD(TAG_BTKB, "CapsLock toggled: %s", kbIsCapsLockOn ? "ON" : "OFF");
+            continue;
+        } else if (key == KEY_BACKSPACE) {
+            currentMsgDeleteCharBeforeCursor();
+            continue;
+        } else if (key == KEY_DELETE) {
+            currentMsgDeleteCharAtCursor();
+            continue;
+        } else if (key == KEY_ENTER) {
+            if (g_currentMsgFromKeyboard.length() > 0) {
+                ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsgFromKeyboard.c_str());
+                routeMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL);
+                currentMsgClear();
+            } else {
+                ESP_LOGD(TAG_BTKB, "ENTER on empty buffer — nothing to send");
+            }
+            continue;
+        } else if (key == KEY_LEFT) {
+            currentMsgMoveCursorLeft();
+            continue;
+        } else if (key == KEY_RIGHT || key == KEY_UP) {
+            // KEY_UP doubles as "right" because the BT keyboard bonded to this
+            // device doesn't emit KEY_RIGHT (the dedicated right arrow is either
+            // absent on the layout or mapped to a FN layer we never receive).
+            currentMsgMoveCursorRight();
+            continue;
+        } else if (key == KEY_ESC) {
+            ESP_LOGI(TAG_BTKB, "ESC pressed — resetting message buffer");
+            currentMsgClear();
+            continue;
+        } else if (key == KEY_TAB || key == KEY_DOWN) {
+            ESP_LOGD(TAG_BTKB, "HID code [%u] explicitly ignored", key);
+            continue;
+        }
+
+        char ascii = 0;
+        if (key < 128) {
+            if ((kbIsCapsLockOn ^ usingSomeShift) && keymapUpper[key]) {
+                ascii = keymapUpper[key];
+            } else {
+                ascii = keymapLower[key];
+            }
+        }
+
+        if (ascii) {
+            currentMsgInsertCharAtCursor(ascii);
+        } else {
+            ESP_LOGD(TAG_BTKB, "Unknown HID code: %u", key);
+        }
+    }
+
+    // Commit the new state so the next report can diff against it.
     memcpy(s_prevKeys, curKeys, 6);
-    return;
-  }
-
-  bool usingSomeShift = (modifiers & 0x22);  // LeftShift(0x02) or RightShift(0x20)
-
-  // Walk every slot in the new report; handle each key that wasn't already
-  // present in the previous report. Order within [2..7] is whatever the
-  // keyboard firmware chose — in practice it matches the press order for the
-  // common alternating-fingers case.
-  for (int i = 0; i < 6; i++) {
-    uint8_t key = curKeys[i];
-    if (key == 0) continue;
-
-    bool wasHeldBefore = false;
-    for (int j = 0; j < 6; j++) {
-      if (s_prevKeys[j] == key) {
-        wasHeldBefore = true;
-        break;
-      }
-    }
-    if (wasHeldBefore) continue;  // still held since the previous report, not a new press
-
-    // --- Press edge: handle this newly-pressed key ---
-
-    // Log every press at DEBUG so missing keys (e.g. KEY_RIGHT not reaching us
-    // at all) are distinguishable from "received but unhandled by our dispatch".
-    ESP_LOGD(TAG_BTKB, "HID press code=%u modifiers=%u shift=%d", key, modifiers, usingSomeShift ? 1 : 0);
-
-    if (key == KEY_CAPSLOCK) {
-      kbIsCapsLockOn = !kbIsCapsLockOn;
-      g_statusBarDirty = true;  // pousse un repaint immédiat de la barre pour faire basculer le glyphe 'A'/'a' sans attendre le tick périodique.
-      ESP_LOGD(TAG_BTKB, "CapsLock toggled: %s", kbIsCapsLockOn ? "ON" : "OFF");
-      continue;
-    } else if (key == KEY_BACKSPACE) {
-      currentMsgDeleteCharBeforeCursor();
-      continue;
-    } else if (key == KEY_DELETE) {
-      currentMsgDeleteCharAtCursor();
-      continue;
-    } else if (key == KEY_ENTER) {
-      if (g_currentMsgFromKeyboard.length() > 0) {
-        ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsgFromKeyboard.c_str());
-        routeMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL);
-        currentMsgClear();
-      } else {
-        ESP_LOGD(TAG_BTKB, "ENTER on empty buffer — nothing to send");
-      }
-      continue;
-    } else if (key == KEY_LEFT) {
-      currentMsgMoveCursorLeft();
-      continue;
-    } else if (key == KEY_RIGHT || key == KEY_UP) {
-      // KEY_UP doubles as "right" because the BT keyboard bonded to this
-      // device doesn't emit KEY_RIGHT (the dedicated right arrow is either
-      // absent on the layout or mapped to a FN layer we never receive).
-      currentMsgMoveCursorRight();
-      continue;
-    } else if (key == KEY_ESC) {
-      ESP_LOGI(TAG_BTKB, "ESC pressed — resetting message buffer");
-      currentMsgClear();
-      continue;
-    } else if (key == KEY_TAB || key == KEY_DOWN) {
-      ESP_LOGD(TAG_BTKB, "HID code [%u] explicitly ignored", key);
-      continue;
-    }
-
-    char ascii = 0;
-    if (key < 128) {
-      if ((kbIsCapsLockOn ^ usingSomeShift) && keymapUpper[key]) {
-        ascii = keymapUpper[key];
-      } else {
-        ascii = keymapLower[key];
-      }
-    }
-
-    if (ascii) {
-      currentMsgInsertCharAtCursor(ascii);
-    } else {
-      ESP_LOGD(TAG_BTKB, "Unknown HID code: %u", key);
-    }
-  }
-
-  // Commit the new state so the next report can diff against it.
-  memcpy(s_prevKeys, curKeys, 6);
 }
 
 
 void onBluetoothKeyboardConnectionCallback(bool isFullyConnected) {
-  ESP_LOGI(TAG_BTKB, "onKeyboardConnectionCallback(%d)", isFullyConnected ? 1 : 0);
+    ESP_LOGI(TAG_BTKB, "onKeyboardConnectionCallback(%d)", isFullyConnected ? 1 : 0);
 }
 
 static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
-  decodeHIDReport(pData, length);
+    decodeHIDReport(pData, length);
 }
 
 
@@ -833,85 +838,82 @@ static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
 // ================================================================================
 
 void identifyDevice() {
-  // Read the MAC via esp_efuse_mac_get_default(): goes straight to the silicon eFuse where the factory MAC is burned, no driver init required.
-  // We previously tried WiFi.macAddress() and esp_read_mac(ESP_MAC_WIFI_STA), both of which are wrappers that consult the WiFi runtime state and
-  // return 00:00:00:00:00:00 on this core (3.3.8) when called before WiFi has been initialised. eFuse has no such dependency — it works in
-  // setup() at any point, on any ESP32 variant, regardless of WiFi/BT/Ethernet state.
-  String mac;
+    // Read the MAC via esp_efuse_mac_get_default(): goes straight to the silicon eFuse where the factory MAC is burned, no driver init required.
+    // We previously tried WiFi.macAddress() and esp_read_mac(ESP_MAC_WIFI_STA), both of which are wrappers that consult the WiFi runtime state and
+    // return 00:00:00:00:00:00 on this core (3.3.8) when called before WiFi has been initialised. eFuse has no such dependency — it works in
+    // setup() at any point, on any ESP32 variant, regardless of WiFi/BT/Ethernet state.
+    String mac;
 #ifdef PAC_ON_ESP32
-  uint8_t macBytes[6] = { 0 };
-  esp_err_t err = esp_efuse_mac_get_default(macBytes);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG_MM, "esp_efuse_mac_get_default failed: err=%d", err);
-  }
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
-  mac = macStr;
+    uint8_t   macBytes[6] = { 0 };
+    esp_err_t err         = esp_efuse_mac_get_default(macBytes);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG_MM, "esp_efuse_mac_get_default failed: err=%d", err);
+    }
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
+    mac = macStr;
 #else
-  mac = WiFi.macAddress();
+    mac = WiFi.macAddress();
 #endif
-  ESP_LOGI(TAG_MM, "MAC Address: %s", mac.c_str());
+    ESP_LOGI(TAG_MM, "MAC Address: %s", mac.c_str());
 
-  int recipientId = 3;
+    int recipientId = 3;
 
-  if (mac == "xx:xx:xx:xx:xx:xx") {
-    g_deviceIdMe = 1;
-    snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
+    if (mac == "xx:xx:xx:xx:xx:xx") {
+        g_deviceIdMe = 1;
+        snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
-    strcpy(g_userPseudo, "Papa");
-    g_deviceIdFriend1 = 2;
-    g_deviceIdFriend2 = 3;
+        strcpy(g_userPseudo, "Papa");
+        g_deviceIdFriend1 = 2;
+        g_deviceIdFriend2 = 3;
 
-    //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
-    g_displayType = DisplayType::ST7789;
-  } else if (mac == "xx:xx:xx:xx:xx:xx") {
-    g_deviceIdMe = 2;
-    snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
+        //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
+        g_displayType = DisplayType::ST7789;
+    } else if (mac == "xx:xx:xx:xx:xx:xx") {
+        g_deviceIdMe = 2;
+        snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
-    strcpy(g_userPseudo, "Maïa");
-    g_deviceIdFriend1 = 1;
-    g_deviceIdFriend2 = 3;
-  } else if (mac == "xx:xx:xx:xx:xx:xx") {
-    g_deviceIdMe = 3;
-    snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
+        strcpy(g_userPseudo, "Maïa");
+        g_deviceIdFriend1 = 1;
+        g_deviceIdFriend2 = 3;
+    } else if (mac == "xx:xx:xx:xx:xx:xx") {
+        g_deviceIdMe = 3;
+        snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
-    strcpy(g_userPseudo, "Jolan");
-    g_deviceIdFriend1 = 1;
-    g_deviceIdFriend2 = 2;
-    recipientId = 2;
+        strcpy(g_userPseudo, "Jolan");
+        g_deviceIdFriend1 = 1;
+        g_deviceIdFriend2 = 2;
+        recipientId       = 2;
 
-    g_displayType = DisplayType::OLEDSHIELD;
+        g_displayType = DisplayType::OLEDSHIELD;
 
-  } else if (mac == "xx:xx:xx:xx:xx:xx") {
-    // ESP32-02
-    g_deviceIdMe = 4;
+    } else if (mac == "xx:xx:xx:xx:xx:xx") {
+        // ESP32-02
+        g_deviceIdMe = 4;
 
-    snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
+        snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
 
-    strcpy(g_userPseudo, "Proto");
-    g_deviceIdFriend1 = 2;
-    g_deviceIdFriend2 = 3;
+        strcpy(g_userPseudo, "Proto");
+        g_deviceIdFriend1 = 2;
+        g_deviceIdFriend2 = 3;
 
-    //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
-    g_displayType = DisplayType::ST7789;
-  } else if (mac == "00:00:00:00:00:00") {
+        //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
+        g_displayType = DisplayType::ST7789;
+    } else if (mac == "00:00:00:00:00:00") {
+        ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
 
-    ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
+    } else {
+        strcpy(g_userPseudo, "JohnDoe");
+        g_deviceIdMe = random(100, 1000);
+        snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
+    }
 
-  } else {
-    strcpy(g_userPseudo, "JohnDoe");
-    g_deviceIdMe = random(100, 1000);
-    snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
-  }
+    // Non formated g_deviceIdMe (pour Will topic)
+    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
 
-  // Non formated g_deviceIdMe (pour Will topic)
-  snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
+    ESP_LOGI(TAG_MM, "Identified device: name=%s id=%d screenType=%d", g_deviceName, g_deviceIdMe, (int)g_displayType);
 
-  ESP_LOGI(TAG_MM, "Identified device: name=%s id=%d screenType=%d",
-           g_deviceName, g_deviceIdMe, (int)g_displayType);
-
-  setRecipient(recipientId);
+    setRecipient(recipientId);
 }
 
 
@@ -931,15 +933,14 @@ void identifyDevice() {
 MiniMessengerBLEKeyboardInterface g_kb;
 
 boolean setupKeyboard() {
-  ESP_LOGI(TAG_BTKB, "setupKeyboard()...");
+    ESP_LOGI(TAG_BTKB, "setupKeyboard()...");
 
-  g_currentMsgFromKeyboard.reserve(100);
+    g_currentMsgFromKeyboard.reserve(100);
 
-  // Scan filter is now based on the HID GATT service UUID (see mm_blekb.cpp::onResult), not on the device name — no keyboard name to pass here.
-  return g_kb.setup(
-    false,  // clear bonds — flip to true once if a stale bond is blocking pairing with a new physical keyboard; prefer `cmd bonds` at runtime
-    onBluetoothKeyboardConnectionCallback,
-    onBluetoothKeyboardNotifyCallback);
+    // Scan filter is now based on the HID GATT service UUID (see mm_blekb.cpp::onResult), not on the device name — no keyboard name to pass here.
+    return g_kb.setup(false,  // clear bonds — flip to true once if a stale bond is blocking pairing with a new physical keyboard; prefer `cmd bonds` at runtime
+                      onBluetoothKeyboardConnectionCallback,
+                      onBluetoothKeyboardNotifyCallback);
 }
 
 
@@ -948,10 +949,10 @@ boolean setupKeyboard() {
 // MQTT
 // ================================================================================
 
-#define MQTT_MSG_RETAINED true
+#define MQTT_MSG_RETAINED     true
 #define MQTT_MSG_NOT_RETAINED false
 
-#define MQTT_SESSION_VOLATILE true
+#define MQTT_SESSION_VOLATILE  true
 #define MQTT_SESSION_PERSISTED false
 
 #define MQTT_QOS_0 0
@@ -960,61 +961,63 @@ boolean setupKeyboard() {
 
 // Return true is reconnection is successfull
 bool mqttReconnect() {
-  // Pour voir s'il y a assez de bloc memoire pour la connection TLS.
-  // mbedtls handshake = ~38-40 KB contigus (16 KB IN + 16 KB OUT + ~6 KB SSL ctx).
-  // Heap dispo (largest block) observé :
-  //   - Bluedroid : ~24 KB → insuffisant, rc=-2
-  //   - NimBLE    : ~60-70 KB attendus → handshake OK
-  ESP_LOGI(TAG_MQTT, "Attempting connection... heap free=%u largest block=%u",
-           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    // Pour voir s'il y a assez de bloc memoire pour la connection TLS.
+    // mbedtls handshake = ~38-40 KB contigus (16 KB IN + 16 KB OUT + ~6 KB SSL ctx).
+    // Heap dispo (largest block) observé :
+    //   - Bluedroid : ~24 KB → insuffisant, rc=-2
+    //   - NimBLE    : ~60-70 KB attendus → handshake OK
+    ESP_LOGI(TAG_MQTT, "Attempting connection... heap free=%u largest block=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-  unsigned long t0 = millis();
-  bool isMQTTConnected = g_mqttClient.connect(
-    g_deviceName,
-    mqtt_user, mqtt_password,
-    g_mqttOutgoingTopicWill, MQTT_QOS_0, MQTT_MSG_NOT_RETAINED, g_deviceIdChars,
-    MQTT_SESSION_VOLATILE);
-  ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d",
-           isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
+    unsigned long t0              = millis();
+    bool          isMQTTConnected = g_mqttClient.connect(g_deviceName,
+                                                mqtt_user,
+                                                mqtt_password,
+                                                g_mqttOutgoingTopicWill,
+                                                MQTT_QOS_0,
+                                                MQTT_MSG_NOT_RETAINED,
+                                                g_deviceIdChars,
+                                                MQTT_SESSION_VOLATILE);
+    ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d", isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
 
-  if (isMQTTConnected) {
-    ESP_LOGI(TAG_MQTT, "isMQTTConnected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
+    if (isMQTTConnected) {
+        ESP_LOGI(TAG_MQTT, "isMQTTConnected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
 
-    g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
+        g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
 
-    String myUnicastTopic = String("msg/unicast/") + g_deviceIdMe;
-    g_mqttClient.subscribe(myUnicastTopic.c_str(), MQTT_QOS_1);
-    g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
-    g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
+        String myUnicastTopic = String("msg/unicast/") + g_deviceIdMe;
+        g_mqttClient.subscribe(myUnicastTopic.c_str(), MQTT_QOS_1);
+        g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
+        g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
 
-    g_mqttWasConnected = true;
-    g_mqttConnectionId++;
-    ledSetState(LED_STATUS, LED_STATE_ON);
+        g_mqttWasConnected = true;
+        g_mqttConnectionId++;
+        ledSetState(LED_STATUS, LED_STATE_ON);
 
-    // Send public liveness
-    mqttSendAlive((g_mqttConnectionId == 0 ? 0 : 1));
+        // Send public liveness
+        mqttSendAlive((g_mqttConnectionId == 0 ? 0 : 1));
 
-    return true;
-  } else {
-    // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
-    // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
-    ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms", g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL_MS);
-    return false;
-  }
+        return true;
+    } else {
+        // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
+        // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
+        ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms", g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL_MS);
+        return false;
+    }
 }
 
 // 0: boot, 1:reco, 2:keepalive
 void mqttSendAlive(int liveType) {
-  char payload[MSG_BUFFER_SIZE];
-  snprintf(payload, MSG_BUFFER_SIZE,
-           "%d %s mac:%s ssid:%s ip:%s recoId:%d",
-           g_deviceIdMe,
-           (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
-           WiFi.macAddress().c_str(),
-           WiFi.SSID().c_str(),
-           WiFi.localIP().toString().c_str(),
-           g_mqttConnectionId);
-  mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload);
+    char payload[MSG_BUFFER_SIZE];
+    snprintf(payload,
+             MSG_BUFFER_SIZE,
+             "%d %s mac:%s ssid:%s ip:%s recoId:%d",
+             g_deviceIdMe,
+             (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
+             WiFi.macAddress().c_str(),
+             WiFi.SSID().c_str(),
+             WiFi.localIP().toString().c_str(),
+             g_mqttConnectionId);
+    mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload);
 }
 
 
@@ -1022,30 +1025,30 @@ void mqttSendAlive(int liveType) {
 // to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
 // safely ignore it — the next interval will retry.
 bool mqttPushFormattedMessage(const char* topic, const char* payload) {
-  snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE,
-           "%s ### ts:%s deviceId:%d msgId:%d",
-           payload,
-           getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
+    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
 
-  // Publishing. Only QoS 0 is possible at publish time with PubSubClient
-  bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
-  if (ok) {
-    ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]",
-             g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
-  } else {
-    // On failure, include state() and the payload size so we can tell apart the four PubSubClient failure modes (see CLAUDE.md / discussions):
-    //   state =  0 (MQTT_CONNECTED)         → write to the socket failed mid-send (TCP buffer full, TLS error, link dropped between connected()
-    //                                          check and write). If size > ~240 bytes, may also be MQTT_MAX_PACKET_SIZE = 256 rejecting it.
-    //   state = -1 (MQTT_DISCONNECTED)      → we called disconnect() ourselves.
-    //   state = -3 (MQTT_CONNECTION_LOST)   → broker / WiFi dropped; connected() detected it on this call.
-    //   state = -4 (MQTT_CONNECTION_TIMEOUT)→ TCP-level timeout. Mostly during a fresh connect, not on publish.
-    ESP_LOGE(TAG_MQTT, "Publish FAILED for #%u to [%s] state=%d size=%u : [%s]",
-             g_mqttOutputMsgId, topic, g_mqttClient.state(),
-             (unsigned)strlen(g_mqttOutgoingMsg), g_mqttOutgoingMsg);
-  }
+    // Publishing. Only QoS 0 is possible at publish time with PubSubClient
+    bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
+    if (ok) {
+        ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
+    } else {
+        // On failure, include state() and the payload size so we can tell apart the four PubSubClient failure modes (see CLAUDE.md / discussions):
+        //   state =  0 (MQTT_CONNECTED)         → write to the socket failed mid-send (TCP buffer full, TLS error, link dropped between connected()
+        //                                          check and write). If size > ~240 bytes, may also be MQTT_MAX_PACKET_SIZE = 256 rejecting it.
+        //   state = -1 (MQTT_DISCONNECTED)      → we called disconnect() ourselves.
+        //   state = -3 (MQTT_CONNECTION_LOST)   → broker / WiFi dropped; connected() detected it on this call.
+        //   state = -4 (MQTT_CONNECTION_TIMEOUT)→ TCP-level timeout. Mostly during a fresh connect, not on publish.
+        ESP_LOGE(TAG_MQTT,
+                 "Publish FAILED for #%u to [%s] state=%d size=%u : [%s]",
+                 g_mqttOutputMsgId,
+                 topic,
+                 g_mqttClient.state(),
+                 (unsigned)strlen(g_mqttOutgoingMsg),
+                 g_mqttOutgoingMsg);
+    }
 
-  g_mqttOutputMsgId++;
-  return ok;
+    g_mqttOutputMsgId++;
+    return ok;
 }
 
 
@@ -1054,52 +1057,52 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
 // ================================================================================
 
 void ledSetState(int pin, int requiredState) {
-  ESP_LOGD(TAG_MM, "led pin=%d state=%d", pin, requiredState);
-  g_ledRequiredState[pin] = requiredState;
+    ESP_LOGD(TAG_MM, "led pin=%d state=%d", pin, requiredState);
+    g_ledRequiredState[pin] = requiredState;
 
-  if (requiredState == LED_STATE_OFF) {
-    digitalWrite(pin, LOW);
-  } else if (requiredState == LED_STATE_ON) {
-    digitalWrite(pin, HIGH);
-  } else {
-    g_ledBlinkStateIsHigh[pin] = false;
-    g_ledBlinkLastTimestampMs[pin] = millis();
-    digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
-    //hlogn("details pin #", pin, " g_ledBlinkStateIsHigh[pin]=", g_ledBlinkStateIsHigh[pin], " g_ledBlinkLastTimestampMs[pin]=", g_ledBlinkLastTimestampMs[pin]);
-  }
+    if (requiredState == LED_STATE_OFF) {
+        digitalWrite(pin, LOW);
+    } else if (requiredState == LED_STATE_ON) {
+        digitalWrite(pin, HIGH);
+    } else {
+        g_ledBlinkStateIsHigh[pin]     = false;
+        g_ledBlinkLastTimestampMs[pin] = millis();
+        digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
+        //hlogn("details pin #", pin, " g_ledBlinkStateIsHigh[pin]=", g_ledBlinkStateIsHigh[pin], " g_ledBlinkLastTimestampMs[pin]=", g_ledBlinkLastTimestampMs[pin]);
+    }
 
-  // drawIndicatorAt
+    // drawIndicatorAt
 }
 
 void ledCommuteBlinkState(int pin) {
-  g_ledBlinkStateIsHigh[pin] = !g_ledBlinkStateIsHigh[pin];
-  g_ledBlinkLastTimestampMs[pin] = millis();
-  digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
-  //hlogn("Switching led state for blinking pin #", pin, " to new state ", g_ledBlinkStateIsHigh[pin]);
+    g_ledBlinkStateIsHigh[pin]     = !g_ledBlinkStateIsHigh[pin];
+    g_ledBlinkLastTimestampMs[pin] = millis();
+    digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
+    //hlogn("Switching led state for blinking pin #", pin, " to new state ", g_ledBlinkStateIsHigh[pin]);
 }
 
 void setupLeds() {
-  pinMode(LED_STATUS, OUTPUT);
-  pinMode(LED_FRIEND_1, OUTPUT);
-  pinMode(LED_FRIEND_2, OUTPUT);
+    pinMode(LED_STATUS, OUTPUT);
+    pinMode(LED_FRIEND_1, OUTPUT);
+    pinMode(LED_FRIEND_2, OUTPUT);
 
-  for (int i = 0; i < 4; i++) {
-    digitalWrite(LED_STATUS, HIGH);
-    digitalWrite(LED_FRIEND_1, HIGH);
-    digitalWrite(LED_FRIEND_2, HIGH);
-    delay(150);
-    digitalWrite(LED_STATUS, LOW);
-    digitalWrite(LED_FRIEND_1, LOW);
-    digitalWrite(LED_FRIEND_2, LOW);
-    delay(150);
-  }
+    for (int i = 0; i < 4; i++) {
+        digitalWrite(LED_STATUS, HIGH);
+        digitalWrite(LED_FRIEND_1, HIGH);
+        digitalWrite(LED_FRIEND_2, HIGH);
+        delay(150);
+        digitalWrite(LED_STATUS, LOW);
+        digitalWrite(LED_FRIEND_1, LOW);
+        digitalWrite(LED_FRIEND_2, LOW);
+        delay(150);
+    }
 
-  for (int pin = 0; pin < LED_QTY; pin++) {
-    g_ledRequiredState[pin] = LED_STATE_NOT_CONFIGURED;
-  }
-  ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
-  ledSetState(LED_FRIEND_1, LED_STATE_OFF);
-  ledSetState(LED_FRIEND_2, LED_STATE_OFF);
+    for (int pin = 0; pin < LED_QTY; pin++) {
+        g_ledRequiredState[pin] = LED_STATE_NOT_CONFIGURED;
+    }
+    ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
+    ledSetState(LED_FRIEND_1, LED_STATE_OFF);
+    ledSetState(LED_FRIEND_2, LED_STATE_OFF);
 }
 
 
@@ -1115,30 +1118,29 @@ void setupLeds() {
 // exposes this, hence the raw sendCommand() calls.
 
 void hwScrollSetupArea() {
-  if (g_displayType != DisplayType::ST7789) return;
-  Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-  // TFA = STATUS_BAR_H, VSA = SCROLL_AREA_H, BFA = FOOTER_H.
-  // TFA + VSA + BFA must equal FB_HEIGHT (=320 for ST7789).
-  uint8_t args[6] = {
-    0,
-    STATUS_BAR_H,
-    (uint8_t)(SCROLL_AREA_H >> 8),
-    (uint8_t)(SCROLL_AREA_H & 0xFF),
-    0,
-    FOOTER_H,
-  };
-  pDisp->sendCommand(0x33, args, 6);  // VSCRDEF
+    if (g_displayType != DisplayType::ST7789) {
+        return;
+    }
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+    // TFA = STATUS_BAR_H, VSA = SCROLL_AREA_H, BFA = FOOTER_H.
+    // TFA + VSA + BFA must equal FB_HEIGHT (=320 for ST7789).
+    uint8_t args[6] = {
+        0, STATUS_BAR_H, (uint8_t)(SCROLL_AREA_H >> 8), (uint8_t)(SCROLL_AREA_H & 0xFF), 0, FOOTER_H,
+    };
+    pDisp->sendCommand(0x33, args, 6);  // VSCRDEF
 }
 
 // `scrollOffset` is the offset within the scroll area in [0, SCROLL_AREA_H).
 // The absolute VSCSAD value sent to the controller must be in [TFA, TFA+VSA).
 void hwScrollTo(uint16_t scrollOffset) {
-  g_scrollY = scrollOffset % SCROLL_AREA_H;
-  if (g_displayType != DisplayType::ST7789) return;
-  Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-  uint16_t absoluteScrollY = g_scrollY + STATUS_BAR_H;
-  uint8_t args[2] = { (uint8_t)(absoluteScrollY >> 8), (uint8_t)(absoluteScrollY & 0xFF) };
-  pDisp->sendCommand(0x37, args, 2);  // VSCSAD
+    g_scrollY = scrollOffset % SCROLL_AREA_H;
+    if (g_displayType != DisplayType::ST7789) {
+        return;
+    }
+    Adafruit_ST7789* pDisp           = (Adafruit_ST7789*)g_disp;
+    uint16_t         absoluteScrollY = g_scrollY + STATUS_BAR_H;
+    uint8_t          args[2]         = { (uint8_t)(absoluteScrollY >> 8), (uint8_t)(absoluteScrollY & 0xFF) };
+    pDisp->sendCommand(0x37, args, 2);  // VSCSAD
 }
 
 // Reset scroll state and clear the ENTIRE framebuffer (status bar and footer
@@ -1146,25 +1148,25 @@ void hwScrollTo(uint16_t scrollOffset) {
 // goAndResetConversationScreen() (the conversation-mode entry point) calls this AND then
 // redraws the status bar and footer borders on top.
 void hwScrollReset() {
-  g_scrollY = 0;
-  g_drawY = 0;
-  hwScrollTo(0);
-  if (g_displayType == DisplayType::ST7789) {
-    g_disp->fillScreen(ST77XX_BLACK);
-  }
-  // Force status bar to redraw next time it's polled (state cache is now stale).
-  g_statusBarDirty = true;
+    g_scrollY = 0;
+    g_drawY   = 0;
+    hwScrollTo(0);
+    if (g_displayType == DisplayType::ST7789) {
+        g_disp->fillScreen(ST77XX_BLACK);
+    }
+    // Force status bar to redraw next time it's polled (state cache is now stale).
+    g_statusBarDirty = true;
 }
 
 
 // === Status bar (TFA) ===
 // Three indicators on the left, one chip on the right. Filled = ON, outline only = OFF.
 static void drawIndicatorAt(int x, bool filled, uint16_t color) {
-  if (filled) {
-    g_disp->fillCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
-  } else {
-    g_disp->drawCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
-  }
+    if (filled) {
+        g_disp->fillCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
+    } else {
+        g_disp->drawCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
+    }
 }
 
 // CapsLock indicator: glyph 'A' (caps ON) ou 'a' (caps OFF) en blanc, à droite du chip BT. La détection est portée par la variable globale
@@ -1172,11 +1174,11 @@ static void drawIndicatorAt(int x, bool filled, uint16_t color) {
 // sans attendre le tick périodique. Police par défaut 5×7 à setTextSize(2) → glyphe 10×14 px, comparable au diamètre des disques voisins. Le cursor
 // est offset de la moitié des dimensions du glyphe pour centrer visuellement sur (cx, ICON_Y_CENTER).
 static void drawCapsAt(int cx, bool capsOn, uint16_t color) {
-  g_disp->setFont(NULL);
-  g_disp->setTextSize(2);
-  g_disp->setTextColor(color);
-  g_disp->setCursor(cx - 5, ICON_Y_CENTER - 7);
-  g_disp->print(capsOn ? 'A' : 'a');
+    g_disp->setFont(NULL);
+    g_disp->setTextSize(2);
+    g_disp->setTextColor(color);
+    g_disp->setCursor(cx - 5, ICON_Y_CENTER - 7);
+    g_disp->print(capsOn ? 'A' : 'a');
 }
 
 // Person silhouette used for the contact chip on the right of the status bar: small head + rounded shoulders/torso, sized to match visually the
@@ -1184,21 +1186,21 @@ static void drawCapsAt(int cx, bool capsOn, uint16_t color) {
 // RoundRect 11×7 démarrant à (cx-5, 12) avec coins r=3 pour évoquer les épaules. Un pixel d'air entre la tête (y=5..11) et le corps (y=12..18) sert
 // de cou et garde la silhouette lisible en mode contour.
 static void drawPersonAt(int cx, bool filled, uint16_t color) {
-  const int headCy = ICON_Y_CENTER - 4;  // 8
-  const int headR = 3;
-  const int bodyX = cx - 5;
-  const int bodyY = ICON_Y_CENTER;  // 12
-  const int bodyW = 11;
-  const int bodyH = 7;
-  const int bodyR = 3;
+    const int headCy = ICON_Y_CENTER - 4;  // 8
+    const int headR  = 3;
+    const int bodyX  = cx - 5;
+    const int bodyY  = ICON_Y_CENTER;  // 12
+    const int bodyW  = 11;
+    const int bodyH  = 7;
+    const int bodyR  = 3;
 
-  if (filled) {
-    g_disp->fillCircle(cx, headCy, headR, color);
-    g_disp->fillRoundRect(bodyX, bodyY, bodyW, bodyH, bodyR, color);
-  } else {
-    g_disp->drawCircle(cx, headCy, headR, color);
-    g_disp->drawRoundRect(bodyX, bodyY, bodyW, bodyH, bodyR, color);
-  }
+    if (filled) {
+        g_disp->fillCircle(cx, headCy, headR, color);
+        g_disp->fillRoundRect(bodyX, bodyY, bodyW, bodyH, bodyR, color);
+    } else {
+        g_disp->drawCircle(cx, headCy, headR, color);
+        g_disp->drawRoundRect(bodyX, bodyY, bodyW, bodyH, bodyR, color);
+    }
 }
 
 // Read current connection states and repaint the bar if any of them changed
@@ -1206,44 +1208,44 @@ static void drawPersonAt(int cx, bool filled, uint16_t color) {
 // fullscreen mode (splash, info) is showing — would otherwise paint icons
 // over their content.
 void redrawStatusBar() {
-  if (!g_inConversationMode) return;
+    if (!g_inConversationMode) {
+        return;
+    }
 
-  bool bt = g_kb.isFullyConnected();
-  bool wifi = (WiFi.status() == WL_CONNECTED);
-  bool mqtt = g_mqttClient.connected();
-  bool caps = kbIsCapsLockOn;
-  bool contact = true;  // TODO wire to actual friend-presence tracking
+    bool bt      = g_kb.isFullyConnected();
+    bool wifi    = (WiFi.status() == WL_CONNECTED);
+    bool mqtt    = g_mqttClient.connected();
+    bool caps    = kbIsCapsLockOn;
+    bool contact = true;  // TODO wire to actual friend-presence tracking
 
-  if (!g_statusBarDirty
-      && bt == g_lastDrawnBt
-      && wifi == g_lastDrawnWifi
-      && mqtt == g_lastDrawnMqtt
-      && caps == g_lastDrawnCaps
-      && contact == g_lastDrawnContact) {
-    return;
-  }
+    if (!g_statusBarDirty && bt == g_lastDrawnBt && wifi == g_lastDrawnWifi && mqtt == g_lastDrawnMqtt && caps == g_lastDrawnCaps &&
+        contact == g_lastDrawnContact) {
+        return;
+    }
 
-  if (g_displayType != DisplayType::ST7789) return;
+    if (g_displayType != DisplayType::ST7789) {
+        return;
+    }
 
-  g_disp->fillRect(0, 0, FB_WIDTH, STATUS_BAR_H, ST77XX_BLACK);
-  // Left cluster (network reachability): WiFi puis MQTT côte à côte.
-  drawIndicatorAt(ICON_WIFI_X, wifi, ST77XX_WHITE);
-  drawIndicatorAt(ICON_MQTT_X, mqtt, ST77XX_YELLOW);
-  // Right cluster (keyboard input state): BT puis indicateur CapsLock 'A'/'a', séparés des chips réseau par le spacer de 50 px défini dans ICON_BT_X.
-  drawIndicatorAt(ICON_BT_X, bt, ST77XX_BLUE);
-  drawCapsAt(ICON_CAPS_X, caps, ST77XX_WHITE);
-  // Contact chip: hardcoded ON for now (see TODO above). Silhouette de personnage plutôt qu'un disque pour la distinguer des indicateurs réseau.
-  drawPersonAt(ICON_CONTACT_X, contact, ST77XX_RED);
-  // Separator hairline, one pixel above the bottom of the bar — the very
-  // bottom row stays black to give the icons breathing room.
-  g_disp->drawFastHLine(0, STATUS_BAR_H - 2, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
+    g_disp->fillRect(0, 0, FB_WIDTH, STATUS_BAR_H, ST77XX_BLACK);
+    // Left cluster (network reachability): WiFi puis MQTT côte à côte.
+    drawIndicatorAt(ICON_WIFI_X, wifi, ST77XX_WHITE);
+    drawIndicatorAt(ICON_MQTT_X, mqtt, ST77XX_YELLOW);
+    // Right cluster (keyboard input state): BT puis indicateur CapsLock 'A'/'a', séparés des chips réseau par le spacer de 50 px défini dans ICON_BT_X.
+    drawIndicatorAt(ICON_BT_X, bt, ST77XX_BLUE);
+    drawCapsAt(ICON_CAPS_X, caps, ST77XX_WHITE);
+    // Contact chip: hardcoded ON for now (see TODO above). Silhouette de personnage plutôt qu'un disque pour la distinguer des indicateurs réseau.
+    drawPersonAt(ICON_CONTACT_X, contact, ST77XX_RED);
+    // Separator hairline, one pixel above the bottom of the bar — the very
+    // bottom row stays black to give the icons breathing room.
+    g_disp->drawFastHLine(0, STATUS_BAR_H - 2, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
 
-  g_lastDrawnBt = bt;
-  g_lastDrawnWifi = wifi;
-  g_lastDrawnMqtt = mqtt;
-  g_lastDrawnCaps = caps;
-  g_lastDrawnContact = contact;
-  g_statusBarDirty = false;
+    g_lastDrawnBt      = bt;
+    g_lastDrawnWifi    = wifi;
+    g_lastDrawnMqtt    = mqtt;
+    g_lastDrawnCaps    = caps;
+    g_lastDrawnContact = contact;
+    g_statusBarDirty   = false;
 }
 
 
@@ -1252,184 +1254,194 @@ void redrawStatusBar() {
 // yellow cursor bar tracking g_msgCursorIdx (movable via arrow keys). Repainted
 // on every keystroke (insert / delete / move / send).
 void redrawInputFooter() {
-  if (!g_inConversationMode) return;
-  if (g_displayType != DisplayType::ST7789) return;
+    if (!g_inConversationMode) {
+        return;
+    }
+    if (g_displayType != DisplayType::ST7789) {
+        return;
+    }
 
-  // Wipe the whole footer strip.
-  g_disp->fillRect(0, FOOTER_Y_FB, FB_WIDTH, FOOTER_H, ST77XX_BLACK);
+    // Wipe the whole footer strip.
+    g_disp->fillRect(0, FOOTER_Y_FB, FB_WIDTH, FOOTER_H, ST77XX_BLACK);
 
-  // Footer vertical layout (19 px total, rows FOOTER_Y_FB..FOOTER_Y_FB+18):
-  //   +0       : 1 px black aération against the scroll area above
-  //   +1       : white hairline separator (light gray, matches upper bar)
-  //   +2       : 1 px black margin
-  //   +3..+18  : 16 px text zone (size-2 default font) + yellow cursor bar
-  g_disp->drawFastHLine(0, FOOTER_Y_FB + 1, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
+    // Footer vertical layout (19 px total, rows FOOTER_Y_FB..FOOTER_Y_FB+18):
+    //   +0       : 1 px black aération against the scroll area above
+    //   +1       : white hairline separator (light gray, matches upper bar)
+    //   +2       : 1 px black margin
+    //   +3..+18  : 16 px text zone (size-2 default font) + yellow cursor bar
+    g_disp->drawFastHLine(0, FOOTER_Y_FB + 1, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
 
-  // Typed text, default 5×7 font at size 2 → 12 px per char, fits ~18 chars.
-  // Right-aligned: the rightmost glyph of the viewport is pinned 2 px to the
-  // left of the screen edge, and the text grows leftward as the user types.
-  const int kCharWidth = 12;
-  const int kInsideX = 6;
-  const int kRightEdgeX = FB_WIDTH - 8;
-  const int kTextAreaW = kRightEdgeX - kInsideX - 2;
-  const int kMaxChars = kTextAreaW / kCharWidth;  // 18
-  const char* full = g_currentMsgFromKeyboard.c_str();
-  const int len = (int)g_currentMsgFromKeyboard.length();
-  const int cur = (int)g_msgCursorIdx;
+    // Typed text, default 5×7 font at size 2 → 12 px per char, fits ~18 chars.
+    // Right-aligned: the rightmost glyph of the viewport is pinned 2 px to the
+    // left of the screen edge, and the text grows leftward as the user types.
+    const int   kCharWidth  = 12;
+    const int   kInsideX    = 6;
+    const int   kRightEdgeX = FB_WIDTH - 8;
+    const int   kTextAreaW  = kRightEdgeX - kInsideX - 2;
+    const int   kMaxChars   = kTextAreaW / kCharWidth;  // 18
+    const char* full        = g_currentMsgFromKeyboard.c_str();
+    const int   len         = (int)g_currentMsgFromKeyboard.length();
+    const int   cur         = (int)g_msgCursorIdx;
 
-  // Viewport [viewStart, viewEnd) — at most kMaxChars chars, always contains
-  // the cursor. Anchored to the message end by default; if the cursor is
-  // further to the right than that window would allow (which only matters
-  // when len <= kMaxChars but cur could equal len), the math degenerates to
-  // showing the whole message.
-  int viewEnd = cur;
-  const int defaultEnd = (len > kMaxChars) ? kMaxChars : len;
-  if (viewEnd < defaultEnd) viewEnd = defaultEnd;
-  if (viewEnd > len) viewEnd = len;
-  const int viewStart = (viewEnd > kMaxChars) ? (viewEnd - kMaxChars) : 0;
-  const int visibleLen = viewEnd - viewStart;
-  const char* shown = full + viewStart;
-  const int textStartX = kRightEdgeX - 2 - visibleLen * kCharWidth;
+    // Viewport [viewStart, viewEnd) — at most kMaxChars chars, always contains
+    // the cursor. Anchored to the message end by default; if the cursor is
+    // further to the right than that window would allow (which only matters
+    // when len <= kMaxChars but cur could equal len), the math degenerates to
+    // showing the whole message.
+    int       viewEnd    = cur;
+    const int defaultEnd = (len > kMaxChars) ? kMaxChars : len;
+    if (viewEnd < defaultEnd) {
+        viewEnd = defaultEnd;
+    }
+    if (viewEnd > len) {
+        viewEnd = len;
+    }
+    const int   viewStart  = (viewEnd > kMaxChars) ? (viewEnd - kMaxChars) : 0;
+    const int   visibleLen = viewEnd - viewStart;
+    const char* shown      = full + viewStart;
+    const int   textStartX = kRightEdgeX - 2 - visibleLen * kCharWidth;
 
-  g_disp->setFont(NULL);
-  g_disp->setTextSize(2);
-  g_disp->setTextColor(ST77XX_WHITE);
-  g_disp->setCursor(textStartX, FOOTER_Y_FB + 3);
-  g_disp->print(shown);
+    g_disp->setFont(NULL);
+    g_disp->setTextSize(2);
+    g_disp->setTextColor(ST77XX_WHITE);
+    g_disp->setCursor(textStartX, FOOTER_Y_FB + 3);
+    g_disp->print(shown);
 
-  // Yellow cursor bar, drawn at the insertion-point gap (1 px wide, slightly shorter than the text height so it never visually touches the
-  // white hairline separator just above. When the cursor sits at the end of the visible window it lands in the 2 px right-edge gap; when in
-  // the middle it falls in the inter-character spacing of the previous glyph.
-  const int cursorOffset = cur - viewStart;  // 0..visibleLen
-  const int yellowX = textStartX + cursorOffset * kCharWidth - 1;
-  g_disp->drawFastVLine(yellowX, FOOTER_Y_FB + 5, 14, ST77XX_YELLOW);
+    // Yellow cursor bar, drawn at the insertion-point gap (1 px wide, slightly shorter than the text height so it never visually touches the
+    // white hairline separator just above. When the cursor sits at the end of the visible window it lands in the 2 px right-edge gap; when in
+    // the middle it falls in the inter-character spacing of the previous glyph.
+    const int cursorOffset = cur - viewStart;  // 0..visibleLen
+    const int yellowX      = textStartX + cursorOffset * kCharWidth - 1;
+    g_disp->drawFastVLine(yellowX, FOOTER_Y_FB + 5, 14, ST77XX_YELLOW);
 }
 
 
 void setupDisplay() {
-  if (g_displayType == DisplayType::ST7789) {
-    Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+    if (g_displayType == DisplayType::ST7789) {
+        Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
-    pDisp->init(240, 320);
-    // Portrait. Hardware scroll operates in framebuffer-native (portrait)
-    // coordinates; using setRotation(1) would make the scroll go sideways
-    // from the user's POV. We use rotation 2 (180° flip vs rotation 0) so
-    // that GFX's framebuffer-bottom matches the user's visual bottom on this
-    // specific module — without this the chat scroll would feel inverted
-    // (new lines at top, scrolling down). See docs/howto_hardware_scrolling.md.
-    pDisp->setRotation(2);
+        pDisp->init(240, 320);
+        // Portrait. Hardware scroll operates in framebuffer-native (portrait)
+        // coordinates; using setRotation(1) would make the scroll go sideways
+        // from the user's POV. We use rotation 2 (180° flip vs rotation 0) so
+        // that GFX's framebuffer-bottom matches the user's visual bottom on this
+        // specific module — without this the chat scroll would feel inverted
+        // (new lines at top, scrolling down). See docs/howto_hardware_scrolling.md.
+        pDisp->setRotation(2);
 
-    g_disp = pDisp;
+        g_disp = pDisp;
 
-    // Declare the scroll area (idempotent, sent only once).
-    hwScrollSetupArea();
-    hwScrollTo(0);
-  } else {
-    ESP_LOGW(TAG_MM, "setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
-  }
+        // Declare the scroll area (idempotent, sent only once).
+        hwScrollSetupArea();
+        hwScrollTo(0);
+    } else {
+        ESP_LOGW(TAG_MM, "setupDisplay: DISPLAY_TYPE_NOT_CONFIGURED");
+    }
 
 #if TFT_BL >= 0
-  pinMode(TFT_BL, OUTPUT);
-  analogWrite(TFT_BL, 255);  // full brightness at boot
+    pinMode(TFT_BL, OUTPUT);
+    analogWrite(TFT_BL, 255);  // full brightness at boot
 #endif
-  g_lastActivityMs = millis();
+    g_lastActivityMs = millis();
 }
 
 
 // Apply a power state to the panel. Idempotent.
 void setDisplayPowerState(DisplayPowerState nextState) {
-  if (nextState == g_displayPowerState) return;
-
-  ESP_LOGI(TAG_MM, "setDisplayPowerState(%d -> %d)", (int)g_displayPowerState, (int)nextState);
-
-  if (g_displayType == DisplayType::ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-
-    switch (nextState) {
-      case DISPLAY_ON:
-        pDisp->enableDisplay(true);
-#if TFT_BL >= 0
-        analogWrite(TFT_BL, 255);
-#endif
-        break;
-
-      case DISPLAY_DIMMED:
-#if TFT_BL >= 0
-        analogWrite(TFT_BL, 128);  // 50% backlight
-#endif
-        // No panel-level dim command on ST7789 (the controller doesn't expose
-        // a contrast register). Without a PWM backlight pin this transition
-        // is silent — only the timer keeps progressing toward DISPLAY_OFF.
-        break;
-
-      case DISPLAY_OFF:
-#if TFT_BL >= 0
-        analogWrite(TFT_BL, 0);
-#endif
-        pDisp->enableDisplay(false);  // controller stops driving the matrix
-        break;
+    if (nextState == g_displayPowerState) {
+        return;
     }
-  }
 
-  g_displayPowerState = nextState;
+    ESP_LOGI(TAG_MM, "setDisplayPowerState(%d -> %d)", (int)g_displayPowerState, (int)nextState);
+
+    if (g_displayType == DisplayType::ST7789) {
+        Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+
+        switch (nextState) {
+        case DISPLAY_ON:
+            pDisp->enableDisplay(true);
+#if TFT_BL >= 0
+            analogWrite(TFT_BL, 255);
+#endif
+            break;
+
+        case DISPLAY_DIMMED:
+#if TFT_BL >= 0
+            analogWrite(TFT_BL, 128);  // 50% backlight
+#endif
+            // No panel-level dim command on ST7789 (the controller doesn't expose
+            // a contrast register). Without a PWM backlight pin this transition
+            // is silent — only the timer keeps progressing toward DISPLAY_OFF.
+            break;
+
+        case DISPLAY_OFF:
+#if TFT_BL >= 0
+            analogWrite(TFT_BL, 0);
+#endif
+            pDisp->enableDisplay(false);  // controller stops driving the matrix
+            break;
+        }
+    }
+
+    g_displayPowerState = nextState;
 }
 
 
 // Reset the idle timer. If the screen was dim or off, restore it to ON and
 // return true so callers can swallow the input that caused the wake.
 bool noteUserActivity() {
-  g_lastActivityMs = millis();
-  if (g_displayPowerState != DISPLAY_ON) {
-    setDisplayPowerState(DISPLAY_ON);
-    return true;  // caller should treat this as a wake event, not a real input
-  }
-  return false;
+    g_lastActivityMs = millis();
+    if (g_displayPowerState != DISPLAY_ON) {
+        setDisplayPowerState(DISPLAY_ON);
+        return true;  // caller should treat this as a wake event, not a real input
+    }
+    return false;
 }
 
 
 // Drive the dim/off state machine. Call from loop().
 void updateDisplayPowerState() {
-  unsigned long idleMs = millis() - g_lastActivityMs;
+    unsigned long idleMs = millis() - g_lastActivityMs;
 
-  if (g_displayPowerState == DISPLAY_ON && idleMs >= DISPLAY_IDLE_BEFORE_DIM_MS) {
-    setDisplayPowerState(DISPLAY_DIMMED);
-  } else if (g_displayPowerState == DISPLAY_DIMMED && idleMs >= DISPLAY_IDLE_BEFORE_OFF_MS) {
-    setDisplayPowerState(DISPLAY_OFF);
-  }
+    if (g_displayPowerState == DISPLAY_ON && idleMs >= DISPLAY_IDLE_BEFORE_DIM_MS) {
+        setDisplayPowerState(DISPLAY_DIMMED);
+    } else if (g_displayPowerState == DISPLAY_DIMMED && idleMs >= DISPLAY_IDLE_BEFORE_OFF_MS) {
+        setDisplayPowerState(DISPLAY_OFF);
+    }
 }
 
 
 void showSplashScreen() {
-  // Show image buffer on the display hardware.
-  // Since the buffer is intialized with an Adafruit splashscreen internally, this will display the splashscreen.
+    // Show image buffer on the display hardware.
+    // Since the buffer is intialized with an Adafruit splashscreen internally, this will display the splashscreen.
 
-  if (g_displayType == DisplayType::ST7789) {
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+    if (g_displayType == DisplayType::ST7789) {
+        Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-    g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
-    hwScrollReset();               // ensure we draw at framebuffer Y = screen Y = 0
+        g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
+        hwScrollReset();               // ensure we draw at framebuffer Y = screen Y = 0
 
-    // Title centered horizontally near the top of the panel. Default 5×7 font at setTextSize(2) → 12 px advance per glyph, 16 px tall.
-    // Text width = strlen × 12 ; centered X = (FB_WIDTH - textW) / 2.
-    pDisp->setFont(NULL);
-    pDisp->setTextSize(2);
-    pDisp->setTextColor(ST77XX_WHITE);
-    const char* title = "MiniMessenger !";
-    int16_t titleW = (int16_t)strlen(title) * 12;
-    pDisp->setCursor((FB_WIDTH - titleW) / 2, 32);
-    pDisp->print(title);
+        // Title centered horizontally near the top of the panel. Default 5×7 font at setTextSize(2) → 12 px advance per glyph, 16 px tall.
+        // Text width = strlen × 12 ; centered X = (FB_WIDTH - textW) / 2.
+        pDisp->setFont(NULL);
+        pDisp->setTextSize(2);
+        pDisp->setTextColor(ST77XX_WHITE);
+        const char* title  = "MiniMessenger !";
+        int16_t     titleW = (int16_t)strlen(title) * 12;
+        pDisp->setCursor((FB_WIDTH - titleW) / 2, 32);
+        pDisp->print(title);
 
-    // Center the 16×16 splash bitmap on the panel. drawBitmap() paints monochrome pixels in the given foreground color where the bit is 1 and leaves
-    // the existing background untouched where the bit is 0 — no need to pre-fill a rectangle.
-    //pDisp->drawBitmap((FB_WIDTH - 16) / 2, (FB_HEIGHT - 16) / 2, logo16_glcd_bmp, 16, 16, ST77XX_WHITE);
+        // Center the 16×16 splash bitmap on the panel. drawBitmap() paints monochrome pixels in the given foreground color where the bit is 1 and leaves
+        // the existing background untouched where the bit is 0 — no need to pre-fill a rectangle.
+        //pDisp->drawBitmap((FB_WIDTH - 16) / 2, (FB_HEIGHT - 16) / 2, logo16_glcd_bmp, 16, 16, ST77XX_WHITE);
 
-    // Logo Goku
-    pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2, splash_bmp, splash_bmp_w, splash_bmp_h);
+        // Logo Goku
+        pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2, splash_bmp, splash_bmp_w, splash_bmp_h);
 
-    delay(2'000);
-  } else {
-    ESP_LOGW(TAG_MM, "Display: no splash screen (display not configured)");
-  }
+        delay(2'000);
+    } else {
+        ESP_LOGW(TAG_MM, "Display: no splash screen (display not configured)");
+    }
 }
 
 
@@ -1448,54 +1460,54 @@ void showSplashScreen() {
 // re-utf8-conversion, no re-alignment compute, no ring rewrite. Everything
 // needed was captured at original send time.
 void redrawAllConversations() {
-  if (g_displayType != DisplayType::ST7789) {
-    ESP_LOGW(TAG_MM, "redrawAllConversations: DISPLAY_TYPE_NOT_CONFIGURED");
-    return;
-  }
-  ESP_LOGI(TAG_MM, "Full redraw — replaying %d block(s) from ring", g_lineCount);
-
-  // Reset HW scroll state and wipe ONLY the scroll area.
-  g_drawY = 0;
-  g_scrollY = 0;
-  hwScrollTo(0);
-  g_disp->fillRect(0, SCROLL_AREA_Y_FB, FB_WIDTH, SCROLL_AREA_H, ST77XX_BLACK);
-
-  for (int k = 0; k < g_lineCount; k++) {
-    const TextLine& line = lines[(g_lineHead + k) % MAX_LINES];
-    uint16_t H = line.tsHeightWithBottomMargin + line.msgHeightWithBottomMargin;
-
-    // Wrap avoidance, mirroring addConversationBlock: if the block would
-    // cross the scroll-area top boundary, skip the remaining tail and
-    // restart at scroll-offset 0, bumping the scroll register to swallow
-    // the skipped pixels.
-    if (g_drawY + H > SCROLL_AREA_H) {
-      uint16_t skipped = SCROLL_AREA_H - g_drawY;
-      g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
-      g_drawY = 0;
-      g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
+    if (g_displayType != DisplayType::ST7789) {
+        ESP_LOGW(TAG_MM, "redrawAllConversations: DISPLAY_TYPE_NOT_CONFIGURED");
+        return;
     }
+    ESP_LOGI(TAG_MM, "Full redraw — replaying %d block(s) from ring", g_lineCount);
 
-    g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, H, ST77XX_BLACK);
+    // Reset HW scroll state and wipe ONLY the scroll area.
+    g_drawY   = 0;
+    g_scrollY = 0;
+    hwScrollTo(0);
+    g_disp->fillRect(0, SCROLL_AREA_Y_FB, FB_WIDTH, SCROLL_AREA_H, ST77XX_BLACK);
 
-    uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
-    if (line.ts[0] != '\0') {
-      g_disp->setFont(NULL);
-      g_disp->setTextSize(line.tsFontSize);
-      g_disp->setTextColor(line.tsColor);
-      g_disp->setCursor(line.tsX - line.tsBounds[BOX_X], fbY - line.tsBounds[BOX_Y]);
-      g_disp->print(line.ts);
-      fbY += line.tsHeightWithBottomMargin;
+    for (int k = 0; k < g_lineCount; k++) {
+        const TextLine& line = lines[(g_lineHead + k) % MAX_LINES];
+        uint16_t        H    = line.tsHeightWithBottomMargin + line.msgHeightWithBottomMargin;
+
+        // Wrap avoidance, mirroring addConversationBlock: if the block would
+        // cross the scroll-area top boundary, skip the remaining tail and
+        // restart at scroll-offset 0, bumping the scroll register to swallow
+        // the skipped pixels.
+        if (g_drawY + H > SCROLL_AREA_H) {
+            uint16_t skipped = SCROLL_AREA_H - g_drawY;
+            g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
+            g_drawY   = 0;
+            g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
+        }
+
+        g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, H, ST77XX_BLACK);
+
+        uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
+        if (line.ts[0] != '\0') {
+            g_disp->setFont(NULL);
+            g_disp->setTextSize(line.tsFontSize);
+            g_disp->setTextColor(line.tsColor);
+            g_disp->setCursor(line.tsX - line.tsBounds[BOX_X], fbY - line.tsBounds[BOX_Y]);
+            g_disp->print(line.ts);
+            fbY += line.tsHeightWithBottomMargin;
+        }
+        g_disp->setFont(&CONVO_MSG_FONT);
+        g_disp->setTextSize(line.msgFontSize);
+        g_disp->setTextColor(line.msgColor);
+        g_disp->setCursor(line.msgX - line.msgBounds[BOX_X], fbY - line.msgBounds[BOX_Y]);
+        g_disp->print(line.msg);
+
+        g_drawY   = (g_drawY + H) % SCROLL_AREA_H;
+        g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
+        hwScrollTo(g_scrollY);
     }
-    g_disp->setFont(&CONVO_MSG_FONT);
-    g_disp->setTextSize(line.msgFontSize);
-    g_disp->setTextColor(line.msgColor);
-    g_disp->setCursor(line.msgX - line.msgBounds[BOX_X], fbY - line.msgBounds[BOX_Y]);
-    g_disp->print(line.msg);
-
-    g_drawY = (g_drawY + H) % SCROLL_AREA_H;
-    g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
-    hwScrollTo(g_scrollY);
-  }
 }
 
 
@@ -1504,60 +1516,145 @@ void redrawAllConversations() {
 // (most accented letters) collapse to a single Latin-1 byte. Codepoints
 // outside U+0000..U+00FF are replaced with '?'. Returns the new length.
 size_t utf8ToLatin1(char* s) {
-  uint8_t* in = (uint8_t*)s;
-  uint8_t* out = (uint8_t*)s;
-  while (*in) {
-    uint8_t b = *in++;
-    if (b < 0x80) {
-      *out++ = b;  // ASCII passthrough
-    } else if ((b & 0xE0) == 0xC0 && *in) {
-      uint8_t b2 = *in++;
-      uint32_t cp = ((b & 0x1F) << 6) | (b2 & 0x3F);
-      *out++ = (cp <= 0xFF) ? (uint8_t)cp : '?';
-    } else if ((b & 0xF0) == 0xE0 && in[0] && in[1]) {
-      in += 2;  // BMP > U+00FF
-      *out++ = '?';
-    } else if ((b & 0xF8) == 0xF0 && in[0] && in[1] && in[2]) {
-      in += 3;  // outside BMP
-      *out++ = '?';
-    } else {
-      *out++ = '?';  // malformed
+    uint8_t* in  = (uint8_t*)s;
+    uint8_t* out = (uint8_t*)s;
+    while (*in) {
+        uint8_t b = *in++;
+        if (b < 0x80) {
+            *out++ = b;  // ASCII passthrough
+        } else if ((b & 0xE0) == 0xC0 && *in) {
+            uint8_t  b2 = *in++;
+            uint32_t cp = ((b & 0x1F) << 6) | (b2 & 0x3F);
+            *out++      = (cp <= 0xFF) ? (uint8_t)cp : '?';
+        } else if ((b & 0xF0) == 0xE0 && in[0] && in[1]) {
+            in += 2;  // BMP > U+00FF
+            *out++ = '?';
+        } else if ((b & 0xF8) == 0xF0 && in[0] && in[1] && in[2]) {
+            in += 3;  // outside BMP
+            *out++ = '?';
+        } else {
+            *out++ = '?';  // malformed
+        }
     }
-  }
-  *out = '\0';
-  return out - (uint8_t*)s;
+    *out = '\0';
+    return out - (uint8_t*)s;
+}
+
+// Drop a single line into the conversation scroll area, with optional two-column layout for command listings.
+//
+// Two overloads share the same impl below; the single-arg one is a thin forwarder that passes an empty `right`. Behavior:
+//   - `right` empty  → just `left`, left-aligned at x=2. Used for banners ("Commands:"), status messages ("Forgot: X"), errors.
+//   - `right` filled → `left` at x=2, `right` at x=INFO_LINE_RIGHT_COL_X. Used for /help listings (cmd name + description on the same row).
+//
+// Overload disambiguation: the 1-string version takes a uint16_t color as 2nd arg; the 2-string takes a String. A literal "foo" as 2nd arg
+// resolves to String (direct match), beating the uint16_t version which would require a const-char* → uint16_t conversion that doesn't exist.
+// A numeric color as 2nd arg resolves to uint16_t (direct match) over String (would need a user-defined conversion). No ambiguity in practice.
+//
+// HW-scroll primitives (g_drawY / g_scrollY / hwScrollTo) make successive calls accumulate visually like any other conversation content,
+// and hwScrollReset() drops the lot during a screen switch.
+//
+// Defaults: pink CMD color + CONVO_CMD_FONT; both overridable.
+
+void printInfoLine(const String& left, const String& right, uint16_t color, const GFXfont* font) {
+    if (g_displayType != DisplayType::ST7789) {
+        return;
+    }
+
+    // UTF-8 → Latin-1: bundled FreeSans*_latin1 fonts cap at 0xFF. Mirrors what addConversationBlock does to its message before drawing.
+    char leftBuf[CONVO_MSG_MAX_LEN];
+    strncpy(leftBuf, left.c_str(), sizeof(leftBuf) - 1);
+    leftBuf[sizeof(leftBuf) - 1] = '\0';
+    utf8ToLatin1(leftBuf);
+
+    char rightBuf[CONVO_MSG_MAX_LEN];
+    strncpy(rightBuf, right.c_str(), sizeof(rightBuf) - 1);
+    rightBuf[sizeof(rightBuf) - 1] = '\0';
+    utf8ToLatin1(rightBuf);
+    const bool hasRight = (rightBuf[0] != '\0');
+
+    g_disp->setFont(font);
+    g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
+    g_disp->setTextColor(color);
+
+    // Measure left for the row height. getTextBounds returns the bbox of the EXACT string (not the font's max metrics) — lines without
+    // descenders take ~3-4 px less, saving vertical space across cumulative /help listings on the 320 px tall screen. With GFX fonts the
+    // returned y is negative (bbox top above the baseline-anchored cursor) and we compensate at setCursor time below.
+    int16_t  bx, by;
+    uint16_t bw, bh;
+    g_disp->getTextBounds(leftBuf, 0, 0, &bx, &by, &bw, &bh);
+
+    // Defensive: if the right column has glyphs reaching further down/up than the left, take the max bbox height so the row reserves enough
+    // vertical room. Same font / size means by is typically identical for both strings, so we keep `by` from the left for the cursor offset.
+    if (hasRight) {
+        int16_t  rbx, rby;
+        uint16_t rbw, rbh;
+        g_disp->getTextBounds(rightBuf, 0, 0, &rbx, &rby, &rbw, &rbh);
+
+        // Important, la hauteur de ligne est la plus grande hauteur des 2 bouts de texte
+        if (rbh > bh) {
+            bh = rbh;
+        }
+    }
+
+    const uint16_t lineH = bh + CONVO_HELP_MARGIN_BOTTOM;
+
+    // Wrap avoidance, mirrors addConversationBlock: if the line would overflow the scroll area bottom, paint the leftover tail black and
+    // restart at offset 0, bumping the scroll register to swallow the skipped pixels.
+    if (g_drawY + lineH > SCROLL_AREA_H) {
+        uint16_t skipped = SCROLL_AREA_H - g_drawY;
+        g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
+        g_drawY   = 0;
+        g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
+    }
+
+    // Black background + draw left at x=2. setCursor compensation: top-of-box Y minus the (negative) by gives the baseline anchor.
+    g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, lineH, ST77XX_BLACK);
+    g_disp->setCursor(2 - bx, g_drawY + SCROLL_AREA_Y_FB - by);
+    g_disp->print(leftBuf);
+
+    // Draw right at the fixed column, same baseline as left.
+    if (hasRight) {
+        g_disp->setCursor(INFO_LINE_RIGHT_COL_X, g_drawY + SCROLL_AREA_Y_FB - by);
+        g_disp->print(rightBuf);
+    }
+
+    // Bump the HW scroll — this is what makes successive calls accumulate visually.
+    g_drawY   = (g_drawY + lineH) % SCROLL_AREA_H;
+    g_scrollY = (g_scrollY + lineH) % SCROLL_AREA_H;
+    hwScrollTo(g_scrollY);
+}
+
+// Single-string forwarder — kept so existing call sites that pass just a message (with or without an explicit color) keep working unchanged.
+void printInfoLine(const String& msg, uint16_t color, const GFXfont* font) {
+    printInfoLine(msg, String(), color, font);
 }
 
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align) {
-  // Any new block on screen counts as activity — wakes the panel if it was off.
-  noteUserActivity();
+    char msgBuf[CONVO_MSG_MAX_LEN];
+    strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
+    msgBuf[sizeof(msgBuf) - 1] = '\0';
+    utf8ToLatin1(msgBuf);
+    // Then use msgBuf everywhere instead of msg.c_str() for the on-screen draw.
 
-  //   Adapt the message right after the noteUserActivity() call:
-  char msgBuf[CONVO_MSG_MAX_LEN];
-  strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
-  msgBuf[sizeof(msgBuf) - 1] = '\0';
-  utf8ToLatin1(msgBuf);
-  // Then use msgBuf everywhere instead of msg.c_str() for the on-screen draw.
-
-  // Timestamp clustering: if a timestamp was drawn less than
-  // CONVO_TS_HIDE_THRESHOLD_S ago, drop this one to declutter. Only "real"
-  // timestamps (non-empty ts) update the tracker — status lines like
-  // "Lost server" / "Ready !" pass ts="" and don't reset the window.
-  if (!ts.isEmpty()) {
-    time_t now = time(nullptr);
-    if (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S) {
-      ts = "";  // suppress the timestamp; the rest of the function handles it
+    // Timestamp clustering: if a timestamp was drawn less than
+    // CONVO_TS_HIDE_THRESHOLD_S ago, drop this one to declutter. Only "real"
+    // timestamps (non-empty ts) update the tracker — status lines like
+    // "Lost server" / "Ready !" pass ts="" and don't reset the window.
+    if (!ts.isEmpty()) {
+        time_t now = time(nullptr);
+        if (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S) {
+            ts = "";  // suppress the timestamp; the rest of the function handles it
+        }
+        // Reset dans tous les cas, on compare chaque message à la date de son précédent (meme si TS pas affiché)
+        g_lastShownTsEpoch = now;
     }
-    // Reset dans tous les cas, on compare chaque message à la date de son précédent (meme si TS pas affiché)
-    g_lastShownTsEpoch = now;
-  }
 
-  // Dimension TS
-  uint16_t tsBlockHWithMargin = 0;
+    // Dimension TS
+    uint16_t tsBlockHWithMargin = 0;
 
-  static int16_t tsBox[4] = { 0, 0, 0, 0 };  // x1, y1, w, h
+    static int16_t tsBox[4] = { 0, 0, 0, 0 };  // x1, y1, w, h
 
-  /*
+    /*
 1. Pourquoi getTextBounds retourne des valeurs de y négatives avec certaines polices comme FreeSans9pt8b ?
 Dans les bibliothèques graphiques comme Adafruit_GFX, le système de coordonnées pour le texte est basé sur le point de base (baseline) du texte. Voici ce qui se passe :
 
@@ -1583,93 +1680,105 @@ h : Hauteur totale du rectangle englobant, c'est-à-dire la distance entre le po
 Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance entre le point le plus haut (même s'il est au-dessus de la ligne de base, donc y négatif) et le point le plus bas.
 */
 
-  if (!ts.isEmpty()) {
-    g_disp->setFont(NULL);
-    g_disp->setTextSize(CONVO_TS_FONT_SIZE);
-    g_disp->getTextBounds(ts, 0, 0, &tsBox[BOX_X], &tsBox[BOX_Y], (uint16_t*)&tsBox[BOX_W], (uint16_t*)&tsBox[BOX_H]);
+    if (!ts.isEmpty()) {
+        g_disp->setFont(NULL);
+        g_disp->setTextSize(CONVO_TS_FONT_SIZE);
+        g_disp->getTextBounds(ts, 0, 0, &tsBox[BOX_X], &tsBox[BOX_Y], (uint16_t*)&tsBox[BOX_W], (uint16_t*)&tsBox[BOX_H]);
 
-    tsBlockHWithMargin = tsBox[BOX_H] + CONVO_TS_MARGIN_BOTTOM;
-  }
+        tsBlockHWithMargin = tsBox[BOX_H] + CONVO_TS_MARGIN_BOTTOM;
+    }
 
-  // Dimension msg
-  uint16_t msgBlockHWithMargin = 0;
-  static int16_t msgBox[4] = { 0, 0, 0, 0 };
+    // Dimension msg
+    uint16_t       msgBlockHWithMargin = 0;
+    static int16_t msgBox[4]           = { 0, 0, 0, 0 };
 
-  g_disp->setFont(&CONVO_MSG_FONT);
-  g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
-  g_disp->getTextBounds(msgBuf, 0, 0, &msgBox[BOX_X], &msgBox[BOX_Y], (uint16_t*)&msgBox[BOX_W], (uint16_t*)&msgBox[BOX_H]);
-  msgBlockHWithMargin = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
+    g_disp->setFont(&CONVO_MSG_FONT);
+    g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
+    g_disp->getTextBounds(msgBuf, 0, 0, &msgBox[BOX_X], &msgBox[BOX_Y], (uint16_t*)&msgBox[BOX_W], (uint16_t*)&msgBox[BOX_H]);
+    msgBlockHWithMargin = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
 
 
-  uint16_t H = tsBlockHWithMargin + msgBlockHWithMargin;
+    uint16_t H = tsBlockHWithMargin + msgBlockHWithMargin;
 
-  // Compute X alignment in screen-space (g_disp->width() reflects rotation 0
-  // → 240 px, so this works directly in framebuffer coords too).
-  uint16_t tsX = 0, msgX = 0;
-  if (align == RIGHT) {
-    tsX = g_disp->width() - tsBox[BOX_W];
-    msgX = g_disp->width() - msgBox[BOX_W];
-  } else if (align == CENTER) {
-    tsX = (g_disp->width() - tsBox[BOX_W]) / 2;
-    msgX = (g_disp->width() - msgBox[BOX_W]) / 2;
-  }
+    // Compute X alignment in screen-space (g_disp->width() reflects rotation 0
+    // → 240 px, so this works directly in framebuffer coords too).
+    uint16_t tsX = 0, msgX = 0;
+    if (align == RIGHT) {
+        tsX  = g_disp->width() - tsBox[BOX_W];
+        msgX = g_disp->width() - msgBox[BOX_W];
+    } else if (align == CENTER) {
+        tsX  = (g_disp->width() - tsBox[BOX_W]) / 2;
+        msgX = (g_disp->width() - msgBox[BOX_W]) / 2;
+    }
 
-  // === Maintain the logical ring buffer (state only — not used for drawing) ===
-  while (g_lineCount >= MAX_LINES) {
-    g_lineHead = (g_lineHead + 1) % MAX_LINES;
-    g_lineCount--;
-  }
-  int writeIdx = (g_lineHead + g_lineCount) % MAX_LINES;
-  lines[writeIdx] = TextLine(ts, CONV0_TS_COLOR, NULL, CONVO_TS_FONT_SIZE, tsBlockHWithMargin, tsX, tsBox,
-                             msgBuf, msgColor, &CONVO_MSG_FONT, CONVO_MSG_FONT_SIZE, msgBlockHWithMargin, msgX, msgBox);
-  g_lineCount++;
+    // === Maintain the logical ring buffer (state only — not used for drawing) ===
+    while (g_lineCount >= MAX_LINES) {
+        g_lineHead = (g_lineHead + 1) % MAX_LINES;
+        g_lineCount--;
+    }
+    int writeIdx    = (g_lineHead + g_lineCount) % MAX_LINES;
+    lines[writeIdx] = TextLine(ts,
+                               CONV0_TS_COLOR,
+                               NULL,
+                               CONVO_TS_FONT_SIZE,
+                               tsBlockHWithMargin,
+                               tsX,
+                               tsBox,
+                               msgBuf,
+                               msgColor,
+                               &CONVO_MSG_FONT,
+                               CONVO_MSG_FONT_SIZE,
+                               msgBlockHWithMargin,
+                               msgX,
+                               msgBox);
+    g_lineCount++;
 
-  // === HW scroll draw path: write the block directly into the framebuffer
-  // ring, then bump VSCSAD by H. Old content scrolls off the top as the
-  // controller re-maps the visible window — no full redraw. ===
+    // === HW scroll draw path: write the block directly into the framebuffer
+    // ring, then bump VSCSAD by H. Old content scrolls off the top as the
+    // controller re-maps the visible window — no full redraw. ===
 
-  // Wrap avoidance: if the block would cross the scroll-area top boundary,
-  // skip the remaining tail and restart at scroll-offset 0. The skipped tail
-  // is wiped (otherwise stale content from a previous wrap would scroll back
-  // into view), and the same number of pixels is added to the scroll so the
-  // user perceives a single (slightly bigger than H) smooth scroll.
-  // NOTE: `g_drawY` and `g_scrollY` are offsets INSIDE the scroll area
-  // ([0, SCROLL_AREA_H)). All fillRect / setCursor positions are absolute
-  // framebuffer Y, so we add SCROLL_AREA_Y_FB (= STATUS_BAR_H) at draw time.
-  if (g_drawY + H > SCROLL_AREA_H) {
-    uint16_t skipped = SCROLL_AREA_H - g_drawY;
-    g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
-    g_drawY = 0;
-    g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
-  }
+    // Wrap avoidance: if the block would cross the scroll-area top boundary,
+    // skip the remaining tail and restart at scroll-offset 0. The skipped tail
+    // is wiped (otherwise stale content from a previous wrap would scroll back
+    // into view), and the same number of pixels is added to the scroll so the
+    // user perceives a single (slightly bigger than H) smooth scroll.
+    // NOTE: `g_drawY` and `g_scrollY` are offsets INSIDE the scroll area
+    // ([0, SCROLL_AREA_H)). All fillRect / setCursor positions are absolute
+    // framebuffer Y, so we add SCROLL_AREA_Y_FB (= STATUS_BAR_H) at draw time.
+    if (g_drawY + H > SCROLL_AREA_H) {
+        uint16_t skipped = SCROLL_AREA_H - g_drawY;
+        g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, skipped, ST77XX_BLACK);
+        g_drawY   = 0;
+        g_scrollY = (g_scrollY + skipped) % SCROLL_AREA_H;
+    }
 
-  // Wipe the strip we're about to overdraw (stale content from the previous
-  // wrap of the framebuffer ring).
-  g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, H, ST77XX_BLACK);
+    // Wipe the strip we're about to overdraw (stale content from the previous
+    // wrap of the framebuffer ring).
+    g_disp->fillRect(0, g_drawY + SCROLL_AREA_Y_FB, FB_WIDTH, H, ST77XX_BLACK);
 
-  // Draw TS then MSG at framebuffer Y = g_drawY + SCROLL_AREA_Y_FB.
-  // getTextBounds returns negative tsBox/msgBox y for ascender-using fonts,
-  // so we offset the cursor by `- bounds[BOX_Y]` (cf. the big French comment
-  // above).
-  uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
-  if (!ts.isEmpty()) {
-    g_disp->setFont(NULL);
-    g_disp->setTextSize(CONVO_TS_FONT_SIZE);
-    g_disp->setTextColor(CONV0_TS_COLOR);
-    g_disp->setCursor(tsX - tsBox[BOX_X], fbY - tsBox[BOX_Y]);
-    g_disp->print(ts);
-    fbY += tsBlockHWithMargin;
-  }
-  g_disp->setFont(&CONVO_MSG_FONT);
-  g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
-  g_disp->setTextColor(msgColor);
-  g_disp->setCursor(msgX - msgBox[BOX_X], fbY - msgBox[BOX_Y]);
-  g_disp->print(msgBuf);
+    // Draw TS then MSG at framebuffer Y = g_drawY + SCROLL_AREA_Y_FB.
+    // getTextBounds returns negative tsBox/msgBox y for ascender-using fonts,
+    // so we offset the cursor by `- bounds[BOX_Y]` (cf. the big French comment
+    // above).
+    uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
+    if (!ts.isEmpty()) {
+        g_disp->setFont(NULL);
+        g_disp->setTextSize(CONVO_TS_FONT_SIZE);
+        g_disp->setTextColor(CONV0_TS_COLOR);
+        g_disp->setCursor(tsX - tsBox[BOX_X], fbY - tsBox[BOX_Y]);
+        g_disp->print(ts);
+        fbY += tsBlockHWithMargin;
+    }
+    g_disp->setFont(&CONVO_MSG_FONT);
+    g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
+    g_disp->setTextColor(msgColor);
+    g_disp->setCursor(msgX - msgBox[BOX_X], fbY - msgBox[BOX_Y]);
+    g_disp->print(msgBuf);
 
-  // Bump scroll-area cursor and the user-visible scroll register.
-  g_drawY = (g_drawY + H) % SCROLL_AREA_H;
-  g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
-  hwScrollTo(g_scrollY);
+    // Bump scroll-area cursor and the user-visible scroll register.
+    g_drawY   = (g_drawY + H) % SCROLL_AREA_H;
+    g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
+    hwScrollTo(g_scrollY);
 }
 
 
@@ -1678,10 +1787,8 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 // ================================================================================
 
 void setRecipient(int recipientDeviceId) {
-  snprintf(g_mqttOutoingRecipientTopic, MQTT_TOPIC_SIZE,
-           "msg/unicast/%d",
-           recipientDeviceId);
-  ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutoingRecipientTopic);
+    snprintf(g_mqttOutoingRecipientTopic, MQTT_TOPIC_SIZE, "msg/unicast/%d", recipientDeviceId);
+    ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutoingRecipientTopic);
 }
 
 // Called once per successful MQTT (re)connect. Two distinct cases:
@@ -1690,10 +1797,10 @@ void setRecipient(int recipientDeviceId) {
 //   - any later reconnect (we lost connection mid-conversation and got it back): we stay in conversation mode — the "Lost server" / "Trying to
 //     reconnect..." stack is still visible — and just append "Ready !" so the reconnect is acknowledged in-line.
 void onMQTTReconnected() {
-  if (!g_inConversationMode) {
-    goAndResetConversationScreen();
-  }
-  addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+    if (!g_inConversationMode) {
+        goAndResetConversationScreen();
+    }
+    addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
 }
 
 // ----------------------------------------------------------------------------
@@ -1709,40 +1816,37 @@ void onMQTTReconnected() {
 // serial log (multi-line, with structured fields) and to the conversation in compact form so the info is visible on the device too. See
 // docs/howto_efuse.md for what each line means and which API gives it.
 void dumpChipInfo() {
-  esp_chip_info_t info;
-  esp_chip_info(&info);
+    esp_chip_info_t info;
+    esp_chip_info(&info);
 
-  ESP_LOGI(TAG_MM, "--- /dbg chip ---");
-  ESP_LOGI(TAG_MM, "Chip: model=%d revision=%d cores=%d features=0x%lx",
-           (int)info.model, info.revision, info.cores, (unsigned long)info.features);
-  ESP_LOGI(TAG_MM, "Caps: WiFi:%s BT:%s BLE:%s EmbFlash:%s EmbPSRAM:%s",
-           (info.features & CHIP_FEATURE_WIFI_BGN) ? "y" : "-",
-           (info.features & CHIP_FEATURE_BT) ? "y" : "-",
-           (info.features & CHIP_FEATURE_BLE) ? "y" : "-",
-           (info.features & CHIP_FEATURE_EMB_FLASH) ? "y" : "-",
-           (info.features & CHIP_FEATURE_EMB_PSRAM) ? "y" : "-");
-  ESP_LOGI(TAG_MM, "CPU: %u MHz", ESP.getCpuFreqMHz());
-  ESP_LOGI(TAG_MM, "Flash: size=%u mode=%d speed=%u Hz",
-           ESP.getFlashChipSize(), ESP.getFlashChipMode(), ESP.getFlashChipSpeed());
+    ESP_LOGI(TAG_MM, "--- /dbg chip ---");
+    ESP_LOGI(TAG_MM, "Chip: model=%d revision=%d cores=%d features=0x%lx", (int)info.model, info.revision, info.cores, (unsigned long)info.features);
+    ESP_LOGI(TAG_MM,
+             "Caps: WiFi:%s BT:%s BLE:%s EmbFlash:%s EmbPSRAM:%s",
+             (info.features & CHIP_FEATURE_WIFI_BGN) ? "y" : "-",
+             (info.features & CHIP_FEATURE_BT) ? "y" : "-",
+             (info.features & CHIP_FEATURE_BLE) ? "y" : "-",
+             (info.features & CHIP_FEATURE_EMB_FLASH) ? "y" : "-",
+             (info.features & CHIP_FEATURE_EMB_PSRAM) ? "y" : "-");
+    ESP_LOGI(TAG_MM, "CPU: %u MHz", ESP.getCpuFreqMHz());
+    ESP_LOGI(TAG_MM, "Flash: size=%u mode=%d speed=%u Hz", ESP.getFlashChipSize(), ESP.getFlashChipMode(), ESP.getFlashChipSpeed());
 
-  uint8_t mac[6];
-  esp_efuse_mac_get_default(mac);
-  ESP_LOGI(TAG_MM, "MAC base/STA: %02X:%02X:%02X:%02X:%02X:%02X",
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  esp_read_mac(mac, ESP_MAC_BT);
-  ESP_LOGI(TAG_MM, "MAC BT:       %02X:%02X:%02X:%02X:%02X:%02X",
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    uint8_t mac[6];
+    esp_efuse_mac_get_default(mac);
+    ESP_LOGI(TAG_MM, "MAC base/STA: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    esp_read_mac(mac, ESP_MAC_BT);
+    ESP_LOGI(TAG_MM, "MAC BT:       %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-  ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
-  ESP_LOGI(TAG_MM, "IDF: %s", esp_get_idf_version());
-  ESP_LOGI(TAG_MM, "Last reset reason: %d", (int)esp_reset_reason());
+    ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
+    ESP_LOGI(TAG_MM, "IDF: %s", esp_get_idf_version());
+    ESP_LOGI(TAG_MM, "Last reset reason: %d", (int)esp_reset_reason());
 
-  // Echo a compact summary into the conversation so it's visible on-device too.
-  char line[64];
-  snprintf(line, sizeof(line), "chip model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
-  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
-  snprintf(line, sizeof(line), "flash=%uKB reset=%d", ESP.getFlashChipSize() / 1024, (int)esp_reset_reason());
-  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+    // Echo a compact summary into the conversation so it's visible on-device too.
+    char line[64];
+    snprintf(line, sizeof(line), "chip model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
+    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+    snprintf(line, sizeof(line), "flash=%uKB reset=%d", ESP.getFlashChipSize() / 1024, (int)esp_reset_reason());
+    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
 }
 
 
@@ -1750,70 +1854,66 @@ void dumpChipInfo() {
 // TLS / SPI buffers need). "min ever" is the historical low-water mark — a value that keeps dropping over time is the classic signature
 // of a leak. Sketch / partition counters are flash-side, not RAM, but useful in the same diagnostic dump.
 void dumpMemInfo() {
-  uint32_t totalHeap = ESP.getHeapSize();
-  uint32_t freeHeap = ESP.getFreeHeap();
-  uint32_t largest = ESP.getMaxAllocHeap();
-  uint32_t minEverFree = ESP.getMinFreeHeap();
-  uint32_t usedHeap = totalHeap - freeHeap;
+    uint32_t totalHeap   = ESP.getHeapSize();
+    uint32_t freeHeap    = ESP.getFreeHeap();
+    uint32_t largest     = ESP.getMaxAllocHeap();
+    uint32_t minEverFree = ESP.getMinFreeHeap();
+    uint32_t usedHeap    = totalHeap - freeHeap;
 
-  ESP_LOGI(TAG_MM, "--- /dbg mem ---");
-  ESP_LOGI(TAG_MM, "Heap: total=%u used=%u free=%u largest=%u min-ever-free=%u",
-           totalHeap, usedHeap, freeHeap, largest, minEverFree);
-  ESP_LOGI(TAG_MM, "Heap fragmentation: %u%% (= 1 - largest/free)",
-           freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
+    ESP_LOGI(TAG_MM, "--- /dbg mem ---");
+    ESP_LOGI(TAG_MM, "Heap: total=%u used=%u free=%u largest=%u min-ever-free=%u", totalHeap, usedHeap, freeHeap, largest, minEverFree);
+    ESP_LOGI(TAG_MM, "Heap fragmentation: %u%% (= 1 - largest/free)", freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
 
-  // PSRAM is only present on certain ESP32 variants (e.g. WROVER). On chips without PSRAM these calls return 0.
-  if (ESP.getPsramSize() > 0) {
-    ESP_LOGI(TAG_MM, "PSRAM: total=%u free=%u largest=%u",
-             ESP.getPsramSize(), ESP.getFreePsram(), ESP.getMaxAllocPsram());
-  } else {
-    ESP_LOGI(TAG_MM, "PSRAM: none");
-  }
+    // PSRAM is only present on certain ESP32 variants (e.g. WROVER). On chips without PSRAM these calls return 0.
+    if (ESP.getPsramSize() > 0) {
+        ESP_LOGI(TAG_MM, "PSRAM: total=%u free=%u largest=%u", ESP.getPsramSize(), ESP.getFreePsram(), ESP.getMaxAllocPsram());
+    } else {
+        ESP_LOGI(TAG_MM, "PSRAM: none");
+    }
 
-  // Stack high-water-mark for the task currently running this code (typically the Arduino loop task). Lower number = closer to overflow.
-  // Returns the minimum free stack the task has ever had since boot, in WORDS (uint32_t units on ESP32) — multiply by 4 for bytes.
-  UBaseType_t stackHWMWords = uxTaskGetStackHighWaterMark(NULL);
-  ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)(stackHWMWords * 4));
+    // Stack high-water-mark for the task currently running this code (typically the Arduino loop task). Lower number = closer to overflow.
+    // Returns the minimum free stack the task has ever had since boot, in WORDS (uint32_t units on ESP32) — multiply by 4 for bytes.
+    UBaseType_t stackHWMWords = uxTaskGetStackHighWaterMark(NULL);
+    ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)(stackHWMWords * 4));
 
-  ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
+    ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
 
-  // Echo a compact summary into the conversation.
-  char line[64];
-  snprintf(line, sizeof(line), "heap free=%u largest=%u", freeHeap, largest);
-  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
-  snprintf(line, sizeof(line), "min-ever-free=%u frag=%u%%",
-           minEverFree, freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
-  addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+    // Echo a compact summary into the conversation.
+    char line[64];
+    snprintf(line, sizeof(line), "heap free=%u largest=%u", freeHeap, largest);
+    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+    snprintf(line, sizeof(line), "min-ever-free=%u frag=%u%%", minEverFree, freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
+    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
 }
 
 void routeMessage(const String& message, MessageSource source) {
-  // Step 1 — always wake the screen. We ignore noteUserActivity()'s "was sleeping"
-  // return value: unlike a stray keypress (which is swallowed on wake to avoid
-  // typing accidental characters), a command-or-message must actually run on
-  // wake-up too.
-  noteUserActivity();
+    // Step 1 — always wake the screen. We ignore noteUserActivity()'s "was sleeping"
+    // return value: unlike a stray keypress (which is swallowed on wake to avoid
+    // typing accidental characters), a command-or-message must actually run on wake-up too.
+    noteUserActivity();
 
-  // Step 2 — if it's a known command, execute and stop. No display, no
-  // republish — this is the whole point of the funnel.
-  if (processPayloadAsCommand(message)) return;
-
-  // Step 3 — render in the conversation; for LOCAL, also publish so peers see it.
-  if (source == MessageSource::REMOTE) {
-    addConversationBlock(getCurrentTime(), message, ST77XX_YELLOW, LEFT);
-  }
-  // LOCAL (serial ou BT)
-  else {
-    addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
-    bool published = mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str());
-    if (!published) {
-      // Naive WhatsApp-style "send failed" indicator: append a second block right under the original one, in error red, prefixed with [ERROR] so
-      // the user knows that specific message didn't reach the broker. To be replaced later with a per-message status icon (sending / sent / failed)
-      // overlaid on the original block — but the present block-pair is enough to surface the failure without any new UI machinery.
-      addConversationBlock("", "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT);
+    // Step 2 — if it's a known command, execute and stop. No display, no
+    // republish — this is the whole point of the funnel.
+    if (processPayloadAsCommand(message)) {
+        return;
     }
-  }
-}
 
+    // Step 3 — render in the conversation; for LOCAL, also publish so peers see it.
+    if (source == MessageSource::REMOTE) {
+        addConversationBlock(getCurrentTime(), message, ST77XX_YELLOW, LEFT);
+    }
+    // LOCAL (serial ou BT)
+    else {
+        addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
+        bool published = mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str());
+        if (!published) {
+            // Naive WhatsApp-style "send failed" indicator: append a second block right under the original one, in error red, prefixed with [ERROR] so
+            // the user knows that specific message didn't reach the broker. To be replaced later with a per-message status icon (sending / sent / failed)
+            // overlaid on the original block — but the present block-pair is enough to surface the failure without any new UI machinery.
+            addConversationBlock("", "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT);
+        }
+    }
+}
 
 
 
@@ -1822,26 +1922,26 @@ void routeMessage(const String& message, MessageSource source) {
 // ================================================================================
 
 void goAndResetConversationScreen() {
-  if (g_displayType == DisplayType::ST7789) {
-    // hwScrollReset() wipes the entire framebuffer (status bar / footer
-    // included). Right after, we mark conversation mode and repaint the
-    // status bar + the empty input footer.
-    hwScrollReset();
-    g_inConversationMode = true;
-    redrawStatusBar();
-    redrawInputFooter();
-  } else {
-    ESP_LOGW(TAG_MM, "goAndResetConversationScreen: DISPLAY_TYPE_NOT_CONFIGURED");
-  }
+    if (g_displayType == DisplayType::ST7789) {
+        // hwScrollReset() wipes the entire framebuffer (status bar / footer
+        // included). Right after, we mark conversation mode and repaint the
+        // status bar + the empty input footer.
+        hwScrollReset();
+        g_inConversationMode = true;
+        redrawStatusBar();
+        redrawInputFooter();
+    } else {
+        ESP_LOGW(TAG_MM, "goAndResetConversationScreen: DISPLAY_TYPE_NOT_CONFIGURED");
+    }
 }
 
 // Returns to the nominal 3-zone screen (upper status bar + scroll area + footer) and repaints all three from their in-memory state. Called by
 // "/dbg redraw" and by the "/status" timeout in loop(). Also clears g_statusScreenEndMs so a pending timeout doesn't fire a redundant revert
 // when the user triggers a manual redraw mid-overlay.
 void returnToConversationsScreen() {
-  g_statusScreenEndMs = 0;
-  goAndResetConversationScreen();  // HW scroll reset + repaint of status bar + footer
-  redrawAllConversations();        // refill the scroll area from the ring buffer
+    g_statusScreenEndMs = 0;
+    goAndResetConversationScreen();  // HW scroll reset + repaint of status bar + footer
+    redrawAllConversations();        // refill the scroll area from the ring buffer
 }
 
 // Print `value` at (x, y) wrapping to a second line at (x, y + lineH) if it doesn't fit in `availableWidth`. Both lines start at the same x.
@@ -1851,398 +1951,403 @@ void returnToConversationsScreen() {
 // (':', '.', '-', '_', '/', ' ') that keeps the first half within the line, so the cut feels meaningful (e.g. a MAC splits cleanly on a colon).
 // Falls back to a hard cut at maxChars when no separator is present. A leading space on the second half is trimmed so the two lines align on x.
 static int printValueWrapped(Adafruit_ST7789* pDisp, const String& value, int x, int y, int availableWidth, int lineH) {
-  const int charW = 12;
-  int len = value.length();
-  pDisp->setCursor(x, y);
-  if (len * charW <= availableWidth) {
-    pDisp->print(value);
-    return lineH;
-  }
-  int maxChars = availableWidth / charW;
-  int upperBound = (maxChars - 1 < len - 1) ? (maxChars - 1) : (len - 1);
-  int breakAt = -1;
-  for (int i = upperBound; i > 0; i--) {
-    char c = value[i];
-    if (c == ':' || c == '.' || c == '-' || c == '_' || c == '/' || c == ' ') {
-      breakAt = i + 1;  // first half keeps the separator for visual continuity
-      break;
+    const int charW = 12;
+    int       len   = value.length();
+    pDisp->setCursor(x, y);
+    if (len * charW <= availableWidth) {
+        pDisp->print(value);
+        return lineH;
     }
-  }
-  if (breakAt < 1) breakAt = maxChars;  // hard cut fallback
-  String first = value.substring(0, breakAt);
-  String second = value.substring(breakAt);
-  while (second.length() > 0 && second[0] == ' ') second.remove(0, 1);
-  pDisp->print(first);
-  pDisp->setCursor(x, y + lineH);
-  pDisp->print(second);
-  return 2 * lineH;
+    int maxChars   = availableWidth / charW;
+    int upperBound = (maxChars - 1 < len - 1) ? (maxChars - 1) : (len - 1);
+    int breakAt    = -1;
+    for (int i = upperBound; i > 0; i--) {
+        char c = value[i];
+        if (c == ':' || c == '.' || c == '-' || c == '_' || c == '/' || c == ' ') {
+            breakAt = i + 1;  // first half keeps the separator for visual continuity
+            break;
+        }
+    }
+    if (breakAt < 1) {
+        breakAt = maxChars;  // hard cut fallback
+    }
+    String first  = value.substring(0, breakAt);
+    String second = value.substring(breakAt);
+    while (second.length() > 0 && second[0] == ' ') {
+        second.remove(0, 1);
+    }
+    pDisp->print(first);
+    pDisp->setCursor(x, y + lineH);
+    pDisp->print(second);
+    return 2 * lineH;
 }
 
 // Draw one info-screen row: red header at colHeaders, white value at colValues (wrapped to a 2nd line via printValueWrapped if too wide).
 // Returns the row height consumed (lineHeight or 2 × lineHeight when the value wrapped) so the caller can advance nextY accordingly.
-static int drawInfoRow(Adafruit_ST7789* pDisp, const char* header, const String& value,
-                       int colHeaders, int colValues, int nextY, int lineHeight) {
-  pDisp->setTextSize(2);
-  pDisp->setCursor(colHeaders, nextY);
-  pDisp->setTextColor(ST77XX_RED);
-  pDisp->print(header);
-  pDisp->setTextColor(ST77XX_WHITE);
-  return printValueWrapped(pDisp, value, colValues, nextY, FB_WIDTH - colValues, lineHeight);
+static int drawInfoRow(Adafruit_ST7789* pDisp, const char* header, const String& value, int colHeaders, int colValues, int nextY, int lineHeight) {
+    pDisp->setTextSize(2);
+    pDisp->setCursor(colHeaders, nextY);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print(header);
+    pDisp->setTextColor(ST77XX_WHITE);
+    return printValueWrapped(pDisp, value, colValues, nextY, FB_WIDTH - colValues, lineHeight);
 }
 
 void showUpdatedInfoScreen() {
-  String mac = WiFi.macAddress();
+    String mac = WiFi.macAddress();
+    int separatorHeight = 10;
 
-  if (g_displayType == DisplayType::ST7789) {
+    if (g_displayType == DisplayType::ST7789) {
+        Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+        g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
+        hwScrollReset();               // info screen draws at fixed coordinates, scroll must be 0
 
-    g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
-    hwScrollReset();               // info screen draws at fixed coordinates, scroll must be 0
+        pDisp->setFont(NULL);  // font par défaut
 
-    pDisp->setFont(NULL);  // font par défaut
+        int colHeaders = 2;
+        int colValues  = 68;
+        int lineHeight = 22;
 
-    int colHeaders = 2;
-    int colValues = 68;
-    int lineHeight = 22;
+        int nextY = 0;
 
-    int nextY = 0;
+        // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
+        nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe), colHeaders, colValues, nextY, lineHeight);
+        nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
+        nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
 
-    // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
-    nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe), colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
+        nextY += separatorHeight;
+        nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found", colHeaders, colValues, nextY, lineHeight);
+        nextY += separatorHeight;
 
-    nextY += 5 nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found",
-                                    colHeaders, colValues, nextY, lineHeight);
-    nextY += 5
+        // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
+        // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
+        // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
+        WifiState st = wifiGetState();
+        if (st == WifiState::PORTAL) {
+            drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
+        } else {
+            String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
+            String ipStr;
+            if (WiFi.status() == WL_CONNECTED) {
+                ipStr = WiFi.localIP().toString();
+            } else if (st == WifiState::TRYING_KNOWN) {
+                ipStr = "Connecting...";
+            } else if (st == WifiState::LOST) {
+                ipStr = "Lost, retrying";
+            } else {
+                ipStr = "Booting...";
+            }
+            nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
+            nextY += drawInfoRow(pDisp, "IP:", ipStr, colHeaders, colValues, nextY, lineHeight);
+            nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK", colHeaders, colValues, nextY, lineHeight);
+            nextY += drawInfoRow(pDisp, "TIME:", String(getTimezoneLabel()), colHeaders, colValues, nextY, lineHeight);
+        }
 
-      // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
-      // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
-      // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
-      WifiState st = wifiGetState();
-    if (st == WifiState::PORTAL) {
-      drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
+        nextY += lineHeight * 2;
+        nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
+
     } else {
-      String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
-      String ipStr;
-      if (WiFi.status() == WL_CONNECTED) ipStr = WiFi.localIP().toString();
-      else if (st == WifiState::TRYING_KNOWN) ipStr = "Connecting...";
-      else if (st == WifiState::LOST) ipStr = "Lost, retrying";
-      else ipStr = "Booting...";
-      nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
-      nextY += drawInfoRow(pDisp, "IP:", ipStr, colHeaders, colValues, nextY, lineHeight);
-      nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK",
-                           colHeaders, colValues, nextY, lineHeight);
-      nextY += drawInfoRow(pDisp, "TIME:", String(getTimezoneLabel()),
-                           colHeaders, colValues, nextY, lineHeight);
+        ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
     }
-
-    nextY += lineHeight * 2;
-    nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
-
-  } else {
-    ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
-  }
 }
 
 
 void setupTests() {
-  // ==== Font default
-  // lineAdvance : 8
-  // Bounds for text [jjjjj]: x1=0, y1=0, w=30, h=8
-  // Bounds for text [Abefg]: x1=0, y1=0, w=30, h=8
-  // Bounds for text [     ]: x1=0, y1=0, w=30, h=8
-  // Bounds for text [_____]: x1=0, y1=0, w=30, h=8
-  // ==== Font FreeSans9pt8b
-  // yAdvance : 22
-  // lineAdvance : 22
-  // Bounds for text [aaaaa]: x1=1, y1=-9, w=49, h=10
-  // Bounds for text [ttttt]: x1=1, y1=-11, w=24, h=12
-  // Bounds for text [jjjjj]: x1=0, y1=-12, w=20, h=17
-  // Bounds for text [Abefg]: x1=0, y1=-12, w=46, h=17
-  // Bounds for text [     ]: x1=0, y1=0, w=20, h=0
-  // Bounds for text [_____]: x1=0, y1=3, w=50, h=1
+    // ==== Font default
+    // lineAdvance : 8
+    // Bounds for text [jjjjj]: x1=0, y1=0, w=30, h=8
+    // Bounds for text [Abefg]: x1=0, y1=0, w=30, h=8
+    // Bounds for text [     ]: x1=0, y1=0, w=30, h=8
+    // Bounds for text [_____]: x1=0, y1=0, w=30, h=8
+    // ==== Font FreeSans9pt8b
+    // yAdvance : 22
+    // lineAdvance : 22
+    // Bounds for text [aaaaa]: x1=1, y1=-9, w=49, h=10
+    // Bounds for text [ttttt]: x1=1, y1=-11, w=24, h=12
+    // Bounds for text [jjjjj]: x1=0, y1=-12, w=20, h=17
+    // Bounds for text [Abefg]: x1=0, y1=-12, w=46, h=17
+    // Bounds for text [     ]: x1=0, y1=0, w=20, h=0
+    // Bounds for text [_____]: x1=0, y1=3, w=50, h=1
 
-  uint8_t textSize = 1;
-  String texts[] = { "aaaaa", "AAAAA", "ttttt", "qqqqq", "Attqq", "     ", "_____" };
-  String fontNames[] = { "default", "FreeSans9pt8b" };
-  const GFXfont* fonts[] = { NULL, &CONVO_MSG_FONT };
+    uint8_t        textSize    = 1;
+    String         texts[]     = { "aaaaa", "AAAAA", "ttttt", "qqqqq", "Attqq", "     ", "_____" };
+    String         fontNames[] = { "default", "FreeSans9pt8b" };
+    const GFXfont* fonts[]     = { NULL, &CONVO_MSG_FONT };
 
-  int16_t x1, y1;
-  uint16_t w, h;
+    int16_t  x1, y1;
+    uint16_t w, h;
 
-  for (int f = 0; f < 2; f++) {
-    ESP_LOGD(TAG_MM, "==== Font %s", fontNames[f].c_str());
-    const GFXfont* font = fonts[f];
+    for (int f = 0; f < 2; f++) {
+        ESP_LOGD(TAG_MM, "==== Font %s", fontNames[f].c_str());
+        const GFXfont* font = fonts[f];
 
-    g_disp->setFont(font);
-    g_disp->setTextSize(textSize);
+        g_disp->setFont(font);
+        g_disp->setTextSize(textSize);
 
-    uint8_t yAdvance = 8;
-    if (font != NULL) {
-      yAdvance = pgm_read_byte(&font->yAdvance);
-      ESP_LOGD(TAG_MM, "yAdvance: %u", yAdvance);
+        uint8_t yAdvance = 8;
+        if (font != NULL) {
+            yAdvance = pgm_read_byte(&font->yAdvance);
+            ESP_LOGD(TAG_MM, "yAdvance: %u", yAdvance);
+        }
+        uint8_t lineAdvance = yAdvance * textSize;
+        ESP_LOGD(TAG_MM, "lineAdvance: %u", lineAdvance);
+
+        for (auto& text : texts) {
+            g_disp->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+            ESP_LOGD(TAG_MM, "Bounds for [%s]: x1=%d y1=%d w=%u h=%u", text.c_str(), x1, y1, w, h);
+        }
     }
-    uint8_t lineAdvance = yAdvance * textSize;
-    ESP_LOGD(TAG_MM, "lineAdvance: %u", lineAdvance);
 
-    for (auto& text : texts) {
-      g_disp->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-      ESP_LOGD(TAG_MM, "Bounds for [%s]: x1=%d y1=%d w=%u h=%u",
-               text.c_str(), x1, y1, w, h);
-    }
-  }
-
-  //     g_disp->fillScreen(ST77XX_BLACK);
-  //     g_disp->setFont(&CONVO_MSG_FONT);
-  //         g_disp->setTextColor(ST77XX_YELLOW);
-  //             g_disp->setTextSize(2);
-  //       g_disp->setCursor(0,0);  // "- bound.y" = decale vers le bas qd .y est négatif (sinon=0)
-  //       g_disp->print("Abbppgg");
-  //g_disp->display();
-  // delay(10000);
+    //     g_disp->fillScreen(ST77XX_BLACK);
+    //     g_disp->setFont(&CONVO_MSG_FONT);
+    //         g_disp->setTextColor(ST77XX_YELLOW);
+    //             g_disp->setTextSize(2);
+    //       g_disp->setCursor(0,0);  // "- bound.y" = decale vers le bas qd .y est négatif (sinon=0)
+    //       g_disp->print("Abbppgg");
+    //g_disp->display();
+    // delay(10000);
 }
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  delay(1000);
+    Serial.begin(115200);
+    delay(1000);
+    delay(1000);
 
-  // Si rien n'apparait après cette ligne: ArduinoIDE: Tools >> Core Debug Level : Verbose ; puis reflash
-  Serial.println("Setup logging...");
-  // Install per-tag log levels before anything else logs:
-  //   default = INFO ; BTKB = DEBUG (HID keystrokes are debug-level).
-  setupLogging();
-  ESP_LOGI(TAG_MM, "setup()");
-  ESP_LOGI(TAG_MM, "=== minimessenger build %s %s ===", __DATE__, __TIME__);
+    // Si rien n'apparait après cette ligne: ArduinoIDE: Tools >> Core Debug Level : Verbose ; puis reflash
+    Serial.println("Setup logging...");
+    // Install per-tag log levels before anything else logs:
+    //   default = INFO ; BTKB = DEBUG (HID keystrokes are debug-level).
+    setupLogging();
+    ESP_LOGI(TAG_MM, "setup()");
+    ESP_LOGI(TAG_MM, "=== minimessenger build %s %s ===", __DATE__, __TIME__);
 
 
-  // Initialise le générateur de nombres aléatoires
-  // Utilise une broche non connectée pour varier la graine (seed)
-  randomSeed(analogRead(A0));  // A0 est une broche non connectée (bruit analogique)
+    // Initialise le générateur de nombres aléatoires
+    // Utilise une broche non connectée pour varier la graine (seed)
+    randomSeed(analogRead(A0));  // A0 est une broche non connectée (bruit analogique)
 
-  identifyDevice();
+    identifyDevice();
 
-  setupDisplay();
-  setupLeds();
+    setupDisplay();
+    setupLeds();
 
-  //setupTests();
+    //setupTests();
 
-  showSplashScreen();
-  showUpdatedInfoScreen();
+    showSplashScreen();
+    showUpdatedInfoScreen();
 
-  // Connect to BT
-  setupKeyboard();
+    // Connect to BT
+    setupKeyboard();
 
-  // WiFi: full bringup — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (TRYING_KNOWN or PORTAL). Non-blocking;
-  // wifiTick() in loop() drives the actual association. The info screen polled every 2 s reflects each WifiState transition.
-  setupWifi();
+    // WiFi: full bringup — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (TRYING_KNOWN or PORTAL). Non-blocking;
+    // wifiTick() in loop() drives the actual association. The info screen polled every 2 s reflects each WifiState transition.
+    setupWifi();
 
-  // MQTT (server + callback registration) and TLS root CA — independent of the WiFi link being up, safe at any point after setupWifi().
-  g_wifiClient.setCACert(g_hiveMQRootCA);
-  g_mqttClient.setServer(mqtt_server, mqtt_port);
-  g_mqttClient.setCallback(onMqttIncomingMessage);
+    // MQTT (server + callback registration) and TLS root CA — independent of the WiFi link being up, safe at any point after setupWifi().
+    g_wifiClient.setCACert(g_hiveMQRootCA);
+    g_mqttClient.setServer(mqtt_server, mqtt_port);
+    g_mqttClient.setCallback(onMqttIncomingMessage);
 
-  //g_mqttWasConnected = true;
-  // Test blinking
-  //g_mqttLastReconnectTryTimestampMs = millis();
+    //g_mqttWasConnected = true;
+    // Test blinking
+    //g_mqttLastReconnectTryTimestampMs = millis();
 
-  resetSerialBuffer();
+    resetSerialBuffer();
 
-  ESP_LOGI(TAG_MM, "setup() completed");
+    ESP_LOGI(TAG_MM, "setup() completed");
 }
 
 void resetSerialBuffer() {
-  // Reset g_inNextCharIndex and clean buffer (then no need to add '\0' at end of current msg)
-  g_inNextCharIndex = 0;
-  for (int i = 0; i <= MAX_SERIAL_MSG_LENGTH; i++) {
-    g_fullMsgFromSerial[i] = 0;
-  }
+    // Reset g_inNextCharIndex and clean buffer (then no need to add '\0' at end of current msg)
+    g_inNextCharIndex = 0;
+    for (int i = 0; i <= MAX_SERIAL_MSG_LENGTH; i++) {
+        g_fullMsgFromSerial[i] = 0;
+    }
 }
 
 bool g_firstLoop = true;
 
 void loop() {
-  unsigned long currentMillis = millis();  // Temps actuel en millisecondes depuis le démarrage
+    unsigned long currentMillis = millis();  // Temps actuel en millisecondes depuis le démarrage
 
-  g_kb.tryToMaintainConnection();
+    g_kb.tryToMaintainConnection();
 
-  // WiFi: drive the state machine in wifi.ino. Handles TRYING_KNOWN → CONNECTED / PORTAL transitions, portal HTTP traffic, rising/falling edge
-  // banners, and the LOST → PORTAL fallback after extended outages. Non-blocking — BT keyboard and serial input keep running through outages.
-  wifiTick(currentMillis);
+    // WiFi: drive the state machine in wifi.ino. Handles TRYING_KNOWN → CONNECTED / PORTAL transitions, portal HTTP traffic, rising/falling edge
+    // banners, and the LOST → PORTAL fallback after extended outages. Non-blocking — BT keyboard and serial input keep running through outages.
+    wifiTick(currentMillis);
 
-  if (!g_mqttClient.connected()) {
-    if (g_mqttWasConnected) {
-      g_mqttWasConnected = false;
-      ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
+    if (!g_mqttClient.connected()) {
+        if (g_mqttWasConnected) {
+            g_mqttWasConnected = false;
+            ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
 
-      // Only surface the MQTT-down banner when WiFi is actually up. If the link is down, the WiFi block above already showed "WiFi lost" and a
-      // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
-      // edge logic and the status bar indicator stay accurate.
-      if (WiFi.status() == WL_CONNECTED) {
-        addConversationBlock("", "Lost server — Retrying...", CONVO_ERROR_COLOR, CENTER);
-      }
+            // Only surface the MQTT-down banner when WiFi is actually up. If the link is down, the WiFi block above already showed "WiFi lost" and a
+            // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
+            // edge logic and the status bar indicator stay accurate.
+            if (WiFi.status() == WL_CONNECTED) {
+                addConversationBlock("", "Lost server — Retrying...", CONVO_ERROR_COLOR, CENTER);
+            }
+        }
+
+        // Don't even try to reconnect while the WiFi link is down. Without an IP the TLS connect just fails on DNS (errno 118 / "Host is unreachable",
+        // lwIP rc -54) after wasting heap and spamming the serial console. The wifi state machine in wifi.ino is the one driving re-association; as soon
+        // as it transitions back to CONNECTED, the time gate below will fire a fresh attempt within MQTT_CONNECT_RETRY_INTERVAL_MS.
+        if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL_MS)) {
+            // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
+            // up to ~30 s; starting the timer from the call's *end* would compound.
+            g_mqttLastReconnectTryTimestampMs = currentMillis;
+
+            if (mqttReconnect()) {
+                onMQTTReconnected();
+            }
+            // On failure: no delay() — the time gate above throttles the next retry.
+        }
+    } else {
+        g_mqttClient.loop();
+
+        // MQTT: Send keep-alive
+        if (currentMillis - g_mqttPreviousKeepAliveTimestampMs >= MQTT_KEEPALIVE_INTERVAL_MS) {
+            // Met à jour le temps de la dernière exécution
+            g_mqttPreviousKeepAliveTimestampMs = currentMillis;
+
+            // Send public liveness
+            mqttSendAlive(2);
+        }
     }
-
-    // Don't even try to reconnect while the WiFi link is down. Without an IP the TLS connect just fails on DNS (errno 118 / "Host is unreachable",
-    // lwIP rc -54) after wasting heap and spamming the serial console. The wifi state machine in wifi.ino is the one driving re-association; as soon
-    // as it transitions back to CONNECTED, the time gate below will fire a fresh attempt within MQTT_CONNECT_RETRY_INTERVAL_MS.
-    if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL_MS)) {
-      // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
-      // up to ~30 s; starting the timer from the call's *end* would compound.
-      g_mqttLastReconnectTryTimestampMs = currentMillis;
-
-      if (mqttReconnect()) {
-        onMQTTReconnected();
-      }
-      // On failure: no delay() — the time gate above throttles the next retry.
-    }
-  } else {
-    g_mqttClient.loop();
-
-    // MQTT: Send keep-alive
-    if (currentMillis - g_mqttPreviousKeepAliveTimestampMs >= MQTT_KEEPALIVE_INTERVAL_MS) {
-      // Met à jour le temps de la dernière exécution
-      g_mqttPreviousKeepAliveTimestampMs = currentMillis;
-
-      // Send public liveness
-      mqttSendAlive(2);
-    }
-  }
 
 
 
 #ifdef FLAG_READ_SERIAL_INPUTS
 
-  // Add a new char to the buffer
-  while (Serial.available() > 0) {
-    g_inChar = Serial.read();
+    // Add a new char to the buffer
+    while (Serial.available() > 0) {
+        g_inChar = Serial.read();
 
-    // Wake screen on any serial char. If we were sleeping, swallow this char:
-    // the user typed it to light the screen, not to compose a message.
-    if (noteUserActivity()) {
-      continue;
-    }
+        // Wake screen on any serial char. If we were sleeping, swallow this char:
+        // the user typed it to light the screen, not to compose a message.
+        if (noteUserActivity()) {
+            continue;
+        }
 
-    // 'Enter key' : send message
-    if (g_inChar == '\n') {
-      if (g_inNextCharIndex > 0) {
-        ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s", g_mqttOutputMsgId, g_fullMsgFromSerial);
-        // Hand the buffer to the common funnel: wakes the screen, intercepts
-        // CMD_* commands locally, otherwise renders RIGHT + publishes via
-        // MQTT. Don't inline displayLocalMessage + mqttPushFormattedMessage
-        // here — that would skip command interception and force every serial
-        // 'cmd ...' string to be echoed/published to peers.
-        routeMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL);
-        resetSerialBuffer();
-      } else {
-        // Message is empty. Do nothing
-        ESP_LOGD(TAG_MM, "Serial: empty message, skipping publish");
-      }
-    } else {
-      // Too long ?
-      if (g_inNextCharIndex >= MAX_SERIAL_MSG_LENGTH) {
-        // Force reset all
-        ESP_LOGW(TAG_MM, "Serial: msg too long, dropping it");
-        resetSerialBuffer();
-      } else {
-        g_fullMsgFromSerial[g_inNextCharIndex] = g_inChar;
-        g_inNextCharIndex++;
-      }
+        // 'Enter key' : send message
+        if (g_inChar == '\n') {
+            if (g_inNextCharIndex > 0) {
+                ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s", g_mqttOutputMsgId, g_fullMsgFromSerial);
+                // Hand the buffer to the common funnel: wakes the screen, intercepts
+                // CMD_* commands locally, otherwise renders RIGHT + publishes via
+                // MQTT. Don't inline displayLocalMessage + mqttPushFormattedMessage
+                // here — that would skip command interception and force every serial
+                // 'cmd ...' string to be echoed/published to peers.
+                routeMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL);
+                resetSerialBuffer();
+            } else {
+                // Message is empty. Do nothing
+                ESP_LOGD(TAG_MM, "Serial: empty message, skipping publish");
+            }
+        } else {
+            // Too long ?
+            if (g_inNextCharIndex >= MAX_SERIAL_MSG_LENGTH) {
+                // Force reset all
+                ESP_LOGW(TAG_MM, "Serial: msg too long, dropping it");
+                resetSerialBuffer();
+            } else {
+                g_fullMsgFromSerial[g_inNextCharIndex] = g_inChar;
+                g_inNextCharIndex++;
+            }
+        }
     }
-  }
 #endif
 
 
-  // Blinking leds management
-  for (int pin = 0; pin < LED_QTY; pin++) {
-    if (g_ledRequiredState[pin] == LED_STATE_BLINK_FAST) {
-      if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_FAST_DURATION_MS) {
-        ledCommuteBlinkState(pin);
-      }
-    } else if (g_ledRequiredState[pin] == LED_STATE_BLINK_SLOW) {
-      if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_SLOW_DURATION_MS) {
-        ledCommuteBlinkState(pin);
-      }
+    // Blinking leds management
+    for (int pin = 0; pin < LED_QTY; pin++) {
+        if (g_ledRequiredState[pin] == LED_STATE_BLINK_FAST) {
+            if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_FAST_DURATION_MS) {
+                ledCommuteBlinkState(pin);
+            }
+        } else if (g_ledRequiredState[pin] == LED_STATE_BLINK_SLOW) {
+            if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_SLOW_DURATION_MS) {
+                ledCommuteBlinkState(pin);
+            }
+        }
     }
-  }
 
-  // Two mutually-exclusive periodic UI refreshes:
-  //   - in conversation mode  →  status bar (BT/WiFi/MQTT/contact icons) every ~500 ms.
-  //                              redrawStatusBar short-circuits internally if nothing changed since the last paint, so this is cheap on average.
-  //   - in boot phase         →  full info screen repaint every ~2 s so that BTKB / WiFi / MQTT state transitions show up while the user waits
-  //                              for everything to come online. Stops the moment onMQTTReconnected() flips into conversation mode.
-  if (g_inConversationMode) {
-    if (currentMillis - g_lastStatusBarPollMs >= STATUS_BAR_POLL_INTERVAL_MS) {
-      g_lastStatusBarPollMs = currentMillis;
-      redrawStatusBar();
+    // Two mutually-exclusive periodic UI refreshes:
+    //   - in conversation mode  →  status bar (BT/WiFi/MQTT/contact icons) every ~500 ms.
+    //                              redrawStatusBar short-circuits internally if nothing changed since the last paint, so this is cheap on average.
+    //   - in boot phase         →  full info screen repaint every ~2 s so that BTKB / WiFi / MQTT state transitions show up while the user waits
+    //                              for everything to come online. Stops the moment onMQTTReconnected() flips into conversation mode.
+    if (g_inConversationMode) {
+        if (currentMillis - g_lastStatusBarPollMs >= STATUS_BAR_POLL_INTERVAL_MS) {
+            g_lastStatusBarPollMs = currentMillis;
+            redrawStatusBar();
+        }
+    } else {
+        if (currentMillis - g_lastInfoScreenRefreshMs >= INFO_SCREEN_REFRESH_INTERVAL_MS) {
+            g_lastInfoScreenRefreshMs = currentMillis;
+            showUpdatedInfoScreen();
+        }
     }
-  } else {
-    if (currentMillis - g_lastInfoScreenRefreshMs >= INFO_SCREEN_REFRESH_INTERVAL_MS) {
-      g_lastInfoScreenRefreshMs = currentMillis;
-      showUpdatedInfoScreen();
+
+    // Auto-revert from the "/status" info-screen overlay back to the nominal 3-zone view after STATUS_SCREEN_DURATION_MS. Non-blocking so MQTT
+    // and BLE keep running during the overlay; the same returnToNominalScreen() path is used by "/dbg redraw" for consistency.
+    if (g_statusScreenEndMs != 0 && currentMillis >= g_statusScreenEndMs) {
+        returnToConversationsScreen();
     }
-  }
 
-  // Auto-revert from the "/status" info-screen overlay back to the nominal 3-zone view after STATUS_SCREEN_DURATION_MS. Non-blocking so MQTT
-  // and BLE keep running during the overlay; the same returnToNominalScreen() path is used by "/dbg redraw" for consistency.
-  if (g_statusScreenEndMs != 0 && currentMillis >= g_statusScreenEndMs) {
-    returnToConversationsScreen();
-  }
+    // Burn-in protection: advance the dim → off state machine based on idle time.
+    updateDisplayPowerState();
 
-  // Burn-in protection: advance the dim → off state machine based on idle time.
-  updateDisplayPowerState();
+    g_firstLoop = false;
 
-  g_firstLoop = false;
-
-  // Short cooperative yield. delay(5) on ESP cores calls yield()/vTaskDelay()
-  // internally, which lets the lwIP / BLE / Wi-Fi background tasks run and
-  // feeds the watchdog. We keep some delay (rather than 0) so a tight loop
-  // does not starve those background tasks on single-core paths or hog the CPU
-  // for nothing — but we don't want it large because BLE scan, keystroke
-  // dispatch, MQTT keepalive and the LED blink tick all live in this loop and
-  // each extra millisecond shows up directly as input lag.
-  delay(5);
+    // Short cooperative yield. delay(5) on ESP cores calls yield()/vTaskDelay()
+    // internally, which lets the lwIP / BLE / Wi-Fi background tasks run and
+    // feeds the watchdog. We keep some delay (rather than 0) so a tight loop
+    // does not starve those background tasks on single-core paths or hog the CPU
+    // for nothing — but we don't want it large because BLE scan, keystroke
+    // dispatch, MQTT keepalive and the LED blink tick all live in this loop and
+    // each extra millisecond shows up directly as input lag.
+    delay(5);
 }
 
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
-  String message;
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  message.trim();
+    String message;
+    for (unsigned int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+    message.trim();
 
-  if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
-    int remoteDeviceId = atoi(message.c_str());
-    onReceivedContactOnline(remoteDeviceId, true);
-  } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
-    int remoteDeviceId = atoi(message.c_str());
-    onReceivedContactOnline(remoteDeviceId, false);
-  }
-  // msg/unicast/<me> or msg/broadcast
-  else if (topic[0] == 'm') {
-    ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
-    // Route through the common funnel: wakes the screen, intercepts CMD_*
-    // commands, otherwise renders LEFT.
-    routeMessage(message, MessageSource::REMOTE);
+    if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
+        int remoteDeviceId = atoi(message.c_str());
+        onReceivedContactOnline(remoteDeviceId, true);
+    } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
+        int remoteDeviceId = atoi(message.c_str());
+        onReceivedContactOnline(remoteDeviceId, false);
+    }
+    // msg/unicast/<me> or msg/broadcast
+    else if (topic[0] == 'm') {
+        ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
+        // Route through the common funnel: wakes the screen, intercepts CMD_*
+        // commands, otherwise renders LEFT.
+        routeMessage(message, MessageSource::REMOTE);
 
-  } else {
-    ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
-  }
+    } else {
+        ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
+    }
 }
 
 void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
-  if (remoteDeviceId == g_deviceIdMe) {
-    return;
-  }
+    if (remoteDeviceId == g_deviceIdMe) {
+        return;
+    }
 
-  ESP_LOGI(TAG_MQTT, "Liveness device #%d isLive=%d", remoteDeviceId, isLive ? 1 : 0);
-  if (remoteDeviceId == g_deviceIdFriend1) {
-    ledSetState(LED_FRIEND_1, (isLive ? LED_STATE_ON : LED_STATE_OFF));
-    //digitalWrite(LED_FRIEND_1, (isLive ? HIGH : LOW) );
-  } else if (remoteDeviceId == g_deviceIdFriend2) {
-    ledSetState(LED_FRIEND_2, (isLive ? LED_STATE_ON : LED_STATE_OFF));
-    //digitalWrite(LED_FRIEND_2, (isLive ? HIGH : LOW) );
-  }
+    ESP_LOGI(TAG_MQTT, "Liveness device #%d isLive=%d", remoteDeviceId, isLive ? 1 : 0);
+    if (remoteDeviceId == g_deviceIdFriend1) {
+        ledSetState(LED_FRIEND_1, (isLive ? LED_STATE_ON : LED_STATE_OFF));
+        //digitalWrite(LED_FRIEND_1, (isLive ? HIGH : LOW) );
+    } else if (remoteDeviceId == g_deviceIdFriend2) {
+        ledSetState(LED_FRIEND_2, (isLive ? LED_STATE_ON : LED_STATE_OFF));
+        //digitalWrite(LED_FRIEND_2, (isLive ? HIGH : LOW) );
+    }
 }

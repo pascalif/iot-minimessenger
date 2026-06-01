@@ -1,0 +1,129 @@
+# Project-wide clang-format style. Applied by Arduino IDE 2.x on Ctrl+T (or via `clang-format -i` from the shell).
+# Lines longer than ColumnLimit are wrapped at natural boundaries — see CLAUDE.md "comment formatting" section for the prose convention.
+
+BasedOnStyle: LLVM
+
+
+# Indentation
+
+IndentWidth: 4              # nb d'espaces par niveau
+TabWidth: 4                 # pour le rendu si tabs présents
+UseTab: Never               # Never | ForIndentation | Always
+ContinuationIndentWidth: 4  # ligne continue (après \ ou multi-arg)
+AccessModifierOffset: -4    # public:/private: décalés à gauche
+NamespaceIndentation: None  # None | Inner | All
+IndentCaseLabels: false     # `case X:` au niveau du switch
+IndentPPDirectives: None    # None | AfterHash | BeforeHash (utile pour #ifdef imbriqués)
+
+
+# Largeur et wrapping
+
+ColumnLimit: 160            # 0 = pas de limite
+PenaltyBreakComment: 300    # coût de couper un commentaire (plus = moins coupé)
+PenaltyExcessCharacter: 1000000  # punit fortement le dépassement
+ReflowComments: false        # reformatte les commentaires longs
+
+
+# Braces (style C/Java/etc.)
+
+BreakBeforeBraces: Attach   # Attach | Linux | Mozilla | Stroustrup | Allman | GNU | Custom
+
+# Never | Empty | Always
+AllowShortBlocksOnASingleLine: Never        # `if(x){foo();}` permis ?
+
+# None | InlineOnly | Empty | Inline | All
+AllowShortFunctionsOnASingleLine: None      # `void f() {}` sur 1 ligne ?
+
+# Never | WithoutElse | OnlyFirstIf | AllIfsAndElse
+AllowShortIfStatementsOnASingleLine: Never  # `if(x) return;` sur 1 ligne ?
+
+# true | false
+AllowShortLoopsOnASingleLine: false
+
+# Force les `{}` autour des if/else/for/while à corps unique (sécurité contre les goto-fail, lisibilité homogène). v16+, marqué "experimental"
+# par clang-format mais stable en pratique sur du code C/C++ standard. Inverse de RemoveBracesLLVM — ne PAS activer les deux à la fois.
+InsertBraces: true
+
+
+# Alignement
+
+AlignConsecutiveAssignments: Consecutive    # `int a    = 1; int bb   = 2;` (= alignés)
+AlignConsecutiveDeclarations: Consecutive   # `int    a; uint8_t b;`
+AlignConsecutiveMacros: Consecutive         # `#define A 1; #define BB 22` aligne les valeurs
+AlignTrailingComments: true                 # `foo;  // comment` aligne sur les lignes adjacentes
+AlignAfterOpenBracket: Align                # args longs alignés sous la première `(`
+AlignOperands: AlignAfterOperator
+
+
+# Pointeurs / références
+
+PointerAlignment: Left          # `int* p` (Google/LLVM) vs Right `int *p` (Linux/K&R) vs Middle `int * p`
+ReferenceAlignment: Pointer     # suit PointerAlignment
+DerivePointerAlignment: false   # ne pas auto-détecter depuis le code existant
+
+
+# Espaces
+
+SpaceBeforeParens: ControlStatements   # `if (x)` mais `foo(x)`
+SpaceAfterCStyleCast: false            # `(int)x` vs `(int) x`
+SpacesInParentheses: false             # `( x )` vs `(x)`
+SpacesInSquareBrackets: false
+SpacesInCStyleCastParentheses: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 2        # nb d'espaces avant `// comment`
+SpaceBeforeRangeBasedForLoopColon: true
+
+
+# Includes
+
+SortIncludes: Never             # Never CaseInsensitive : trie automatiquement les #include — DANGER en C/Arduino car l'ordre peut importer (cf wifi_state.h avant les libs)
+IncludeBlocks: Preserve         # Preserve | Merge | Regroup
+
+
+# Lignes vides
+
+MaxEmptyLinesToKeep: 3                    # nb max de lignes vides consécutives (défaut 1 → colle les doublons). 2 = autorise séparation visuelle entre fonctions.
+KeepEmptyLinesAtTheStartOfBlocks: false   # garde la ligne vide juste après `{` ? Défaut false (plus propre, body collé à l'accolade).
+
+
+# Switch / case
+
+IndentCaseBlocks: false                       # indenter le `{` du body ? false = `case X: {` au même niveau que case
+AllowShortCaseLabelsOnASingleLine: false      # `case X: foo();` sur 1 ligne ?
+
+
+# Fonctions / paramètres
+
+# Comportement quand args/params débordent ColumnLimit:
+#   true (défaut)  = empile autant qu'il en tient par ligne, wrappe seulement les surplus
+#   false          = un seul arg par ligne (lisibilité maximale pour les signatures longues)
+BinPackArguments: false                                # appels: `foo(a,\n    b,\n    c)`
+BinPackParameters: false                               # déclarations: `void foo(\n    int a,\n    int b)`
+# Les deux Allow* ci-dessous, mis à false, suppriment le mode intermédiaire "tout sur la ligne suivante en bloc". Logique appliquée:
+#   1. la signature/appel tient sur la ligne courante → laissée telle quelle
+#   2. sinon → directement un param par ligne (vu que BinPack* sont à false)
+# Met le wrap "agressif" dès qu'on dépasse ColumnLimit (160 chars), sans étape de bourrage intermédiaire. C'est l'approximation la plus proche
+# possible d'un "à partir de N params, wrappe" — clang-format ne sait pas compter les params, il ne sait que mesurer la ligne.
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AlwaysBreakAfterReturnType: None                       # None | All | TopLevel | AllDefinitions | TopLevelDefinitions
+
+
+# Macros
+
+# Macros à traiter comme des statements (clang-format ajoute un ; logique après et indente proprement les blocs imbriqués).
+# Utile pour ESP_LOGx qui ressemblent à des appels de fonction mais sont des macros variadic.
+StatementMacros:
+  - ESP_LOGE
+  - ESP_LOGW
+  - ESP_LOGI
+  - ESP_LOGD
+  - ESP_LOGV
+
+
+# Divers
+
+Cpp11BracedListStyle: false       # `{ a, b, c }` avec espaces (false) vs `{a,b,c}` collé (true)
+FixNamespaceComments: true        # ajoute automatiquement `// namespace X` à la fin des `}` de namespace
+AlignArrayOfStructures: Right     # aligne les colonnes dans les tableaux de structs (utile pour glyph tables / keymaps). None | Left | Right
+BreakStringLiterals: false        # NE coupe PAS les longues string literals au ColumnLimit. Évite que clang-format casse les Serial.print("...") longs.
