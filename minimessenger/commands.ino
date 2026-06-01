@@ -38,6 +38,7 @@
 // would have a second subcommand to justify it); promote them into a group later if more verbs land in those families.
 const char* const CMD_HELP      = "/help";
 const char* const CMD_STATUS    = "/status";
+const char* const CMD_CLEAR     = "/clear";
 const char* const CMD_MQTT_DROP = "/mqtt-drop";
 const char* const CMD_BT_CLEAN  = "/bt-clean";
 
@@ -71,6 +72,7 @@ void printHelpGlobal() {
     printInfoLine("Commands:");
     printInfoLine("/help",      "list cmds");
     printInfoLine("/status",    "info screen");
+    printInfoLine("/clear",     "wipe history");
     printInfoLine("/mqtt-drop", "drop MQTT");
     printInfoLine("/bt-clean",  "clear bonds");
     printInfoLine("/wifi *",    "WiFi mgmt");
@@ -79,20 +81,20 @@ void printHelpGlobal() {
 
 void printHelpWifi() {
     ESP_LOGI(TAG_MM, "Listing /wifi subcommands");
-    printInfoLine("/wifi cmds:");
-    printInfoLine("  drop",   "drop link");
-    printInfoLine("  clean",  "wipe NVS");
-    printInfoLine("  list",   "known nets");
-    printInfoLine("  forget", "<ssid>");
-    printInfoLine("  portal", "open portal");
+    printInfoLine("/wifi subcmds:");
+    printInfoLine("- drop",   "drop link");
+    printInfoLine("- clean",  "wipe NVS");
+    printInfoLine("- list",   "known nets");
+    printInfoLine("- forget", "<ssid>");
+    printInfoLine("- portal", "open portal");
 }
 
 void printHelpDbg() {
     ESP_LOGI(TAG_MM, "Listing /dbg subcommands");
-    printInfoLine("/dbg cmds:");
-    printInfoLine("  chip",   "chip + MACs");
-    printInfoLine("  mem",    "heap + stack");
-    printInfoLine("  redraw", "full repaint");
+    printInfoLine("/dbg subcmds:");
+    printInfoLine("- chip",   "chip + MACs");
+    printInfoLine("- mem",    "heap + stack");
+    printInfoLine("- redraw", "full repaint");
 }
 
 
@@ -110,6 +112,11 @@ bool processPayloadAsCommand(const String& message) {
         ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
         showUpdatedInfoScreen();
         g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
+        return true;
+    }
+    if (message == CMD_CLEAR) {
+        ESP_LOGI(TAG_MM, "Command [%s] — wiping conversation history + scroll area", CMD_CLEAR);
+        clearConversationHistory();
         return true;
     }
     if (message == CMD_MQTT_DROP) {
@@ -150,7 +157,7 @@ bool processWifiSubcommand(const String& message) {
         // come up on a known network without reflashing. The current STA connection survives this call — only future boots are affected.
         ESP_LOGI(TAG_MM, "Command [%s] — clearing NVS WiFi list", CMD_WIFI_CLEAN);
         wifiClearNvs();
-        printInfoLine("NVS WiFi cleared — reboot to re-seed");
+        printInfoLine("NVS WiFi cleared - reboot to re-seed");
         return true;
     }
     if (message == CMD_WIFI_LIST) {

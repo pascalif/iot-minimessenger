@@ -63,10 +63,12 @@ Friend present
 
 // Provided by ESP32 boards
 #include <WiFi.h>
-// esp_efuse_mac_get_default(): reads the factory MAC straight from the eFuse with zero dependency on the WiFi driver — works in setup() before
-// any WiFi init, which WiFi.macAddress() / esp_read_mac(ESP_MAC_WIFI_STA) do not on arduino-esp32 3.3.8 (both return all zeros if the driver
-// hasn't been brought up yet).
+// esp_read_mac(ESP_MAC_EFUSE_FACTORY) reads the silicon eFuse directly with no cache layer — works in setup() before any driver init. The
+// related esp_efuse_mac_get_default() is a TRAP on arduino-esp32 3.3.8 (IDF 5.x): it wraps esp_read_mac(ESP_MAC_BASE) which queries a RAM cache
+// populated late in IDF startup, returning ESP_OK + zeros when called too early. See identifyDevice() for the 3-strategy waterfall.
 #include <esp_mac.h>
+#include <esp_efuse.h>        // esp_efuse_read_field_blob — lowest-level eFuse access, used as fallback in identifyDevice()
+#include <esp_efuse_table.h>  // ESP_EFUSE_MAC field descriptor
 // For the /dbg chip command: silicon model / revision / features (esp_chip_info, esp_get_idf_version, esp_reset_reason). See docs/howto_efuse.md.
 #include <esp_chip_info.h>
 #include <esp_system.h>
@@ -484,6 +486,7 @@ void mqttSendAlive(int liveType);
 bool mqttPushFormattedMessage(const char* topic, const char* payload);
 void goAndResetConversationScreen();
 void returnToConversationsScreen();
+void clearConversationHistory();
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);
 void resetSerialBuffer();
 void onReceivedContactOnline(int remoteDeviceId, bool isLive);
@@ -494,6 +497,10 @@ void onReceivedContactOnline(int remoteDeviceId, bool isLive);
 // String-vs-uint16_t ambiguity analysis in the .cpp impl docstring.
 void printInfoLine(const String& msg, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
 void printInfoLine(const String& left, const String& right, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
+
+// String utilities — defined in strings.ino. Called from printInfoLine / addConversationBlock below, which would compile before the strings.ino
+// concatenation appends the definition, so the forward decl is mandatory.
+size_t utf8ToLatin1(char* s);
 
 // Command layer — defined in commands.ino. routeMessage() (this file) calls processPayloadAsCommand() to interpret /cmd payloads; the rest is
 // internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
@@ -838,25 +845,46 @@ static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
 // ================================================================================
 
 void identifyDevice() {
-    // Read the MAC via esp_efuse_mac_get_default(): goes straight to the silicon eFuse where the factory MAC is burned, no driver init required.
-    // We previously tried WiFi.macAddress() and esp_read_mac(ESP_MAC_WIFI_STA), both of which are wrappers that consult the WiFi runtime state and
-    // return 00:00:00:00:00:00 on this core (3.3.8) when called before WiFi has been initialised. eFuse has no such dependency — it works in
-    // setup() at any point, on any ESP32 variant, regardless of WiFi/BT/Ethernet state.
-    String mac;
-#ifdef PAC_ON_ESP32
-    uint8_t   macBytes[6] = { 0 };
-    esp_err_t err         = esp_efuse_mac_get_default(macBytes);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG_MM, "esp_efuse_mac_get_default failed: err=%d", err);
+    // Read the MAC with a 3-strategy waterfall. Background: the obvious-looking esp_efuse_mac_get_default() turned out to be a TRAP — on
+    // arduino-esp32 3.3.8 (IDF 5.x) it is now a wrapper that internally calls esp_read_mac(mac, ESP_MAC_BASE). ESP_MAC_BASE does NOT read the
+    // silicon eFuse; it returns a static cached value populated by esp_base_mac_addr_set() during the IDF startup sequence. If we call before
+    // that startup hook has run, the function returns ESP_OK with all zeros (silently, no error). That's why every previous attempt to "just
+    // read the eFuse" failed: we were actually reading an empty RAM cache.
+    //
+    // The fix is to use ESP_MAC_EFUSE_FACTORY, which is documented to read DIRECTLY from the silicon eFuse with no cache layer. If for any
+    // reason that fails too (e.g. on a non-ESP32 variant where the field is differently mapped), fall back to esp_efuse_read_field_blob() which
+    // is the lowest-level eFuse access we have. Last-resort fallback: bring WiFi up and read WiFi.macAddress() — slow (~100 ms) but rock solid
+    // because the WiFi driver itself queries the eFuse during init.
+    String  mac;
+    uint8_t macBytes[6] = { 0 };
+    auto    isAllZero   = [](const uint8_t* m) { return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) == 0; };
+
+    const char* strategy = "EFUSE_FACTORY";
+    esp_err_t   err      = esp_read_mac(macBytes, ESP_MAC_EFUSE_FACTORY);
+    if (err != ESP_OK || isAllZero(macBytes)) {
+        ESP_LOGW(TAG_MM, "Strategy 1 (esp_read_mac EFUSE_FACTORY) failed: err=%d zero=%d — trying field_blob", err, isAllZero(macBytes));
+        strategy = "FIELD_BLOB";
+        err      = esp_efuse_read_field_blob(ESP_EFUSE_MAC, macBytes, 48);
     }
+    if (err != ESP_OK || isAllZero(macBytes)) {
+        ESP_LOGW(TAG_MM, "Strategy 2 (field_blob) failed: err=%d zero=%d — falling back to WiFi.macAddress", err, isAllZero(macBytes));
+        strategy = "WIFI_STA";
+        WiFi.mode(WIFI_STA);
+        delay(100);
+        WiFi.macAddress(macBytes);
+    }
+
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
     mac = macStr;
-#else
-    mac = WiFi.macAddress();
-#endif
-    ESP_LOGI(TAG_MM, "MAC Address: %s", mac.c_str());
 
+    if (isAllZero(macBytes)) {
+        ESP_LOGE(TAG_MM, "All MAC read strategies failed — falling through with %s (last attempted: %s)", mac.c_str(), strategy);
+    } else {
+        ESP_LOGI(TAG_MM, "MAC Address: %s (read via %s)", mac.c_str(), strategy);
+    }
+
+    // ---------------------
     int recipientId = 3;
 
     if (mac == "xx:xx:xx:xx:xx:xx") {
@@ -1421,22 +1449,25 @@ void showSplashScreen() {
         g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
         hwScrollReset();               // ensure we draw at framebuffer Y = screen Y = 0
 
-        // Title centered horizontally near the top of the panel. Default 5×7 font at setTextSize(2) → 12 px advance per glyph, 16 px tall.
-        // Text width = strlen × 12 ; centered X = (FB_WIDTH - textW) / 2.
+        // Vertical layout: trois gaps égaux entourent le texte et l'image. Le texte (default 5×7 font à setTextSize(2)) est traité comme 24 px de
+        // hauteur — c'est la hauteur visuelle "encombrement" décidée côté UI, pas la hauteur de glyphe stricte (16 px) — et l'image est de
+        // splash_bmp_h (128 px). gap = (FB_HEIGHT - kTitleH - splash_bmp_h) / 3 = (320 - 24 - 128) / 3 = 56 px → texte à Y=56, image à Y=136.
+        // Avec setFont(NULL) le setCursor(y) cible le TOP du texte (pas la baseline comme avec les fontes GFX), et drawRGBBitmap place le coin
+        // haut-gauche → on peut écrire les Y directement sans compensation.
+        constexpr int16_t kTitleH = 24;
+        const int16_t     gap     = (FB_HEIGHT - kTitleH - (int16_t)splash_bmp_h) / 3;
+
+        // Title centered horizontally. Default 5×7 font at setTextSize(2) → 12 px advance per glyph. Text width = strlen × 12 ; centered X.
         pDisp->setFont(NULL);
         pDisp->setTextSize(2);
         pDisp->setTextColor(ST77XX_WHITE);
         const char* title  = "MiniMessenger !";
         int16_t     titleW = (int16_t)strlen(title) * 12;
-        pDisp->setCursor((FB_WIDTH - titleW) / 2, 32);
+        pDisp->setCursor((FB_WIDTH - titleW) / 2, gap);
         pDisp->print(title);
 
-        // Center the 16×16 splash bitmap on the panel. drawBitmap() paints monochrome pixels in the given foreground color where the bit is 1 and leaves
-        // the existing background untouched where the bit is 0 — no need to pre-fill a rectangle.
-        //pDisp->drawBitmap((FB_WIDTH - 16) / 2, (FB_HEIGHT - 16) / 2, logo16_glcd_bmp, 16, 16, ST77XX_WHITE);
-
-        // Logo Goku
-        pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2, splash_bmp, splash_bmp_w, splash_bmp_h);
+        // Logo Goku, centré horizontalement, positionné verticalement après texte + gap.
+        pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, gap + kTitleH + gap, splash_bmp, splash_bmp_w, splash_bmp_h);
 
         delay(2'000);
     } else {
@@ -1455,6 +1486,25 @@ void showSplashScreen() {
 //   - g_drawY / g_scrollY are left in the "next slot" position so a new
 //     addConversationBlock right after lands naturally below the last block
 //
+// Drop the in-memory conversation history and wipe the scroll area. After this call the ring buffer is empty, the HW scroll register is back
+// at zero, and the panel's scroll zone is solid black. Status bar and footer are untouched — they live outside the VSCRDEF window and aren't
+// affected by g_drawY / g_scrollY. Triggered by the "/clear" command. A subsequent addConversationBlock lands at the top of the scroll area
+// because g_drawY = 0, exactly like a fresh boot.
+void clearConversationHistory() {
+    if (g_displayType != DisplayType::ST7789) {
+        ESP_LOGW(TAG_MM, "clearConversationHistory: DISPLAY_TYPE_NOT_CONFIGURED");
+        return;
+    }
+    ESP_LOGI(TAG_MM, "Clearing conversation history (%d block(s) discarded)", g_lineCount);
+    g_lineHead  = 0;
+    g_lineCount = 0;
+    g_drawY     = 0;
+    g_scrollY   = 0;
+    hwScrollTo(0);
+    g_disp->fillRect(0, SCROLL_AREA_Y_FB, FB_WIDTH, SCROLL_AREA_H, ST77XX_BLACK);
+}
+
+
 // Triggered by the `cmd redraw` command (see processPayloadAsCommand).
 // We draw directly from the stored TextLine fields — no re-bound, no
 // re-utf8-conversion, no re-alignment compute, no ring rewrite. Everything
@@ -1511,34 +1561,7 @@ void redrawAllConversations() {
 }
 
 
-// Convert in-place from UTF-8 to Latin-1 (ISO-8859-1). Two-byte UTF-8
-// sequences `0xC2 0xXX` (control / Latin-1 supplement) and `0xC3 0xXX`
-// (most accented letters) collapse to a single Latin-1 byte. Codepoints
-// outside U+0000..U+00FF are replaced with '?'. Returns the new length.
-size_t utf8ToLatin1(char* s) {
-    uint8_t* in  = (uint8_t*)s;
-    uint8_t* out = (uint8_t*)s;
-    while (*in) {
-        uint8_t b = *in++;
-        if (b < 0x80) {
-            *out++ = b;  // ASCII passthrough
-        } else if ((b & 0xE0) == 0xC0 && *in) {
-            uint8_t  b2 = *in++;
-            uint32_t cp = ((b & 0x1F) << 6) | (b2 & 0x3F);
-            *out++      = (cp <= 0xFF) ? (uint8_t)cp : '?';
-        } else if ((b & 0xF0) == 0xE0 && in[0] && in[1]) {
-            in += 2;  // BMP > U+00FF
-            *out++ = '?';
-        } else if ((b & 0xF8) == 0xF0 && in[0] && in[1] && in[2]) {
-            in += 3;  // outside BMP
-            *out++ = '?';
-        } else {
-            *out++ = '?';  // malformed
-        }
-    }
-    *out = '\0';
-    return out - (uint8_t*)s;
-}
+// utf8ToLatin1 lives in strings.ino now — see the forward decl in the block at the top of this file.
 
 // Drop a single line into the conversation scroll area, with optional two-column layout for command listings.
 //
@@ -1832,7 +1855,9 @@ void dumpChipInfo() {
     ESP_LOGI(TAG_MM, "Flash: size=%u mode=%d speed=%u Hz", ESP.getFlashChipSize(), ESP.getFlashChipMode(), ESP.getFlashChipSpeed());
 
     uint8_t mac[6];
-    esp_efuse_mac_get_default(mac);
+    // Use ESP_MAC_EFUSE_FACTORY (direct silicon read) instead of esp_efuse_mac_get_default() — see identifyDevice() for the full explanation
+    // of why the latter returns ESP_OK + zeros when called before the IDF base-MAC cache has been populated.
+    esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
     ESP_LOGI(TAG_MM, "MAC base/STA: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     esp_read_mac(mac, ESP_MAC_BT);
     ESP_LOGI(TAG_MM, "MAC BT:       %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -1994,10 +2019,14 @@ static int drawInfoRow(Adafruit_ST7789* pDisp, const char* header, const String&
 }
 
 void showUpdatedInfoScreen() {
-    String mac = WiFi.macAddress();
-    int separatorHeight = 10;
+    if (g_displayType != DisplayType::ST7789) {
+                ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
+    return;
+        }
 
-    if (g_displayType == DisplayType::ST7789) {
+            String mac = WiFi.macAddress();
+
+
         Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
         g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
@@ -2008,6 +2037,7 @@ void showUpdatedInfoScreen() {
         int colHeaders = 2;
         int colValues  = 68;
         int lineHeight = 22;
+    int separatorHeight = 10;
 
         int nextY = 0;
 
@@ -2047,9 +2077,7 @@ void showUpdatedInfoScreen() {
         nextY += lineHeight * 2;
         nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
 
-    } else {
-        ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
-    }
+
 }
 
 
@@ -2186,7 +2214,7 @@ void loop() {
             // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
             // edge logic and the status bar indicator stay accurate.
             if (WiFi.status() == WL_CONNECTED) {
-                addConversationBlock("", "Lost server — Retrying...", CONVO_ERROR_COLOR, CENTER);
+                addConversationBlock("", "Lost server - Retrying...", CONVO_ERROR_COLOR, CENTER);
             }
         }
 

@@ -107,11 +107,11 @@ void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* a
 }
 
 void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanResults, int reason) {
-    // NimBLE scans are asynchronous: the start() call returns immediately and
-    // this fires when the scan window elapses. Re-arm doScan so the next
-    // tryToMaintainConnection() iteration kicks off a new round.
-    ESP_LOGI(TAG_BTKB, "Scan ended (reason=%d, %d devices seen) — will rescan", reason, scanResults.getCount());
-    if (!m_connectionDone) {
+    // NimBLE scans are asynchronous: the start() call returns immediately and this fires when the scan window elapses. Re-arm doScan so the next
+    // tryToMaintainConnection() iteration kicks off a new round — unless paused (e.g. during WiFi portal, see pauseScan()).
+    ESP_LOGI(TAG_BTKB, "Scan ended (reason=%d, %d devices seen) — %s", reason, scanResults.getCount(),
+             m_scanPaused ? "paused, not rescanning" : "will rescan");
+    if (!m_connectionDone && !m_scanPaused) {
         doScan = true;
     }
 }
@@ -196,12 +196,29 @@ void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
         doConnect = false;
     }
 
-    if (doScan) {
+    if (doScan && !m_scanPaused) {
         ESP_LOGI(TAG_BTKB, "Rescanning...");
         NimBLEDevice::getScan()->start(m_scanningDurationSec * 1000, false);
-        // NimBLE scan is async — flag it as "in flight" so we don't restart it
-        // every loop iteration. onScanEnd() will re-arm doScan when the window
-        // elapses without finding the keyboard.
+        // NimBLE scan is async — flag it as "in flight" so we don't restart it every loop iteration. onScanEnd() will re-arm doScan when the
+        // window elapses without finding the keyboard (unless m_scanPaused).
         doScan = false;
+    }
+}
+
+// Pause the BLE scan loop. Stops any active scan synchronously (NimBLE's stop() blocks until the radio is freed) and inhibits onScanEnd from
+// re-arming doScan. Safe to call multiple times. Used by the WiFi portal entry to free the 2.4 GHz radio for WiFi RX — see header comment.
+void MiniMessengerBLEKeyboardInterface::pauseScan() {
+    ESP_LOGI(TAG_BTKB, "pauseScan() — stopping scan and inhibiting re-arm");
+    m_scanPaused = true;
+    NimBLEDevice::getScan()->stop();
+    doScan = false;
+}
+
+// Resume the BLE scan loop. If the keyboard isn't currently connected, the next tryToMaintainConnection() iteration will kick off a new scan.
+void MiniMessengerBLEKeyboardInterface::resumeScan() {
+    ESP_LOGI(TAG_BTKB, "resumeScan() — scan loop re-enabled");
+    m_scanPaused = false;
+    if (!m_connectionDone) {
+        doScan = true;
     }
 }

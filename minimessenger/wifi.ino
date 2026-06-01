@@ -38,15 +38,22 @@
 
 #define MAX_WIFI_NETWORKS                   5          // hard cap of slot count in NVS. Bumping requires no migration since slots are key-indexed.
 #define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000      // how often we call WiFiMulti.run() inside the TRYING_KNOWN state.
-#define WIFI_TRYING_KNOWN_TIMEOUT_MS        15'000     // after this much time in TRYING_KNOWN with no success, fall through to the captive portal.
+// After this much time in TRYING_KNOWN with no success, fall through to the captive portal. Set to 45 s (not 15) because a single failed association
+// on a marginal AP burns ~11-13 s before ASSOC_EXPIRE fires; with 15 s we only got one attempt in before bailing, and the second attempt would often
+// have worked. 45 s lets WiFiMulti retry 3-4 times before giving up. Tradeoff: if the known AP is truly gone the user waits 45 s before the portal
+// appears instead of 15 s — acceptable because "known AP transiently unreachable" is more common than "known AP definitely gone".
+#define WIFI_TRYING_KNOWN_TIMEOUT_MS        45'000
 #define WIFI_PORTAL_TIMEOUT_MS              300'000UL  // 5 min: portal auto-closes and the state machine reverts to TRYING_KNOWN for one more pass.
 #define WIFI_LOST_RETRY_INTERVAL_MS         5'000      // how often we call WiFiMulti.run() inside the LOST state.
 #define WIFI_LOST_TO_PORTAL_MS              60'000     // if the connection has been LOST for more than this, drop into PORTAL (router probably gone).
 
-#define WIFI_PORTAL_AP_SSID "minimessenger-config"  // open AP exposed in PORTAL state. Generic on purpose so a user knows what to look for.
-#define WIFI_PORTAL_AP_PASS                                                                                                                                      \
-    ""  // open AP (no WPA) — simplifies onboarding, acceptable since the device serves only the \                                                             \ \
-        // captive portal during this state. Switch to a passworded AP if you ever expose more.
+#define WIFI_PORTAL_AP_SSID "minimsg-cfg"  // generic on purpose so the user knows what SSID to look for in the phone's WiFi list.
+// WPA2 password for the captive portal AP. Set to a real string (8+ chars) rather than "" (open AP) because:
+//   - arduino-esp32 3.x defaults pmf_cfg.capable=true on AP, which some Android 12+ phones refuse silently when paired with WIFI_AUTH_OPEN.
+//   - Android also restricts auto-connect on open networks for privacy (no pop-up, just silent refuse).
+//   - 8 chars is the WPA2 minimum (esp_wifi rejects shorter as "passphrase too short").
+// Pick something memorable; users only see this once during onboarding.
+#define WIFI_PORTAL_AP_PASS "11110000"
 
 #define WIFI_PREFS_NAMESPACE "wifi"
 
@@ -74,6 +81,12 @@ bool g_wifiNtpDoneOnce = false;
 // banner exactly once per LOST↔CONNECTED transition (the state machine wouldn't fire transitions redundantly today, but the flag also gates the
 // "WiFi lost" banner against the boot path where we've never been connected yet — see the LOST branch in wifiTransitionTo).
 bool g_wifiWasConnected = false;
+
+// Set true by wifiOnPortalSave() when WiFiManager hands back control after the user submitted credentials via the web UI and STA association
+// succeeded. In that path WiFiManager runs its own shutdownConfigPortal() internally (deletes the WebServer / DNSServer / netif callbacks)
+// BEFORE returning, so wifiStopPortal() must NOT call g_wifiManager.stopConfigPortal() a second time — doing so dereferences NULL pointers
+// inside WM and panics (LoadProhibited, EXCVADDR=0). Reset to false at the end of wifiStopPortal() so the next portal entry starts fresh.
+static bool g_portalSelfClosed = false;
 
 // ================================================================================
 // Forward declarations of internal helpers
@@ -108,6 +121,13 @@ void setupWifi() {
     // credentials with disconnect(true, true): first true = also stop the WiFi radio if it's already trying, second true = erase the persisted
     // SSID/pwd so auto-reconnect has nothing to chew on. Then a short settle delay and a clean WIFI_STA mode flip. Net effect: ~10 s shaved off cold
     // boot when the AP is marginal — no impact when the AP is healthy (assoc completes in <1 s either way).
+    //
+    // We INIT the driver (WiFi.mode(WIFI_STA)) BEFORE calling disconnect — otherwise disconnect() fails with ESP_ERR_WIFI_NOT_INIT (observed when
+    // identifyDevice() failed to bring up WIFI_STA earlier, leaving the radio uninitialised). When disconnect() fails the cached creds stay in NVS,
+    // the driver auto-reconnect races WiFiMulti, and the resulting collisions cause ASSOC_EXPIRE on the first attempt. The first WiFi.mode() call is
+    // idempotent if the driver is already up — costs nothing on the happy path.
+    WiFi.mode(WIFI_STA);
+    delay(50);
     WiFi.disconnect(true, true);
     delay(50);
     WiFi.mode(WIFI_STA);
@@ -121,7 +141,10 @@ void setupWifi() {
     // with g_wifiManager.process() inside wifiTick. The save callback fires when the user submits credentials via the web UI.
     g_wifiManager.setConfigPortalBlocking(false);
     g_wifiManager.setSaveConfigCallback(wifiOnPortalSave);
-    g_wifiManager.setDebugOutput(false);  // mute the lib's own Serial chatter — we have our own logs.
+    // Temporarily enable WiFiManager's own verbose log to see what happens at /wifi portal: phones can see the SSID but fail to associate without
+    // any user-visible error, and we need the lib's internal trace (AP setup, DHCP, DNS catcher, HTTP server) to know which layer is broken.
+    // Flip back to false (or the single-arg form) once the connect path is confirmed stable. setDebugOutput overload: (enabled, level).
+    g_wifiManager.setDebugOutput(true, WM_DEBUG_VERBOSE);
 
     if (n == 0) {
         // No networks known at all → skip the TRYING_KNOWN dance, go straight to portal.
@@ -241,7 +264,7 @@ static void wifiTransitionTo(WifiState newState) {
 
     case WifiState::LOST:
         if (g_wifiWasConnected) {
-            addConversationBlock("", "WiFi lost — Retrying...", CONVO_ERROR_COLOR, CENTER);
+            addConversationBlock("", "WiFi lost - Retrying...", CONVO_ERROR_COLOR, CENTER);
         }
         g_wifiWasConnected = false;  // re-arm so the next CONNECTED prints a banner.
         break;
@@ -254,13 +277,37 @@ static void wifiTransitionTo(WifiState newState) {
 
 static void wifiStartPortal() {
     ESP_LOGI(TAG_WIFI, "Starting captive portal AP [%s]", WIFI_PORTAL_AP_SSID);
+
+    // Pause the BLE keyboard scan before touching the WiFi mode. On ESP32 the BLE and WiFi radios share the same 2.4 GHz front-end; an active
+    // BLE scan at ~100 % duty cycle (which our default setActiveScan(true) + 30 s window + immediate re-arm produces) starves the WiFi RX path.
+    // The symptom is: AP beacons go out fine (so the phone sees the SSID in its list and prompts for the password), but auth/association frames
+    // from the phone never reach the ESP32 — NUM CLIENTS stays at 0 forever, Android pops "Impossible de se connecter au réseau Wi-Fi" with no
+    // further detail. Suspending the scan during the portal phase frees the RX path. Resumed in wifiStopPortal().
+    g_kb.pauseScan();
+
+    // Hard reset of the WiFi driver BEFORE handing over to WiFiManager. Symmetric to the cleanup we already do in wifiStopPortal() (see the long
+    // comment there): coming out of TRYING_KNOWN means the STA side was scanning / connecting, the radio is busy on a random channel, and the
+    // softAP that startConfigPortal() raises ends up broadcasting beacons that phones SEE in the network list but cannot associate to (no error
+    // bubbles up — the phone retries silently then gives up). disconnect(true,true) stops the radio AND wipes in-RAM creds, the 100 ms delay
+    // lets the async STA_STOP / scan-abort events drain, then WiFiManager.startConfigPortal() puts us into a clean AP_STA from a known-quiet state.
+    WiFi.disconnect(true, true);
+    delay(100);
+
     // WIFI_AP_STA is implicit when startConfigPortal switches the chip into AP mode. The previous STA association (if any) is dropped.
     g_wifiManager.startConfigPortal(WIFI_PORTAL_AP_SSID, WIFI_PORTAL_AP_PASS);
 }
 
 static void wifiStopPortal() {
-    ESP_LOGI(TAG_WIFI, "Stopping captive portal");
-    g_wifiManager.stopConfigPortal();
+    ESP_LOGI(TAG_WIFI, "Stopping captive portal (selfClosed=%d)", g_portalSelfClosed);
+
+    // Only call stopConfigPortal() if WiFiManager hasn't already torn itself down. When the user submits credentials on the portal page and STA
+    // association succeeds, WM closes the portal on its own and frees the WebServer/DNSServer objects; a second stopConfigPortal() then deref's
+    // freed memory → LoadProhibited panic. g_portalSelfClosed is set by wifiOnPortalSave() in that path. The other path (timeout-based fall-through
+    // from PORTAL back to TRYING_KNOWN) has WM still alive, so we must call stop() ourselves there.
+    if (!g_portalSelfClosed) {
+        g_wifiManager.stopConfigPortal();
+    }
+    g_portalSelfClosed = false;
 
     // AP → STA transition is delicate on arduino-esp32: after a long stretch in WIFI_AP_STA mode (5 min of captive portal, by default), the radio
     // keeps internal residues (AP context, beaconing state, netif callbacks). Just calling WiFi.mode(WIFI_STA) is not enough — the next few
@@ -273,6 +320,9 @@ static void wifiStopPortal() {
     delay(100);
 
     WiFi.mode(WIFI_STA);
+
+    // Resume the BLE keyboard scan now that the radio is back to STA-only. Mirrors the pauseScan() call in wifiStartPortal().
+    g_kb.resumeScan();
 }
 
 void wifiForcePortal() {
@@ -325,6 +375,10 @@ static void wifiOnPortalSave() {
     } else {
         ESP_LOGW(TAG_WIFI, "wifiSaveToNvs failed for [%s] (list full?) — credentials live only until reboot", ssid.c_str());
     }
+
+    // Signal to wifiStopPortal() that WiFiManager will tear down the portal on its own (it does so right after this callback returns when STA
+    // association succeeded). Prevents the double-stopConfigPortal() that previously caused a LoadProhibited panic.
+    g_portalSelfClosed = true;
 }
 
 // ================================================================================
@@ -497,7 +551,7 @@ void wifiPrintListToConversation() {
     g_wifiPrefs.begin(WIFI_PREFS_NAMESPACE, true);
     uint8_t count = g_wifiPrefs.getUChar("count", 0);
 
-    addConversationBlock("", "Saved WiFi networks:", CONVO_CMD_COLOR, LEFT);
+    printInfoLine("Saved WiFi networks:");
     int shown = 0;
     for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
         String ssidKey = "ssid_" + String((int)i);
@@ -506,11 +560,11 @@ void wifiPrintListToConversation() {
             continue;
         }
         String line = "  " + ssid;
-        addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+        printInfoLine( line);
         shown++;
     }
     if (shown == 0) {
-        addConversationBlock("", "  (none)", CONVO_CMD_COLOR, LEFT);
+        printInfoLine( "  (none)");
     }
     g_wifiPrefs.end();
 }
@@ -528,7 +582,7 @@ void drawPortalInstructions(Adafruit_ST7789* pDisp, int& nextY, int colHeaders, 
     // First a one-line header, red on its own (no value column), to visually break from the meta rows above.
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
-    pDisp->print("WiFi setup");
+    pDisp->print("** WiFi setup **");
     nextY += lineHeight;
 
     // Three instruction rows: AP name, URL, action. Each uses the standard header/value column layout so it stays consistent visually with the
@@ -539,6 +593,14 @@ void drawPortalInstructions(Adafruit_ST7789* pDisp, int& nextY, int colHeaders, 
     pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print(WIFI_PORTAL_AP_SSID);
+    nextY += lineHeight;
+
+    pDisp->setCursor(colHeaders, nextY);
+    pDisp->setTextColor(ST77XX_RED);
+    pDisp->print("PASS:");
+    pDisp->setCursor(colValues, nextY);
+    pDisp->setTextColor(ST77XX_WHITE);
+    pDisp->print(WIFI_PORTAL_AP_PASS);
     nextY += lineHeight;
 
     pDisp->setCursor(colHeaders, nextY);

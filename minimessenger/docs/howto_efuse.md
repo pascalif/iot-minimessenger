@@ -29,32 +29,60 @@ or even SPI are running.
 
 ### The bug it solves
 
-Three APIs claim to give you the MAC. Only one of them works in early
-setup on arduino-esp32 3.3.8:
+Four MAC-read APIs are available. **Only one reads the silicon eFuse
+directly.** Empirical results on arduino-esp32 3.3.8 (IDF 5.x) when called
+in `setup()` before any driver init:
 
-| API | Where it lives | Works before WiFi init? |
-|-----|----------------|------------------------|
-| `WiFi.macAddress()` / `WiFi.macAddress(uint8_t*)` | Arduino `WiFi.h` | ❌ returns `00:00:00:00:00:00` |
-| `esp_read_mac(buf, ESP_MAC_WIFI_STA)` | `<esp_mac.h>` | ❌ depends on a runtime fallback that is unreliable here |
-| `esp_efuse_mac_get_default(buf)` | `<esp_mac.h>` | ✅ direct eFuse register read |
+| API | Header | Works in early setup? |
+|-----|--------|----------------------|
+| `WiFi.macAddress()` / `WiFi.macAddress(uint8_t*)` | `<WiFi.h>` | ❌ returns `00:00:00:00:00:00` |
+| `esp_read_mac(buf, ESP_MAC_WIFI_STA)` | `<esp_mac.h>` | ❌ same, depends on WiFi init |
+| `esp_efuse_mac_get_default(buf)` | `<esp_mac.h>` | ❌ **TRAP** — returns `ESP_OK` + zeros, see below |
+| **`esp_read_mac(buf, ESP_MAC_EFUSE_FACTORY)`** | `<esp_mac.h>` | ✅ **direct eFuse register read** |
 
-The Arduino wrapper consults the WiFi runtime state. `esp_read_mac` is
-supposed to fall back to eFuse when the WiFi driver isn't up, but on this
-core the fallback returns zero. `esp_efuse_mac_get_default` skips the
-runtime layer entirely and reads the fuse register directly.
+#### The `esp_efuse_mac_get_default` trap
 
-### How to use it
+The name suggests "read the factory MAC from eFuse" — and that's how the
+doc reads. But on IDF 5.x, the implementation has been refactored into a
+shim: internally it calls `esp_read_mac(mac, ESP_MAC_BASE)`. And
+`ESP_MAC_BASE` does NOT read silicon — it returns a **static cache in RAM**
+that is populated by `esp_base_mac_addr_set()` somewhere during IDF startup.
+If you call before that startup hook has fired, you get `ESP_OK` + a zeroed
+buffer, with no error indication.
+
+This burned us for a long time. The fix is to use `ESP_MAC_EFUSE_FACTORY`
+explicitly, documented as "MAC_FACTORY eFuse which was burned by Espressif
+in production" — it skips the cache and queries the eFuse hardware.
+
+### Recommended pattern (3-strategy waterfall)
 
 ```cpp
 #include <esp_mac.h>
+#include <esp_efuse.h>
+#include <esp_efuse_table.h>
 
-uint8_t macBytes[6] = {0};
-esp_err_t err = esp_efuse_mac_get_default(macBytes);
-if (err != ESP_OK) {
-  ESP_LOGE(TAG_MM, "esp_efuse_mac_get_default failed: err=%d", err);
+uint8_t mac[6] = {0};
+auto isAllZero = [](const uint8_t* m) { return (m[0]|m[1]|m[2]|m[3]|m[4]|m[5]) == 0; };
+
+// 1. Direct silicon eFuse read — should always work.
+esp_err_t err = esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
+
+// 2. Low-level field read — same hardware, different API path.
+if (err != ESP_OK || isAllZero(mac)) {
+  err = esp_efuse_read_field_blob(ESP_EFUSE_MAC, mac, 48);
 }
-// macBytes now holds the factory-burned base MAC, regardless of WiFi/BT state.
+
+// 3. Last resort: bring WiFi up and read its derived MAC.
+if (err != ESP_OK || isAllZero(mac)) {
+  WiFi.mode(WIFI_STA);
+  delay(100);
+  WiFi.macAddress(mac);
+}
 ```
+
+Strategy 1 alone suffices in 99 % of cases; the other two are belt-and-
+suspenders so an unknown future regression doesn't silently break device
+identity again.
 
 ### Base MAC vs the derived ones
 
@@ -68,9 +96,10 @@ WiFi SoftAP, BT, Ethernet) are derived from it by the silicon at runtime:
 | Bluetooth | `ESP_MAC_BT` | base + 2 |
 | Ethernet | `ESP_MAC_ETH` | base + 3 |
 
-On ESP32 classic, `esp_efuse_mac_get_default()` returns the **same value**
-as `esp_read_mac(ESP_MAC_WIFI_STA)` would return once WiFi is up — so use
-the eFuse function in early code and treat it as your STA MAC.
+On ESP32 classic, `esp_read_mac(buf, ESP_MAC_EFUSE_FACTORY)` returns the
+**same value** as `esp_read_mac(ESP_MAC_WIFI_STA)` would return once WiFi
+is up — so use the eFuse-factory variant in early code and treat it as
+your STA MAC.
 
 If you call `esp_read_mac(buf, ESP_MAC_BT)` later, you get the BT MAC
 (base+2). That part is reliable once at least the BT stack is initialised.
@@ -248,7 +277,7 @@ void dumpChipInfo() {
            ESP.getHeapSize(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   uint8_t mac[6];
-  esp_efuse_mac_get_default(mac);
+  esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);  // see "The trap" section — do NOT use esp_efuse_mac_get_default here
   ESP_LOGI(TAG_MM, "MAC base/STA: %02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   esp_read_mac(mac, ESP_MAC_BT);

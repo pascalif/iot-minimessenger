@@ -50,6 +50,13 @@ public:
 
     bool isFullyConnected();
 
+    // Pause / resume the BLE scan loop. Used during the WiFi captive portal (`/wifi portal`) to free the shared 2.4 GHz radio: ESP32 has a single
+    // antenna, and an active BLE scan (setActiveScan + ~100% duty cycle) starves WiFi RX — beacons still go out (so the phone sees the SSID) but
+    // auth frames from the phone never reach the ESP32, leaving the user stuck on a network they can't connect to. Pausing the scan on portal
+    // entry, resuming on portal exit, restores WiFi reception. No effect if the keyboard is already paired+connected (scan was already idle).
+    void pauseScan();
+    void resumeScan();
+
 
 protected:
     uint8_t m_scanningDurationSec = 30;
@@ -70,6 +77,9 @@ private:
     bool           m_connectionDone = false;
     bool           doConnect        = false;
     bool           doScan           = true;
+    // Set true by pauseScan(), false by resumeScan(). When true, tryToMaintainConnection() will not start a scan and onScanEnd() will not re-arm
+    // doScan, so the radio stays available for WiFi. The keyboard auto-discovery loop resumes the moment resumeScan() is called.
+    bool m_scanPaused = false;
 
     static void bleNotifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
 
