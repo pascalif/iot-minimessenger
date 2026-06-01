@@ -16,6 +16,7 @@
 #include <Arduino.h>
 #include "wifi_state.h"
 #include "mm_log.h"
+#include "mqtt.h"  // /mqtt-drop calls g_mqttClient.disconnect(); the symbol is defined in mqtt.ino which is concatenated AFTER commands.ino.
 
 // ----------------------------------------------------------------------------
 // Local commands + message funnel

@@ -73,6 +73,45 @@ automatically. Each file:
    `mm_log.h`, etc. are independent translation units, compiled separately.
    They keep needing real `#include` and `extern` declarations. Only the
    `.ino` files benefit from the concat magic.
+7. **Concatenation order is fixed; forward references to non-functions
+   require a `.h`.** The main sketch is concatenated first, then the
+   other `.ino` files **alphabetically** (in this project:
+   `minimessenger.ino` → `commands.ino` → `mqtt.ino` → `strings.ino` →
+   `wifi.ino`). The auto-prototyper hoists function prototypes to the
+   top, so functions can be called from anywhere regardless of file
+   order — that's the part most people remember. But **globals,
+   `#define`s, types and classes are NOT hoisted** — they must be
+   textually visible at the point of use. If `minimessenger.ino` reads a
+   global or `#define` whose only definition lives in `mqtt.ino`
+   (concatenated later), the compiler errors out with "undeclared
+   identifier" or "use of undeclared symbol". The fix is a small header
+   that holds `extern` declarations + shared `#define`s + forward type
+   declarations, included by every `.ino` that needs them.
+
+   You only need this header **when there are cross-file references to
+   non-functions**. If the caller side touches the secondary `.ino`
+   purely through its exported functions, no header is needed beyond the
+   prototypes (or the prototypes can themselves live in a tiny `.h` if
+   you want them grouped). Two concrete examples in this project:
+   - `wifi_state.h` is the **light** case: `minimessenger.ino` never
+     reads `wifi.ino`'s globals directly (everything goes through
+     `setupWifi()` / `wifiTick()` / `wifiGetState()`), so the header
+     only carries the shared `WifiState` enum and the function
+     prototypes.
+   - `mqtt.h` is the **heavy** case: `minimessenger.ino` directly
+     touches `g_mqttClient`, `g_mqttWasConnected`, the topic strings,
+     `MQTT_KEEPALIVE_INTERVAL_MS`, `MQTT_TOPIC_SIZE`, etc. — 10+ symbols
+     defined in `mqtt.ino`. They are all `extern`'d (or `#define`'d) in
+     `mqtt.h`, which is included by both `minimessenger.ino` and
+     `commands.ino` (the latter calls `g_mqttClient.disconnect()` for
+     `/mqtt-drop`, and `commands.ino` runs before `mqtt.ino` in concat
+     order).
+
+   Practical rule of thumb: it's tempting to think "all `.ino` are
+   concatenated, so I don't need any header". True for functions, false
+   for everything else. When in doubt, look at whether the symbol you're
+   moving is referenced **earlier in concat order than it's defined** —
+   if yes, you need a header entry; if no, you don't.
 
 ## Concrete split proposal for minimessenger
 

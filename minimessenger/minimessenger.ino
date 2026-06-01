@@ -77,8 +77,9 @@ Friend present
 // prototypes that minimessenger.ino calls (setupWifi, wifiTick, wifiGetState, drawPortalInstructions, /wifi-* command helpers).
 #include "wifi_state.h"
 
-// Install from library manager: "PubSubClient" (2.8)
-#include <PubSubClient.h>
+// MQTT plumbing (topics, globals, reconnect, publish, incoming dispatch, TLS root CA) lives in mqtt.ino. This header pulls in PubSubClient and the
+// shared constants / extern declarations / function prototypes. Library Manager: "PubSubClient" (2.8).
+#include "mqtt.h"
 
 // Provided by Arduino IDE (with ESP8266 board plugins ?)
 #include <WiFiClientSecure.h>
@@ -141,17 +142,11 @@ Friend present
 // WiFi credentials are no longer kept here — see wifi.ino + compiled_wifi.h (gitignored) + NVS for the new onboarding flow. WiFiMulti picks the
 // strongest known network at boot; if none respond, the WiFiManager captive portal opens automatically. See docs/howto_wifi.md.
 
-// MQTT Broker details
+// MQTT Broker credentials. Kept here next to the other "Secrets" — the rest of the MQTT config (topics, timing, QoS flags) lives in mqtt.h/mqtt.ino.
 const char* mqtt_server   = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
 const int   mqtt_port     = 8883;                                                   // TLS Port
 const char* mqtt_user     = "xxxxx";                                                // Credential Username
 const char* mqtt_password = "xxxxxxx";                                             // Credential Password
-
-const char* g_mqttOutgoingTopicLogs      = "admin/logs";
-const char* g_mqttOutgoingTopicLive      = "admin/live";
-const char* g_mqttOutgoingTopicWill      = "admin/dead";
-const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
-//                                         "msg/unicast/12"
 
 
 // POSIX timezone string for Paris (Europe/Paris). Decoded:
@@ -170,10 +165,7 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 #define LED_BLINK_FAST_DURATION_MS 150
 #define LED_BLINK_SLOW_DURATION_MS 700
 
-// Period between sending 2 "keepalive" messages
-#define MQTT_KEEPALIVE_INTERVAL_MS 120'000
-// Period between retring connection to MQTT broker
-#define MQTT_CONNECT_RETRY_INTERVAL_MS 5'000
+// MQTT timing constants (MQTT_KEEPALIVE_INTERVAL_MS, MQTT_CONNECT_RETRY_INTERVAL_MS) moved to mqtt.h.
 
 // "Screen saver" Burn-in protection: time without local input (BT keystroke / serial) and
 // without a remote message before the screen dims, then fully turns off.
@@ -232,38 +224,7 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // ================================================================================
 
 
-// Certificate linked in https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
-const char* g_hiveMQRootCA = "-----BEGIN CERTIFICATE-----\n"
-                             "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
-                             "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
-                             "cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n"
-                             "WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\n"
-                             "ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\n"
-                             "MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\n"
-                             "h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n"
-                             "0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\n"
-                             "A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\n"
-                             "T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\n"
-                             "B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\n"
-                             "B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\n"
-                             "KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\n"
-                             "OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\n"
-                             "jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\n"
-                             "qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\n"
-                             "rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\n"
-                             "HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\n"
-                             "hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\n"
-                             "ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n"
-                             "3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\n"
-                             "NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\n"
-                             "ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\n"
-                             "TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\n"
-                             "jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\n"
-                             "oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n"
-                             "4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\n"
-                             "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
-                             "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
-                             "-----END CERTIFICATE-----\n";
+// HiveMQ Cloud TLS root CA moved to mqtt.ino (g_hiveMQRootCA). Wired into g_wifiClient.setCACert() in setup().
 
 
 // === Hardware scroll state (ST7789, portrait, partitioned framebuffer) ===
@@ -313,16 +274,9 @@ uint16_t g_drawY   = 0;
 #define ICON_CAPS_X    114
 #define ICON_CONTACT_X (FB_WIDTH - 12)  // 228
 
-// Light-gray hairline drawn on the bottom row of the status bar to visually
-// separate it from the scroll area. RGB565 of #DDDDDD = 0xDEFB.
-#define STATUS_BAR_SEPARATOR_COLOR 0xDEFB
-
-// Last drawn state — used to skip a redraw when nothing changed.
-bool          g_lastDrawnBt         = false;
-bool          g_lastDrawnWifi       = false;
-bool          g_lastDrawnMqtt       = false;
-bool          g_lastDrawnCaps       = false;
-bool          g_lastDrawnContact    = true;  // placeholder until contact tracking exists
+// Last-drawn-state cache + color palette + bar drawing functions all live in bars.ino. Two globals stay here because they are SET from many
+// places in this file (boot, mode switches, caps toggle, etc.): g_statusBarDirty toggles a forced repaint, g_lastStatusBarPollMs is the
+// debounce timer.
 bool          g_statusBarDirty      = true;
 unsigned long g_lastStatusBarPollMs = 0;
 #define STATUS_BAR_POLL_INTERVAL_MS 500
@@ -393,21 +347,8 @@ WiFiClientSecure g_wifiClient;
 // WiFi reconnection state moved to wifi.ino along with the rest of the WiFi machinery. The state machine there drives banners on rising / falling
 // edges; this .ino just exposes UI surfaces.
 
-// MQTT
-PubSubClient  g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
-int           g_mqttConnectionId                 = -1;
-unsigned int  g_mqttOutputMsgId                  = 0;
-bool          g_mqttWasConnected                 = false;
-unsigned long g_mqttLastReconnectTryTimestampMs  = 0;
-unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
-
-
-// Size includes all standard fields plus user's payload
-#define MSG_BUFFER_SIZE 500
-char g_mqttOutgoingMsg[MSG_BUFFER_SIZE];
-
-#define MQTT_TOPIC_SIZE 30
-char g_mqttOutoingRecipientTopic[MQTT_TOPIC_SIZE];
+// MQTT runtime globals (g_mqttClient, g_mqttConnectionId, g_mqttOutputMsgId, g_mqttWasConnected, reconnect/keepalive timestamps, the outgoing-message
+// scratch buffer and the unicast recipient topic) moved to mqtt.ino — declared in mqtt.h.
 
 
 // OLED Display
@@ -482,12 +423,10 @@ void redrawInputFooter();
 bool noteUserActivity();
 void routeMessage(const String& message, MessageSource source);
 void ledSetState(int pin, int requiredState);
-void mqttSendAlive(int liveType);
-bool mqttPushFormattedMessage(const char* topic, const char* payload);
+// mqttSendAlive / mqttPushFormattedMessage / onMqttIncomingMessage prototypes provided by mqtt.h.
 void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
-void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);
 void resetSerialBuffer();
 void onReceivedContactOnline(int remoteDeviceId, bool isLive);
 // Two overloads — see definitions for the contract.
@@ -832,6 +771,9 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
 
 void onBluetoothKeyboardConnectionCallback(bool isFullyConnected) {
     ESP_LOGI(TAG_BTKB, "onKeyboardConnectionCallback(%d)", isFullyConnected ? 1 : 0);
+    // Repaint the input footer so the "<no keyboard>" placeholder appears/disappears immediately on (dis)connect, without waiting for the next
+    // keystroke or screen-state event. Safe at boot: redrawInputFooter() early-returns if g_inConversationMode is false.
+    redrawInputFooter();
 }
 
 static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
@@ -855,7 +797,6 @@ void identifyDevice() {
     // reason that fails too (e.g. on a non-ESP32 variant where the field is differently mapped), fall back to esp_efuse_read_field_blob() which
     // is the lowest-level eFuse access we have. Last-resort fallback: bring WiFi up and read WiFi.macAddress() — slow (~100 ms) but rock solid
     // because the WiFi driver itself queries the eFuse during init.
-    String  mac;
     uint8_t macBytes[6] = { 0 };
     auto    isAllZero   = [](const uint8_t* m) { return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) == 0; };
 
@@ -876,18 +817,17 @@ void identifyDevice() {
 
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4], macBytes[5]);
-    mac = macStr;
 
     if (isAllZero(macBytes)) {
-        ESP_LOGE(TAG_MM, "All MAC read strategies failed — falling through with %s (last attempted: %s)", mac.c_str(), strategy);
+        ESP_LOGE(TAG_MM, "All MAC read strategies failed — falling through with %s (last attempted: %s)", macStr, strategy);
     } else {
-        ESP_LOGI(TAG_MM, "MAC Address: %s (read via %s)", mac.c_str(), strategy);
+        ESP_LOGI(TAG_MM, "MAC Address: %s (read via %s)", macStr, strategy);
     }
 
     // ---------------------
     int recipientId = 3;
 
-    if (mac == "xx:xx:xx:xx:xx:xx") {
+    if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
         g_deviceIdMe = 1;
         snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
@@ -897,14 +837,14 @@ void identifyDevice() {
 
         //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
         g_displayType = DisplayType::ST7789;
-    } else if (mac == "xx:xx:xx:xx:xx:xx") {
+    } else if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
         g_deviceIdMe = 2;
         snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
         strcpy(g_userPseudo, "Maïa");
         g_deviceIdFriend1 = 1;
         g_deviceIdFriend2 = 3;
-    } else if (mac == "xx:xx:xx:xx:xx:xx") {
+    } else if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
         g_deviceIdMe = 3;
         snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
 
@@ -915,7 +855,7 @@ void identifyDevice() {
 
         g_displayType = DisplayType::OLEDSHIELD;
 
-    } else if (mac == "xx:xx:xx:xx:xx:xx") {
+    } else if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
         // ESP32-02
         g_deviceIdMe = 4;
 
@@ -927,7 +867,7 @@ void identifyDevice() {
 
         //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
         g_displayType = DisplayType::ST7789;
-    } else if (mac == "00:00:00:00:00:00") {
+    } else if (isAllZero(macBytes)) {
         ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
 
     } else {
@@ -973,111 +913,8 @@ boolean setupKeyboard() {
 
 
 
-// ================================================================================
-// MQTT
-// ================================================================================
-
-#define MQTT_MSG_RETAINED     true
-#define MQTT_MSG_NOT_RETAINED false
-
-#define MQTT_SESSION_VOLATILE  true
-#define MQTT_SESSION_PERSISTED false
-
-#define MQTT_QOS_0 0
-#define MQTT_QOS_1 1
-#define MQTT_QOS_2 2
-
-// Return true is reconnection is successfull
-bool mqttReconnect() {
-    // Pour voir s'il y a assez de bloc memoire pour la connection TLS.
-    // mbedtls handshake = ~38-40 KB contigus (16 KB IN + 16 KB OUT + ~6 KB SSL ctx).
-    // Heap dispo (largest block) observé :
-    //   - Bluedroid : ~24 KB → insuffisant, rc=-2
-    //   - NimBLE    : ~60-70 KB attendus → handshake OK
-    ESP_LOGI(TAG_MQTT, "Attempting connection... heap free=%u largest block=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-
-    unsigned long t0              = millis();
-    bool          isMQTTConnected = g_mqttClient.connect(g_deviceName,
-                                                mqtt_user,
-                                                mqtt_password,
-                                                g_mqttOutgoingTopicWill,
-                                                MQTT_QOS_0,
-                                                MQTT_MSG_NOT_RETAINED,
-                                                g_deviceIdChars,
-                                                MQTT_SESSION_VOLATILE);
-    ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d", isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
-
-    if (isMQTTConnected) {
-        ESP_LOGI(TAG_MQTT, "isMQTTConnected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
-
-        g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
-
-        String myUnicastTopic = String("msg/unicast/") + g_deviceIdMe;
-        g_mqttClient.subscribe(myUnicastTopic.c_str(), MQTT_QOS_1);
-        g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
-        g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
-
-        g_mqttWasConnected = true;
-        g_mqttConnectionId++;
-        ledSetState(LED_STATUS, LED_STATE_ON);
-
-        // Send public liveness
-        mqttSendAlive((g_mqttConnectionId == 0 ? 0 : 1));
-
-        return true;
-    } else {
-        // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
-        // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
-        ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms", g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL_MS);
-        return false;
-    }
-}
-
-// 0: boot, 1:reco, 2:keepalive
-void mqttSendAlive(int liveType) {
-    char payload[MSG_BUFFER_SIZE];
-    snprintf(payload,
-             MSG_BUFFER_SIZE,
-             "%d %s mac:%s ssid:%s ip:%s recoId:%d",
-             g_deviceIdMe,
-             (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
-             WiFi.macAddress().c_str(),
-             WiFi.SSID().c_str(),
-             WiFi.localIP().toString().c_str(),
-             g_mqttConnectionId);
-    mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload);
-}
-
-
-// Returns true if the publish was accepted by PubSubClient (sent on the wire — no broker ACK at QoS 0 so this is best-effort). Callers that need
-// to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
-// safely ignore it — the next interval will retry.
-bool mqttPushFormattedMessage(const char* topic, const char* payload) {
-    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
-
-    // Publishing. Only QoS 0 is possible at publish time with PubSubClient
-    bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
-    if (ok) {
-        ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
-    } else {
-        // On failure, include state() and the payload size so we can tell apart the four PubSubClient failure modes (see CLAUDE.md / discussions):
-        //   state =  0 (MQTT_CONNECTED)         → write to the socket failed mid-send (TCP buffer full, TLS error, link dropped between connected()
-        //                                          check and write). If size > ~240 bytes, may also be MQTT_MAX_PACKET_SIZE = 256 rejecting it.
-        //   state = -1 (MQTT_DISCONNECTED)      → we called disconnect() ourselves.
-        //   state = -3 (MQTT_CONNECTION_LOST)   → broker / WiFi dropped; connected() detected it on this call.
-        //   state = -4 (MQTT_CONNECTION_TIMEOUT)→ TCP-level timeout. Mostly during a fresh connect, not on publish.
-        ESP_LOGE(TAG_MQTT,
-                 "Publish FAILED for #%u to [%s] state=%d size=%u : [%s]",
-                 g_mqttOutputMsgId,
-                 topic,
-                 g_mqttClient.state(),
-                 (unsigned)strlen(g_mqttOutgoingMsg),
-                 g_mqttOutgoingMsg);
-    }
-
-    g_mqttOutputMsgId++;
-    return ok;
-}
+// MQTT functions (mqttReconnect, mqttSendAlive, mqttPushFormattedMessage) moved to mqtt.ino along with their flag #defines (MQTT_QOS_*,
+// MQTT_MSG_*, MQTT_SESSION_*).
 
 
 // ================================================================================
@@ -1187,161 +1024,8 @@ void hwScrollReset() {
 }
 
 
-// === Status bar (TFA) ===
-// Three indicators on the left, one chip on the right. Filled = ON, outline only = OFF.
-static void drawIndicatorAt(int x, bool filled, uint16_t color) {
-    if (filled) {
-        g_disp->fillCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
-    } else {
-        g_disp->drawCircle(x, ICON_Y_CENTER, ICON_RADIUS, color);
-    }
-}
-
-// CapsLock indicator: glyph 'A' (caps ON) ou 'a' (caps OFF) en blanc, à droite du chip BT. La détection est portée par la variable globale
-// kbIsCapsLockOn, basculée dans decodeHIDReport() à la frappe du KEY_CAPSLOCK ; ce dernier marque g_statusBarDirty pour un rafraîchissement immédiat
-// sans attendre le tick périodique. Police par défaut 5×7 à setTextSize(2) → glyphe 10×14 px, comparable au diamètre des disques voisins. Le cursor
-// est offset de la moitié des dimensions du glyphe pour centrer visuellement sur (cx, ICON_Y_CENTER).
-static void drawCapsAt(int cx, bool capsOn, uint16_t color) {
-    g_disp->setFont(NULL);
-    g_disp->setTextSize(2);
-    g_disp->setTextColor(color);
-    g_disp->setCursor(cx - 5, ICON_Y_CENTER - 7);
-    g_disp->print(capsOn ? 'A' : 'a');
-}
-
-// Person silhouette used for the contact chip on the right of the status bar: small head + rounded shoulders/torso, sized to match visually the
-// radius-6 disc indicators on the left. Plein si filled=true (contact présent), simple contour sinon. Tête = cercle r=3 centré à (cx, 8) ; corps =
-// RoundRect 11×7 démarrant à (cx-5, 12) avec coins r=3 pour évoquer les épaules. Un pixel d'air entre la tête (y=5..11) et le corps (y=12..18) sert
-// de cou et garde la silhouette lisible en mode contour.
-static void drawPersonAt(int cx, bool filled, uint16_t color) {
-    const int headCy = ICON_Y_CENTER - 4;  // 8
-    const int headR  = 3;
-    const int bodyX  = cx - 5;
-    const int bodyY  = ICON_Y_CENTER;  // 12
-    const int bodyW  = 11;
-    const int bodyH  = 7;
-    const int bodyR  = 3;
-
-    if (filled) {
-        g_disp->fillCircle(cx, headCy, headR, color);
-        g_disp->fillRoundRect(bodyX, bodyY, bodyW, bodyH, bodyR, color);
-    } else {
-        g_disp->drawCircle(cx, headCy, headR, color);
-        g_disp->drawRoundRect(bodyX, bodyY, bodyW, bodyH, bodyR, color);
-    }
-}
-
-// Read current connection states and repaint the bar if any of them changed
-// since the last draw (or if forced by g_statusBarDirty). No-op when a
-// fullscreen mode (splash, info) is showing — would otherwise paint icons
-// over their content.
-void redrawStatusBar() {
-    if (!g_inConversationMode) {
-        return;
-    }
-
-    bool bt      = g_kb.isFullyConnected();
-    bool wifi    = (WiFi.status() == WL_CONNECTED);
-    bool mqtt    = g_mqttClient.connected();
-    bool caps    = kbIsCapsLockOn;
-    bool contact = true;  // TODO wire to actual friend-presence tracking
-
-    if (!g_statusBarDirty && bt == g_lastDrawnBt && wifi == g_lastDrawnWifi && mqtt == g_lastDrawnMqtt && caps == g_lastDrawnCaps &&
-        contact == g_lastDrawnContact) {
-        return;
-    }
-
-    if (g_displayType != DisplayType::ST7789) {
-        return;
-    }
-
-    g_disp->fillRect(0, 0, FB_WIDTH, STATUS_BAR_H, ST77XX_BLACK);
-    // Left cluster (network reachability): WiFi puis MQTT côte à côte.
-    drawIndicatorAt(ICON_WIFI_X, wifi, ST77XX_WHITE);
-    drawIndicatorAt(ICON_MQTT_X, mqtt, ST77XX_YELLOW);
-    // Right cluster (keyboard input state): BT puis indicateur CapsLock 'A'/'a', séparés des chips réseau par le spacer de 50 px défini dans ICON_BT_X.
-    drawIndicatorAt(ICON_BT_X, bt, ST77XX_BLUE);
-    drawCapsAt(ICON_CAPS_X, caps, ST77XX_WHITE);
-    // Contact chip: hardcoded ON for now (see TODO above). Silhouette de personnage plutôt qu'un disque pour la distinguer des indicateurs réseau.
-    drawPersonAt(ICON_CONTACT_X, contact, ST77XX_RED);
-    // Separator hairline, one pixel above the bottom of the bar — the very
-    // bottom row stays black to give the icons breathing room.
-    g_disp->drawFastHLine(0, STATUS_BAR_H - 2, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
-
-    g_lastDrawnBt      = bt;
-    g_lastDrawnWifi    = wifi;
-    g_lastDrawnMqtt    = mqtt;
-    g_lastDrawnCaps    = caps;
-    g_lastDrawnContact = contact;
-    g_statusBarDirty   = false;
-}
-
-
-// === Input feedback footer (BFA) ===
-// Shows the current `g_currentMsgFromKeyboard` being typed via the BT keyboard, with the
-// yellow cursor bar tracking g_msgCursorIdx (movable via arrow keys). Repainted
-// on every keystroke (insert / delete / move / send).
-void redrawInputFooter() {
-    if (!g_inConversationMode) {
-        return;
-    }
-    if (g_displayType != DisplayType::ST7789) {
-        return;
-    }
-
-    // Wipe the whole footer strip.
-    g_disp->fillRect(0, FOOTER_Y_FB, FB_WIDTH, FOOTER_H, ST77XX_BLACK);
-
-    // Footer vertical layout (19 px total, rows FOOTER_Y_FB..FOOTER_Y_FB+18):
-    //   +0       : 1 px black aération against the scroll area above
-    //   +1       : white hairline separator (light gray, matches upper bar)
-    //   +2       : 1 px black margin
-    //   +3..+18  : 16 px text zone (size-2 default font) + yellow cursor bar
-    g_disp->drawFastHLine(0, FOOTER_Y_FB + 1, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
-
-    // Typed text, default 5×7 font at size 2 → 12 px per char, fits ~18 chars.
-    // Right-aligned: the rightmost glyph of the viewport is pinned 2 px to the
-    // left of the screen edge, and the text grows leftward as the user types.
-    const int   kCharWidth  = 12;
-    const int   kInsideX    = 6;
-    const int   kRightEdgeX = FB_WIDTH - 8;
-    const int   kTextAreaW  = kRightEdgeX - kInsideX - 2;
-    const int   kMaxChars   = kTextAreaW / kCharWidth;  // 18
-    const char* full        = g_currentMsgFromKeyboard.c_str();
-    const int   len         = (int)g_currentMsgFromKeyboard.length();
-    const int   cur         = (int)g_msgCursorIdx;
-
-    // Viewport [viewStart, viewEnd) — at most kMaxChars chars, always contains
-    // the cursor. Anchored to the message end by default; if the cursor is
-    // further to the right than that window would allow (which only matters
-    // when len <= kMaxChars but cur could equal len), the math degenerates to
-    // showing the whole message.
-    int       viewEnd    = cur;
-    const int defaultEnd = (len > kMaxChars) ? kMaxChars : len;
-    if (viewEnd < defaultEnd) {
-        viewEnd = defaultEnd;
-    }
-    if (viewEnd > len) {
-        viewEnd = len;
-    }
-    const int   viewStart  = (viewEnd > kMaxChars) ? (viewEnd - kMaxChars) : 0;
-    const int   visibleLen = viewEnd - viewStart;
-    const char* shown      = full + viewStart;
-    const int   textStartX = kRightEdgeX - 2 - visibleLen * kCharWidth;
-
-    g_disp->setFont(NULL);
-    g_disp->setTextSize(2);
-    g_disp->setTextColor(ST77XX_WHITE);
-    g_disp->setCursor(textStartX, FOOTER_Y_FB + 3);
-    g_disp->print(shown);
-
-    // Yellow cursor bar, drawn at the insertion-point gap (1 px wide, slightly shorter than the text height so it never visually touches the
-    // white hairline separator just above. When the cursor sits at the end of the visible window it lands in the 2 px right-edge gap; when in
-    // the middle it falls in the inter-character spacing of the previous glyph.
-    const int cursorOffset = cur - viewStart;  // 0..visibleLen
-    const int yellowX      = textStartX + cursorOffset * kCharWidth - 1;
-    g_disp->drawFastVLine(yellowX, FOOTER_Y_FB + 5, 14, ST77XX_YELLOW);
-}
+// Bar drawing (status bar + input footer) + the per-indicator color palette live in bars.ino — see that file for redrawStatusBar(),
+// redrawInputFooter(), drawIndicatorAt/CapsAt/PersonAt, and the ICON_*_COLOR / KB_BAR_*_COLOR / STATUS_BAR_*_COLOR macros.
 
 
 void setupDisplay() {
@@ -2339,31 +2023,7 @@ void loop() {
     delay(5);
 }
 
-void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (unsigned int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
-    message.trim();
-
-    if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
-        int remoteDeviceId = atoi(message.c_str());
-        onReceivedContactOnline(remoteDeviceId, true);
-    } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
-        int remoteDeviceId = atoi(message.c_str());
-        onReceivedContactOnline(remoteDeviceId, false);
-    }
-    // msg/unicast/<me> or msg/broadcast
-    else if (topic[0] == 'm') {
-        ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
-        // Route through the common funnel: wakes the screen, intercepts CMD_*
-        // commands, otherwise renders LEFT.
-        routeMessage(message, MessageSource::REMOTE);
-
-    } else {
-        ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
-    }
-}
+// onMqttIncomingMessage() moved to mqtt.ino.
 
 void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
     if (remoteDeviceId == g_deviceIdMe) {

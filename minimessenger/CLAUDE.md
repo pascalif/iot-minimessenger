@@ -47,9 +47,13 @@ All WiFi-related code lives in **`wifi.ino`** (concatenated with `minimessenger.
 
 All `/cmd` vocabulary lives in **`commands.ino`**: the CMD_*/GROUP_* constants, the top-level dispatcher `processPayloadAsCommand()`, the per-group sub-dispatchers (`processWifiSubcommand`, `processDbgSubcommand`), and the three help printers (`printHelpGlobal`, `printHelpWifi`, `printHelpDbg`). Same split philosophy as `wifi.ino`: the file is concatenated into the same TU as `minimessenger.ino` so it shares `addConversationBlock`, `g_mqttClient`, `dumpChipInfo`, etc. without exports. `routeMessage()` in `minimessenger.ino` is the single funnel that calls `processPayloadAsCommand()`. Two orphan commands (`/help`, `/status`, `/mqtt-drop`, `/bt-clean`) and two groups (`/wifi *`, `/dbg *`); typing the bare group prefix (e.g. just `/wifi`) prints the partial help for that group.
 
+## MQTT plumbing
+
+All MQTT-specific code lives in **`mqtt.ino`** (concatenated with `minimessenger.ino` by the Arduino IDE — same TU): topic strings, runtime globals (`g_mqttClient`, connection / msgId / keepalive counters, outgoing buffers, recipient topic), `mqttReconnect()` / `mqttSendAlive()` / `mqttPushFormattedMessage()` / `onMqttIncomingMessage()`, and the HiveMQ TLS root CA (`g_hiveMQRootCA`). The shared `#define`s (QoS, retained, session flags, `MQTT_KEEPALIVE_INTERVAL_MS`, `MQTT_CONNECT_RETRY_INTERVAL_MS`, `MSG_BUFFER_SIZE`, `MQTT_TOPIC_SIZE`) and `extern` declarations live in **`mqtt.h`**, included by `minimessenger.ino` and `commands.ino` (the latter for `/mqtt-drop` which calls `g_mqttClient.disconnect()`). What stays in `minimessenger.ino`: broker credentials (`mqtt_server` / `mqtt_port` / `mqtt_user` / `mqtt_password` — kept with the rest of the "Secrets"), the loop()-level reconnect gate, the status-bar / info-screen MQTT indicators, `setRecipient()` and `onMQTTReconnected()` (both are display/conversation logic, not MQTT plumbing).
+
 ## MQTT topology
 
-All devices share one HiveMQ Cloud broker (credentials and root CA are hardcoded in the sketch). Topics:
+All devices share one HiveMQ Cloud broker. Topics:
 
 - `msg/broadcast` — subscribed by all devices.
 - `msg/unicast/<deviceId>` — each device subscribes to its own; outgoing messages target one peer via `g_mqttOutoingRecipientTopic`, set by `setRecipient(int)`.
@@ -87,4 +91,4 @@ Custom variadic templates `hlog` / `hlogn` / `log` / `logn` (in the sketch) pref
 
 ## Secrets
 
-WiFi SSID/password are no longer in `minimessenger.ino` — they live in `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`) and/or NVS at runtime. See `docs/howto_wifi.md`. MQTT user/password and the HiveMQ Let's Encrypt root CA are still hardcoded in `minimessenger.ino`; treat the file as sensitive when sharing diffs externally and don't commit alternate credentials without the user's say-so.
+WiFi SSID/password are no longer in `minimessenger.ino` — they live in `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`) and/or NVS at runtime. See `docs/howto_wifi.md`. MQTT user/password are still hardcoded in `minimessenger.ino` (broker URL/port too), and the HiveMQ Let's Encrypt root CA sits in `mqtt.ino` (`g_hiveMQRootCA`); treat both files as sensitive when sharing diffs externally and don't commit alternate credentials without the user's say-so.
