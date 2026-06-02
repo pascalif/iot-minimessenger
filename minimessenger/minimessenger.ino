@@ -1,44 +1,27 @@
 /*
-2025-08
-ESP32 Whatsapp
-avec le freebroker HiveMQ + BT keyboard +
+MiniMessenger avec
+    - microcontroller   : ESP32 (wifi, BT)
+    - périphériques     : Ecran STT7789v. Limitations de ce modèle alixp : pas de pin pour TFT_BL pour dimmer le backlight ; besoin de connecter CS (pas sur GND)
+                          BT keyboard (qwerty)
+    - internet services : MQTT HiveMQ freebroker
 
-Screen layout (portrait, 240×320, see docs/howto_hardware_scrolling.md):
-VSCRDEF = Vertical Scroll Definition =  TFA (Top Fixed Area) + VSA (Vertical Scroll Area) + (BFA Bottom Fixed Area)
+Santé du projet au 2020-06:
+    ArduinoIDE :               2.3.8_Linux_64bit.AppImage
+    Tools > Boards  :          ESP32 >> ESP32 Dev Module,
+                               /dev/ttyUSB0, Baud 115200
+    Tools > Partition Scheme : "Huge APP (3MB No OTA / 1MB SPIFFS)"
+    Tools > Core Debug Level : "Verbose"  (flasher après tout changement - pour les libs systèmes, pas notre code qui a ses propres niveaux)
 
-  +---------------------------------------------+   ← y=0
-  |  ● ● ●                                ●     |   STATUS_BAR (25 px, VSCRDEF TFA)
-  |  WiFi BT MQTT                       Contact |   filled/empty per state
-  |  (wh) (bl) (yel)                    (red)   |
-  |.............................................|   ← y=23 (light gray hairline)
-  |                                             |   ← y=24 (1 px black breathing gap)
-  +---------------------------------------------+   ← y=25
-  |                                             |
-  |                                             |
-  |   Conversation messages — HW scroll up      |   SCROLL_AREA (272 px, VSCRDEF VSA)
-  |   (newest at the bottom, older above)       |   VSCSAD bumped on each new line
-  |                                             |
-  |                                             |
-  |                                             |
-  |                                             |         FOOTER (19 px, VSCRDEF BFA)
-  |                                             |   ← y=301 (1 px black, aerates against scroll area)
-  |---------------------------------------------|   ← y=302 (light gray hairline)
-  |                                             |   ← y=303 (1 px black margin)
-  +                     typed_msg_buffer_here | +   ← y=304..319 (size-2 text = 16 pixels ; yellow cursor bar)
+    COMPILE: OK
+    LINK   : OK
+    UPLOAD : OK
+    RUN    : OK
 
-
-ArduinoIDE :               2.3.8_Linux_64bit.AppImage
-Tools > Boards  :          ESP32 >> ESP32 Dev Module,
-                           /dev/ttyUSB0, Baud 115200
-Tools > Partition Scheme : "Huge APP (3MB No OTA / 1MB SPIFFS)"
-Tools > Core Debug Level : "Verbose"  (flasher après tout changement - pour les libs systèmes, pas notre code qui a ses propres niveaux)
-
-COMPILE: OK
-LINK   : OK
-UPLOAD : OK
-RUN    : OK
-
-Envois et formats des msgs MQTT, cf mqtt.h
+Docs (/docs):
+- layout des écrans : screens.md
+- cablage : wiring.md
+- Envois et formats des msgs MQTT, cf mqtt.h
+- et tous les autres documents de /docs à lire
 */
 
 // ================================================================================
@@ -170,22 +153,18 @@ const char* mqtt_password = "xxxxxxx";                                          
 // Pins configuration
 // ------------------
 
-#define LED_STATUS   32
-#define LED_FRIEND_1 33
-#define LED_FRIEND_2 25
+// Pin assignments use the ESP-IDF `GPIO_NUM_x` enum (from `<soc/gpio_num.h>`, pulled in by `Arduino.h`) rather than raw integers. Two reasons:
+// (1) `GPIO_NUM_5` is unambiguous — no need to wonder whether "5" means GPIO5, header pin 5, or some generic small integer. It also matches the
+// `D5` silkscreen on the HW-394 / DOIT V1 board (Dxx = GPIOxx on this board family — but NOT on D1 mini, where D2 = GPIO4).
+// (2) The sentinel `GPIO_NUM_NC = -1` documents "this pin is intentionally not connected", which is clearer than a bare `-1` literal.
+
+#define LED_STATUS   GPIO_NUM_32
+#define LED_FRIEND_1 GPIO_NUM_33
+#define LED_FRIEND_2 GPIO_NUM_25
 
 
-// OLED configuration
-// ------------------
-// SCL GPIO5
-// SDA GPIO4
-#define OLED_RESET 0  // GPIO0  TODO Correct?
-
-
-// STT7789v pins, vue de dessus
-// GND, VCC, SCL, SDA, RST, DC, CS
-
-
+// Scren configuration
+// -------------------
 // On TFT to D1mini :
 //   CS:  D1Mini pin D2 (GPIO4)
 //   RST: D1Mini pin D3 (GPIO0)
@@ -195,16 +174,25 @@ const char* mqtt_password = "xxxxxxx";                                          
 //     MOSI(DIN) ---> D1Mini pin D7 (GPIO13)
 
 // On ESP32:
-// SCL : D18 GPIO18 "SCK". By default
-// SDA : D23 GPIO23 "MOSI"
-#define TFT_RST -1  // optional, can use RST pin
-#define TFT_DC  2   // GPIO2 : Data/Command select
-#define TFT_CS  5   // GPIO5 : chip select, optionnal, can tie to GND if only one device
+// STT7789v pins, vue de dessus : GND, VCC, SCL, SDA, RST, DC, CS
+// - TFT_SCL : D18 = GPIO18 "SCK" by default
+// - TFT_SDA : D23 = GPIO23 "MOSI" by default
+#define TFT_RST GPIO_NUM_NC   // not wired — the ST7789 has an internal Power-On Reset, see docs/info_tft_rst.md
+#define TFT_DC  GPIO_NUM_2    // Data/Command select
+
+// Chip select — MUST be wired to a real GPIO on this module. Empirically tested: tying the TFT's CS pin to GND on the breadboard side and setting
+// `TFT_CS = GPIO_NUM_NC` (so Adafruit_SPITFT skips every CS digitalWrite via its `if (_cs >= 0)` guard) leaves the panel dark — only the backlight
+// stays lit. The Sitronix datasheet says CS-permanently-low should work in single-device mode, but this particular AliExpress clone of the ST7789
+// controller does not behave that way; it apparently needs the rising edge of CS between commands to reset its parser state. Keep CS on a real
+// GPIO and let Adafruit_SPITFT toggle it per transaction.
+#define TFT_CS  GPIO_NUM_5
 
 // Backlight pin for PWM dimming. Set to a GPIO if the BL/LED pin of the panel
 // is wired to one (then dim = 50% PWM, off = 0% PWM). Set to -1 if the BL pin
 // is tied straight to 3.3 V — the dim phase becomes invisible but the OFF
 // state still works because it uses Adafruit_ST7789::enableDisplay(false).
+//
+// /!\ My STT7789v (Alixp) does NOT have this pin. Feature not possible here.
 #define TFT_BL -1
 
 
@@ -212,10 +200,6 @@ const char* mqtt_password = "xxxxxxx";                                          
 // ================================================================================
 // Global variables
 // ================================================================================
-
-
-// HiveMQ Cloud TLS root CA moved to mqtt.ino (g_hiveMQRootCA). Wired into g_wifiClient.setCACert() in setup().
-
 
 // === Hardware scroll state (ST7789, portrait, partitioned framebuffer) ===
 // FB_HEIGHT is the ST7789 framebuffer height in its NATIVE portrait
@@ -276,11 +260,13 @@ bool          g_statusBarDirty      = true;
 unsigned long g_lastStatusBarPollMs = 0;
 #define STATUS_BAR_POLL_INTERVAL_MS 500
 
-// Boot phase = before the very first successful MQTT connect. We sit on the info screen and repaint it periodically so BTKB / WiFi / MQTT state
-// transitions are visible while the user waits. Once MQTT comes up for the first time, onMQTTReconnected() flips into conversation mode and this
-// refresh stops (the status bar takes over the live status display from then on, see redrawStatusBar). Subsequent MQTT drops do NOT come back here.
-unsigned long g_lastInfoScreenRefreshMs = 0;
-#define INFO_SCREEN_REFRESH_INTERVAL_MS 2'000
+// Info-screen refreshes are event-driven (no periodic polling). Each state change that can affect what the info screen displays — WiFi state
+// transition, MQTT connect, BLE keyboard connect/disconnect, NTP sync — calls refreshInfoScreenIfShown(), which forwards to showUpdatedInfoScreen
+// only when the info screen is currently visible (i.e. !g_inConversationMode). Two consequences:
+//   - During boot phase, the info screen is shown and each subsystem coming online pushes a refresh — same effect as the old 2s timer, but
+//     reactive rather than polled, and no risk of a double-render race with /status (which used to fire its own showUpdatedInfoScreen and then
+//     the timer would re-fire 5-100 ms later because the timer's last-refresh timestamp wasn't updated).
+//   - During conversation mode, refreshInfoScreenIfShown is a no-op; only the status bar polls.
 
 // Non-zero value = the info screen is currently shown as a temporary overlay (triggered by "/status") and we should auto-revert to nominal once
 // millis() crosses it. Zero = not in the status-overlay state. The revert path is in loop() near the status bar polling block.
@@ -292,7 +278,7 @@ unsigned long g_statusScreenEndMs = 0;
 // status bar repaint that would otherwise draw indicators over their content.
 bool g_inConversationMode = false;
 
-// Objet représentant une ligne
+// Pour le calcul des bounds d'un texte construit avec une font donnée
 #define BOX_X 0
 #define BOX_Y 1
 #define BOX_W 2
@@ -341,9 +327,6 @@ WiFiClientSecure g_wifiClient;
 
 // WiFi reconnection state moved to wifi.ino along with the rest of the WiFi machinery. The state machine there drives banners on rising / falling
 // edges; this .ino just exposes UI surfaces.
-
-// MQTT runtime globals (g_mqttClient, g_mqttConnectionId, g_mqttOutputMsgId, g_mqttWasConnected, reconnect/keepalive timestamps, the outgoing-message
-// scratch buffer and the unicast recipient topic) moved to mqtt.ino — declared in mqtt.h.
 
 
 // OLED Display
@@ -411,6 +394,7 @@ size_t g_msgCursorIdx = 0;
 
 void setRecipient(int recipientDeviceId);
 void showUpdatedInfoScreen();
+void refreshInfoScreenIfShown();
 void redrawStatusBar();
 void redrawInputFooter();
 bool noteUserActivity();
@@ -504,6 +488,9 @@ void setupNTP() {
         delay(500);
     }
     ESP_LOGI(TAG_MM, "NTP synced after %d tries, epoch=%ld", tries, (long)now);
+
+    // Push a refresh to the info screen if it's shown — the TIME row label is computed from the local TZ which is only valid post-NTP.
+    refreshInfoScreenIfShown();
 }
 
 char* getCurrentDateTime() {
@@ -772,6 +759,8 @@ void onBluetoothKeyboardConnectionCallback(bool isFullyConnected) {
     // Repaint the input footer so the "<no keyboard>" placeholder appears/disappears immediately on (dis)connect, without waiting for the next
     // keystroke or screen-state event. Safe at boot: redrawInputFooter() early-returns if g_inConversationMode is false.
     redrawInputFooter();
+    // And push a refresh to the info screen if it's shown — the BTKB row flips between "Not found" and "Connected".
+    refreshInfoScreenIfShown();
 }
 
 static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
@@ -784,17 +773,20 @@ static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
 // Connectivity
 // ================================================================================
 
-void identifyDevice() {
-    // Read the MAC with a 3-strategy waterfall. Background: the obvious-looking esp_efuse_mac_get_default() turned out to be a TRAP — on
-    // arduino-esp32 3.3.8 (IDF 5.x) it is now a wrapper that internally calls esp_read_mac(mac, ESP_MAC_BASE). ESP_MAC_BASE does NOT read the
-    // silicon eFuse; it returns a static cached value populated by esp_base_mac_addr_set() during the IDF startup sequence. If we call before
-    // that startup hook has run, the function returns ESP_OK with all zeros (silently, no error). That's why every previous attempt to "just
-    // read the eFuse" failed: we were actually reading an empty RAM cache.
-    //
-    // The fix is to use ESP_MAC_EFUSE_FACTORY, which is documented to read DIRECTLY from the silicon eFuse with no cache layer. If for any
-    // reason that fails too (e.g. on a non-ESP32 variant where the field is differently mapped), fall back to esp_efuse_read_field_blob() which
-    // is the lowest-level eFuse access we have. Last-resort fallback: bring WiFi up and read WiFi.macAddress() — slow (~100 ms) but rock solid
-    // because the WiFi driver itself queries the eFuse during init.
+// Read the real factory MAC from silicon eFuse with a 3-strategy waterfall. Background: the obvious-looking esp_efuse_mac_get_default() turned
+// out to be a TRAP — on arduino-esp32 3.3.8 (IDF 5.x) it is now a wrapper that internally calls esp_read_mac(mac, ESP_MAC_BASE). ESP_MAC_BASE
+// does NOT read the silicon eFuse; it returns a static cached value populated by esp_base_mac_addr_set() during the IDF startup sequence. If
+// we call before that startup hook has run, the function returns ESP_OK with all zeros (silently, no error). That's why every previous attempt
+// to "just read the eFuse" failed: we were actually reading an empty RAM cache.
+//
+// The fix is to use ESP_MAC_EFUSE_FACTORY, which is documented to read DIRECTLY from the silicon eFuse with no cache layer. If for any reason
+// that fails too (e.g. on a non-ESP32 variant where the field is differently mapped), fall back to esp_efuse_read_field_blob() which is the
+// lowest-level eFuse access we have. Last-resort fallback: bring WiFi up and read WiFi.macAddress() — slow (~100 ms) but rock solid because the
+// WiFi driver itself queries the eFuse during init.
+//
+// Returns the canonical "XX:XX:XX:XX:XX:XX" string. Returns "00:00:00:00:00:00" if every strategy failed (extremely unusual — would mean the
+// eFuse is unreadable AND WiFi refuses to come up). Callers can detect this via direct comparison with that literal.
+String getRealHardwareMAC() {
     uint8_t macBytes[6] = { 0 };
     auto    isAllZero   = [](const uint8_t* m) { return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) == 0; };
 
@@ -819,8 +811,17 @@ void identifyDevice() {
     if (isAllZero(macBytes)) {
         ESP_LOGE(TAG_MM, "All MAC read strategies failed — falling through with %s (last attempted: %s)", macStr, strategy);
     } else {
-        ESP_LOGI(TAG_MM, "MAC Address: %s (read via %s)", macStr, strategy);
+        ESP_LOGD(TAG_MM, "MAC Address: %s (read via %s)", macStr, strategy);
     }
+
+    return String(macStr);
+}
+
+
+void identifyDevice() {
+    String      mac      = getRealHardwareMAC();
+    const char* macCstr  = mac.c_str();
+    bool        macIsAllZero = (mac == "00:00:00:00:00:00");
 
     // ---------------------
     // Default unicast recipient when the matching COMPILED_DEVICE_DATA_ENTRIES row has defaultRecipientId == 0 (i.e. no per-device override). Historical
@@ -829,7 +830,7 @@ void identifyDevice() {
 
     int recipientId = DEFAULT_RECIPIENT_ID;
 
-    const CompiledDeviceDataEntry* entry = isAllZero(macBytes) ? nullptr : findCompiledDeviceByMac(macStr);
+    const CompiledDeviceDataEntry* entry = macIsAllZero ? nullptr : findCompiledDeviceByMac(macCstr);
     if (entry != nullptr) {
         g_deviceIdMe = entry->deviceId;
         strcpy(g_userPseudo, entry->pseudo);
@@ -838,7 +839,7 @@ void identifyDevice() {
         if (entry->defaultRecipientId != 0) {
             recipientId = entry->defaultRecipientId;
         }
-    } else if (isAllZero(macBytes)) {
+    } else if (macIsAllZero) {
         ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
     } else {
         // Unknown MAC: prototype / new device not yet listed in personal-data.h. Random ID in [100..999] avoids colliding with the small declared IDs.
@@ -1679,7 +1680,19 @@ void showUpdatedInfoScreen() {
     return;
         }
 
-            String mac = WiFi.macAddress();
+            String mac = getRealHardwareMAC();
+
+    // Diagnostic: trace every entry to this function with the exact state we're about to draw. Lets us tell apart 3 scenarios when the screen
+    // shows scrambled data after /status: (1) called multiple times in rapid succession (double-render race), (2) called once with wrong data
+    // (state-read bug), (3) called once with correct data (purely a rendering / VRAM-residue issue on the ST7789 side).
+    ESP_LOGI(TAG_MM,
+             "showUpdatedInfoScreen(): mac=%s ssid=%s ip=%s mqtt=%d ble=%d wifiState=%d",
+             mac.c_str(),
+             WiFi.SSID().c_str(),
+             WiFi.localIP().toString().c_str(),
+             (int)g_mqttClient.connected(),
+             (int)g_kb.isFullyConnected(),
+             (int)wifiGetState());
 
 
         Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
@@ -1735,8 +1748,17 @@ void showUpdatedInfoScreen() {
 
 }
 
+// Single funnel for all event-driven info-screen refreshes. Callers (wifiTransitionTo, mqttReconnect, BLE connect callback, setupNTP, …) call
+// this without checking whether the info screen is currently visible — the gate is here, so we never repaint when the user is in conversation
+// mode (would clobber the chat). Safe to call from any hook on any state transition; no-op when the screen isn't ours.
+void refreshInfoScreenIfShown() {
+    if (!g_inConversationMode) {
+        showUpdatedInfoScreen();
+    }
+}
 
-void setupTests() {
+
+void setupFontTests() {
     // ==== Font default
     // lineAdvance : 8
     // Bounds for text [jjjjj]: x1=0, y1=0, w=30, h=8
@@ -1781,15 +1803,6 @@ void setupTests() {
             ESP_LOGD(TAG_MM, "Bounds for [%s]: x1=%d y1=%d w=%u h=%u", text.c_str(), x1, y1, w, h);
         }
     }
-
-    //     g_disp->fillScreen(ST77XX_BLACK);
-    //     g_disp->setFont(&CONVO_MSG_FONT);
-    //         g_disp->setTextColor(ST77XX_YELLOW);
-    //             g_disp->setTextSize(2);
-    //       g_disp->setCursor(0,0);  // "- bound.y" = decale vers le bas qd .y est négatif (sinon=0)
-    //       g_disp->print("Abbppgg");
-    //g_disp->display();
-    // delay(10000);
 }
 
 void setup() {
@@ -1816,7 +1829,7 @@ void setup() {
     setupLeds();
     contactsSetup();
 
-    //setupTests();
+    //setupFontTests();
 
     showSplashScreen();
     showUpdatedInfoScreen();
@@ -1961,20 +1974,13 @@ void loop() {
         }
     }
 
-    // Two mutually-exclusive periodic UI refreshes:
-    //   - in conversation mode  →  status bar (BT/WiFi/MQTT/contact icons) every ~500 ms.
-    //                              redrawStatusBar short-circuits internally if nothing changed since the last paint, so this is cheap on average.
-    //   - in boot phase         →  full info screen repaint every ~2 s so that BTKB / WiFi / MQTT state transitions show up while the user waits
-    //                              for everything to come online. Stops the moment onMQTTReconnected() flips into conversation mode.
+    // Periodic status bar polling (only in conversation mode). Cheap: redrawStatusBar short-circuits if nothing changed since the last paint.
+    // The info screen is NOT polled — it's refreshed via refreshInfoScreenIfShown() called from the state-change hooks (wifiTransitionTo,
+    // mqttReconnect, BLE connect callback, setupNTP). Avoids the double-render race that the old 2 s timer caused after /status.
     if (g_inConversationMode) {
         if (currentMillis - g_lastStatusBarPollMs >= STATUS_BAR_POLL_INTERVAL_MS) {
             g_lastStatusBarPollMs = currentMillis;
             redrawStatusBar();
-        }
-    } else {
-        if (currentMillis - g_lastInfoScreenRefreshMs >= INFO_SCREEN_REFRESH_INTERVAL_MS) {
-            g_lastInfoScreenRefreshMs = currentMillis;
-            showUpdatedInfoScreen();
         }
     }
 

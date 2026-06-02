@@ -103,6 +103,9 @@ bool mqttReconnect() {
         // Send public liveness
         mqttSendAlive((g_mqttConnectionId == 0 ? 0 : 1));
 
+        // Push a refresh to the info screen if it's currently shown — the MQTT row flips from "NOT OK" to "OK" on this connect.
+        refreshInfoScreenIfShown();
+
         return true;
     } else {
         // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)

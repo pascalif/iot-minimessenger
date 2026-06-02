@@ -273,6 +273,10 @@ static void wifiTransitionTo(WifiState newState) {
         // We never transition back to BOOTING; this branch is just for completeness.
         break;
     }
+
+    // Push a refresh to the info screen if it's currently shown. Covers EVERY transition (TRYING_KNOWN → CONNECTED gets SSID/IP populated,
+    // ANY → PORTAL switches to drawPortalInstructions, etc.) without needing per-case calls. No-op when in conversation mode.
+    refreshInfoScreenIfShown();
 }
 
 static void wifiStartPortal() {

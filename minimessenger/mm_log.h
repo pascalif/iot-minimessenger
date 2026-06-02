@@ -38,7 +38,7 @@
 #include <string.h>
 #include <time.h>
 
-#define TAG_MM   "_MM_"
+#define TAG_MM   "MM__"
 #define TAG_WIFI "WIFI"
 #define TAG_MQTT "MQTT"
 #define TAG_BTKB "BTKB"

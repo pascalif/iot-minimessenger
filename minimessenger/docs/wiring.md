@@ -8,36 +8,40 @@ The view is from above, USB connector at the bottom — the way the board normal
 
 ## 1. The complete wiring
 
-```
-                          ┌─────────────────────────┐                                        ┌──────────────────────────────────────────────────────────┐
-                    EN ──►│ 1                    30 ├── GPIO23 ────────────────────── SDA ──►│                                                          │
-                  GPIO36 ─┤ 2 (input only)       29 │     GPIO22 (free)                      │                                                          │
-                  GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser              │                                                          │
-                  GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser              │                                                          │
-                  GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                      │                                                          │
-  GND ─[220Ω]─|◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                      │                 ST7789 panel — 320 × 240                 │
-  GND ─[220Ω]─|◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ────────────────────── SCL ──►│                                                          │
-  GND ─[220Ω]─|◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ────────────────────── CS  ──►│                                                          │
-                  GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                      │                                                          │
-                  GPIO27 ─┤ 10                   21 │     GPIO16 (free)                      │                                                          │
-                  GPIO14 ─┤ 11                   20 ├── GPIO4  ────────────────────── BL  ──►│                                                          │
-                  GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ────────────────────── DC  ──►│                                                          │
-                  GPIO13 ─┤ 13                   18 │     GPIO15 *strap                      │                                                          │
-                     GND ─┤ 14                   17 │     GND ─────────┐                     │                                                          │
-                  5V/VIN ─┤ 15                   16 │     3V3          │                     │                                                          │
-                          └─────────┬─────────────┘                    │                     └────────────────────────────────┬─────────────────────────┘
-                                 ┌──┴┐                                 │                                                       │
-                                 │USB│                                 │                                                       │  (TFT GND)
-                                 └───┘                                 │                                                       │
-                                                                       │                                                       │
-══════════════════════════════════════════════════════════════════════╧═══════════════════════════════════════════════════════╧══════════════════════════════ GND rail
-                                                                                            (common ground — tied to ESP32 GND pin 17 (right header),
-                                                                                             the three LED cathodes via 220 Ω each, and the TFT GND pin.
-                                                                                             Pin 14 (left header) is internally bonded to pin 17 on the
-                                                                                             ESP32 module, so a single wire suffices.)
+Sur la nomenclature Dxx : sur ton board ESP32 (HW-394 / DOIT V1), les silkscreens D2, D5, D23, etc. correspondent 1:1 aux GPIO2, GPIO5, GPIO23.
+C'est la convention standard sur les boards ESP32 de cette famille.
 
-                                                                                             pin header on this short (240-px) left edge ▲
-                                                                                             the 320-px long edge extends to the right
+Attention : sur le D1 mini (ESP8266), cette correspondance est fausse — D2 = GPIO4, D4 = GPIO2, etc. Les #define D2 2 que je viens
+d'ajouter sont donc valides uniquement pour le chemin ESP32. Si tu compiles un jour pour D1 mini (via PAC_ON_D1MINI), il faudra
+wrapper ces defines dans #ifdef PAC_ON_ESP32 ou utiliser des valeurs différentes.
+
+
+```
+                          ┌─────────────────────────┐                                                  ┌──────┬──────────────────────────────────────────────────┐
+                    EN ──►│ 1                    30 ├── GPIO23 ──────────────────────────────────────┐ │      │                                                  │
+                  GPIO36 ─┤ 2 (input only)       29 │     GPIO22 (free)                              │ │      │                                                  │
+                  GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser                      │ │      │                                                  │
+                  GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser                 ┌────┼►│ST(CS)│                                                  │
+                  GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                       │┌───┼►│  DC  │                                                  │
+  GND ─[220Ω]─|◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                       ││   │ │ RST  │                                                  │
+  GND ─[220Ω]─|◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ─────────────────────────────────────┼┼──┐└►│ SDA  │                                                  │
+  GND ─[220Ω]─|◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ─────────────────────────────────────┘│  └─►│ SCL  │             ST7789 panel — 320 × 240             │
+                  GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                        │┌───►│ VCC  │                                                  │
+                  GPIO27 ─┤ 10                   21 │     GPIO16 (free)                        ││    │ GND  │                                                  │
+                  GPIO14 ─┤ 11                   20 │     GPIO4  (free)                        ││    │      │                                                  │
+                  GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ──────────────────────────────────┘│    │      │                                                  │
+                  GPIO13 ─┤ 13                   18 │     GPIO15 *strap                           │    │      │                                                  │
+                     GND ─┤ 14                   17 │     GND ─────────┐                          │    │      │                                                  │
+                  5V/VIN ─┤ 15                   16 ├── 3V3    ────────┼──────────────────────────┘    │      │                                                  │
+                          └────────────┬────────────┘                  │                               └──────┴─────────────────────┬────────────────────────────┘
+                                    ┌──┴──┐                            │                                                            │
+                                    │ USB │                            │                                                            │  (TFT GND)
+                                    └─────┘                            │                                                            │
+                                                                       │                                                            │
+══════════════════════════════════════════════════════════════════════╧════════════════════════════════════════════════════════════╧═════════════ GND rail
+                                                                       (common ground — tied to ESP32 GND pin 17, the three LED cathodes
+                                                                        via 220 Ω each, and the TFT GND pin. Pin 14 (left header) is
+                                                                        internally bonded to pin 17 on the ESP32 module, so one wire suffices.)
 ```
 
 **Legend**
@@ -48,7 +52,9 @@ The view is from above, USB connector at the bottom — the way the board normal
 - `*strap` strapping pin — the bootloader samples it at reset. Don't drive it unconditionally LOW/HIGH at startup; reusing these for outputs requires extra care (pull-ups, late init).
 - `(input only)` GPIO34–39 cannot be driven, only read (no PWM, no `digitalWrite`).
 - `DAC1`, `DAC2` only on these two GPIOs (25, 26).
-- The TFT is drawn as a **landscape rectangle**: the pin header (the short 240-px edge) is on the left, facing the ESP32; the active area extends 320 px to the right. The physical module is portrait (pins on a short edge); rotate it 90° clockwise on the bench and the orientation matches the diagram. Only the wires entering the rectangle on its left edge are connected — everything inside is just empty panel area.
+- The TFT is drawn as a **landscape rectangle** with a 7-row pin column on its left short edge (the 240-px edge), in the **physical order printed on this 7-pin module** (top to bottom: ST(CS), DC, RST, SDA, SCL, VCC, GND). Each of the **5 signal wires** from the ESP32 (SDA, SCL, ST(CS), DC, and VCC←3V3) is actually drawn end-to-end: it leaves the ESP32 horizontally at its source GPIO row, bends vertically (`┐` / `┘` / `┌` / `└` corners), and re-enters horizontally at the destination pin row inside the screen — terminated with a `►` just before the screen edge. Where two wires cross at a single character cell, a `┼` glyph is used to mean **two independent wires passing through, not electrically connected** (no junction). The active area extends to the right of the pin column. The physical module is portrait (pins on a short edge); rotate it 90° clockwise on the bench and the orientation matches the diagram.
+- This module has **no separate BL pin** — the backlight is wired internally to VCC and is therefore permanently on. `TFT_BL = -1` in the code, and `GPIO4` stays free on the ESP32. The 8-pin module variant (with a BL pin) is not what this build uses.
+- The `ST(CS)` label on the module connector is what the silkscreen prints (`ST`); in firmware terms it is the standard ST7789 **CS (chip select)** signal, wired to `GPIO5` (`TFT_CS = GPIO_NUM_5`). **Empirically required on this module** — see "CS-to-GND test" callout below. Not to be confused with `RST` — RST is the panel reset signal (active-low), and BL would be the backlight enable (not present on this module).
 - The bottom `══════` line is the **GND rail** — a single equipotential bus that ties together every ground in the system: both ESP32 GND pins (pin 14 on the left header, pin 17 on the right header — note this is the order on the user's HW-394 / DOIT V1 variant, see §5), the three LED cathodes via their 220 Ω resistors, and the TFT module's GND pin. In practice this is just the breadboard's blue rail; on a custom PCB it would be the ground plane.
 - TFT VCC ties to the **3V3 pin on the right header (pin 16, bottom-rightmost on this board)** — not drawn on the wire bus to keep the diagram clean. See §2 for the full pin mapping.
 
@@ -56,18 +62,24 @@ The view is from above, USB connector at the bottom — the way the board normal
 
 ## 2. ST7789 TFT — pin mapping
 
-| TFT pin | Function | Wired to ESP32 | Code constant |
-|---|---|---|---|
-| GND | Ground | `GND` | — |
-| VCC | Logic + LDO supply (3.3 V on most boards; some accept 5 V) | `3V3` | — |
-| SCL | SPI clock | `GPIO18` (VSPI default SCK) | implicit — `SPI` lib default |
-| SDA | SPI MOSI | `GPIO23` (VSPI default MOSI) | implicit — `SPI` lib default |
-| RES | Hardware reset | **not connected** | `#define TFT_RST -1` |
-| DC  | Data/Command select | `GPIO2`  | `#define TFT_DC  2` |
-| CS  | Chip select | `GPIO5`  | `#define TFT_CS  5` |
-| BL  | Backlight enable / PWM | **tied to 3.3 V** today | `#define TFT_BL -1` (see §4) |
+Listed in the **physical order printed on the module connector** (this is a 7-pin module — there is no separate BL pin; backlight is internally tied to VCC and is always on).
 
-Reset note — most ST7789 panels recover correctly without a dedicated reset line because they integrate a power-on reset circuit. If garbage appears on the first frame after a brown-out, wire `RES` to `EN` (or a free GPIO) and update `TFT_RST` accordingly.
+| Order on connector (top → bottom on the 240-px short edge) | Silkscreen label | Function | Wired to ESP32 | Code constant |
+|---|---|---|---|---|
+| 1 (top)    | **ST(CS)** | Chip select (standard ST7789 "CS") | `GPIO5` (MUST be a real GPIO, not tied to GND — see "CS-to-GND test" below) | `#define TFT_CS  GPIO_NUM_5` |
+| 2          | **DC**  | Data/Command select | `GPIO2` | `#define TFT_DC  GPIO_NUM_2` |
+| 3          | **RST** | Hardware reset (active low) | **not connected** | `#define TFT_RST GPIO_NUM_NC` |
+| 4          | **SDA** | SPI MOSI (data in) | `GPIO23` (VSPI default MOSI) | implicit — `SPI` lib default |
+| 5          | **SCL** | SPI clock | `GPIO18` (VSPI default SCK) | implicit — `SPI` lib default |
+| 6          | **VCC** | Logic + LDO supply (3.3 V on most boards; some accept 5 V) | `3V3` (right header pin 16) | — |
+| 7 (bottom) | **GND** | Ground | GND rail | — |
+
+Notes —
+
+- The `ST(CS)` silkscreen marking (just `ST` on the actual board) is the standard ST7789 **chip-select** signal (most other modules print it as `CS`). Treat them as synonymous in the firmware.
+- **CS-to-GND test (don't do it on this module).** The Sitronix ST7789 spec says the controller works in single-device mode with CS permanently low, so in theory one could remove the D5↔CS wire, tie CS to GND on the breadboard, and set `TFT_CS = GPIO_NUM_NC` to free GPIO5. **This was tried on the actual hardware and failed**: the backlight stays lit but the panel never displays anything. Likely cause — this AliExpress clone of the ST7789 controller uses the rising edge of CS to reset its internal parser between commands; without that edge the SPI byte stream is mis-interpreted from the first command onwards and no valid frame ever lands on the panel. **Keep CS wired to GPIO5** and let Adafruit_SPITFT toggle it per transaction. If you ever want to free GPIO5 anyway, the workaround is to keep CS on GPIO5 (the wire stays) but drive it LOW in software via a free GPIO — but that's more complexity for the same end result and isn't worth it.
+- Backlight is **not exposed** on this 7-pin variant: the panel's BL pin is bonded to VCC inside the module, so the display is always lit. `TFT_BL = -1` and there is no software dim/off control. To get backlight power control, you would need an 8-pin module (with a separate BL pin) wired to a free PWM-capable GPIO.
+- Most ST7789 panels recover correctly without a dedicated reset line because they integrate a power-on reset circuit — that's why `RST` is left floating here. If garbage appears on the first frame after a brown-out, wire `RST` to `EN` (or a free GPIO) and update `TFT_RST` accordingly.
 
 ---
 
@@ -120,7 +132,7 @@ Note on this board (HW-394 / DOIT-V1 variant — see photo): unlike the canonica
 | 2     | TFT       | `TFT_DC` |
 | 3     | UART      | USB-Serial RX (console) |
 | 4     | **free**  | candidate for `TFT_BL` |
-| 5     | TFT       | `TFT_CS` (VSPI default CS) |
+| 5     | TFT       | `TFT_CS` (VSPI default CS) — MUST stay on a real GPIO on this clone module (CS-to-GND was tested and broken, see §2 notes) |
 | 12    | strapping | boot voltage select — keep unused |
 | 13    | free      | (HSPI MOSI, unused since we use VSPI) |
 | 14    | free      | (HSPI CLK, unused) |
@@ -169,7 +181,7 @@ The AMS1117-3.3 is rated for ~1 A but is thermally limited; expect ~600 mA usabl
 
 ## 7. Quick checklist when wiring a fresh board
 
-1. **TFT first** — GND, VCC, SDA→G23, SCL→G18, DC→G2, CS→G5, BL→3V3, RES floating.
+1. **TFT first** — GND, VCC, SDA→G23, SCL→G18, DC→G2, **CS→G5** (must be a real GPIO on this clone module — CS-to-GND was tested and the panel stays dark, see §2 notes), BL→3V3, RES floating.
 2. **Power up and flash** — the splash screen should appear; if not, check SCL/SDA aren't swapped.
 3. **LEDs next** — 220 Ω series resistor, anode to GPIO, cathode to GND. Watch the polarity.
 4. **Smoke test** — boot, watch the status LED blink during WiFi/MQTT handshake.

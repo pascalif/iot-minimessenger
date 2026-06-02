@@ -15,6 +15,12 @@ Extraire fichiers de constantes
 
 
 
+=====
+
+Refait un audit complet du projet.
+
+- logo16_glcd_bmp
+-
 ================
 
 ❯ a quoi sert dans loop() le timer pour faire un redrawStatusBar ?  N'est ce pas dessiné à la demande qd un toggle change ou qu'on revient sur l'écran de conversations?
@@ -41,13 +47,5 @@ Tant que ces trois branchements n'existent pas, le polling 500 ms est le seul m�
 immédiatement quand rien n'a changé, le coût est négligeable (4 lectures de bool + comparaisons toutes les 500 ms).
 
 Tu veux qu'on bascule en full event-driven en branchant les 3 endroits ci-dessus, ou on laisse le polling tel quel pour la robustesse ?
-
-
-
-================
-
-
-
-
 
 =================

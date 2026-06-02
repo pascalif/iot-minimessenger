@@ -3,14 +3,20 @@
 /*
 https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-client
 
-Se montrer LIVE:
+Notifier qu'un device est LIVE:
 admin/live
 1 keep
 
+Notifier qu'un device n'est plus connecté au broker MQTT:
 admin/dead
 1
 
+Envoyer un message à tous (pas d'identification possible de l'émetteur avec cette version)
+msg/broadcast
+hello
 */
+
+
 // MQTT layer — constants and prototypes shared between mqtt.ino (definitions, MQTT functions, broker plumbing) and minimessenger.ino (which still
 // drives the reconnect loop, status bar, info screen and setRecipient/setCallback wiring). The IDE concatenates the .ino files alphabetically after
 // the main sketch, so mqtt.ino's definitions land AFTER minimessenger.ino in the single translation unit — this header is what lets minimessenger.ino
