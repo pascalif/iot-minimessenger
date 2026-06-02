@@ -168,6 +168,8 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     }
     message.trim();
 
+    ESP_LOGD(TAG_MQTT, "Incoming message [%s] -> [%s]", topic, message.c_str());
+
     if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
         int remoteDeviceId = atoi(message.c_str());
         onReceivedContactOnline(remoteDeviceId, true);
@@ -177,7 +179,6 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     }
     // msg/unicast/<me> or msg/broadcast
     else if (topic[0] == 'm') {
-        ESP_LOGI(TAG_MQTT, "Incoming message [%s]", message.c_str());
         // Route through the common funnel: wakes the screen, intercepts CMD_*
         // commands, otherwise renders LEFT.
         routeMessage(message, MessageSource::REMOTE);

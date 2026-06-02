@@ -154,7 +154,7 @@ bool processWifiSubcommand(const String& message) {
         return true;
     }
     if (message == CMD_WIFI_CLEAN) {
-        // Wipes the entire NVS WiFi namespace. Compile-time defaults in compiled_wifi.h still re-feed WiFiMulti at the next boot, so the device can
+        // Wipes the entire NVS WiFi namespace. Compile-time defaults in personal-data.h still re-feed WiFiMulti at the next boot, so the device can
         // come up on a known network without reflashing. The current STA connection survives this call — only future boots are affected.
         ESP_LOGI(TAG_MM, "Command [%s] — clearing NVS WiFi list", CMD_WIFI_CLEAN);
         wifiClearNvs();

@@ -70,7 +70,7 @@ Upside: never bricked. The phone path stays as a safety net.
 
 ### Mitigation B — Compile-time creds as safety net
 
-Lean on `compiled_wifi.h` more aggressively. If NVS empty AND keyboard
+Lean on `personal-data.h` more aggressively. If NVS empty AND keyboard
 absent AND no other path → fall back to the compiled defaults. Implies a
 "factory" Wi-Fi network always available somewhere (e.g. home / office
 LAN).

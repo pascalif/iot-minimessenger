@@ -12,13 +12,16 @@
 // rename / retune palette entries with a single grep here. Same pattern as commands.ino (CMD_* constants + dispatcher together).
 
 
+#define RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
+
+
 // === Color palette ==============================================================
 
 // Light-gray hairline drawn on the bottom row of the status bar to visually separate it from the scroll area. RGB565 of #DDDDDD = 0xDEFB.
 #define STATUS_BAR_SEPARATOR_COLOR 0xDEFB
 
 // Background of the whole status-bar strip — also used as the wipe color before each repaint.
-#define STATUS_BAR_BG_COLOR ST77XX_ORANGE //ST77XX_BLACK
+#define STATUS_BAR_BG_COLOR RGB565(0x30, 0x15, 0x10) //ST77XX_BLACK
 
 // Per-indicator colors on the top status bar. ICON_BT_COLOR is reused by the footer's "<no keyboard>" placeholder so the BT state stays
 // visually coherent across both bars (same hue when the keyboard is absent, regardless of which bar is showing it).
@@ -29,7 +32,7 @@
 #define ICON_CONTACT_COLOR ST77XX_RED
 
 // Background of the whole keyboard bar (input footer) strip — wipe color before each repaint.
-#define KB_BAR_BG_COLOR ST77XX_BLACK
+#define KB_BAR_BG_COLOR  ST77XX_BLACK
 
 // Hairline separator on the top row of the footer. Mirrors STATUS_BAR_SEPARATOR_COLOR — kept as a separate macro so the two bars can drift
 // apart later (e.g. different shade on the footer) without a cascading rename.
@@ -46,11 +49,12 @@
 // Used by redrawStatusBar() to skip a repaint when no indicator's state changed. Lives here because nothing outside redrawStatusBar reads or
 // writes these — they are entirely internal to the bar's repaint debounce. g_statusBarDirty (defined in minimessenger.ino) is the external
 // override flag that callers use to FORCE a repaint regardless of cache.
-static bool g_lastDrawnBt      = false;
-static bool g_lastDrawnWifi    = false;
-static bool g_lastDrawnMqtt    = false;
-static bool g_lastDrawnCaps    = false;
-static bool g_lastDrawnContact = true;  // placeholder until contact tracking exists
+static bool g_lastDrawnBt           = false;
+static bool g_lastDrawnWifi         = false;
+static bool g_lastDrawnMqtt         = false;
+static bool g_lastDrawnCaps         = false;
+// Sentinel -1 forces a paint on the very first redraw — any real count from contactGetActiveCount() (0..MAX_CONTACTS) breaks the cache match.
+static int  g_lastDrawnContactCount = -1;
 
 
 // === Status bar (TFA) ===========================================================
@@ -108,14 +112,14 @@ void redrawStatusBar() {
         return;
     }
 
-    bool bt      = g_kb.isFullyConnected();
-    bool wifi    = (WiFi.status() == WL_CONNECTED);
-    bool mqtt    = g_mqttClient.connected();
-    bool caps    = kbIsCapsLockOn;
-    bool contact = true;  // TODO wire to actual friend-presence tracking
+    bool bt           = g_kb.isFullyConnected();
+    bool wifi         = (WiFi.status() == WL_CONNECTED);
+    bool mqtt         = g_mqttClient.connected();
+    bool caps         = kbIsCapsLockOn;
+    int  contactCount = contactGetActiveCount();  // 0 = aucun contact en ligne, 1 = un seul, 2+ = au moins deux (capped à l'affichage 2-icônes).
 
     if (!g_statusBarDirty && bt == g_lastDrawnBt && wifi == g_lastDrawnWifi && mqtt == g_lastDrawnMqtt && caps == g_lastDrawnCaps &&
-        contact == g_lastDrawnContact) {
+        contactCount == g_lastDrawnContactCount) {
         return;
     }
 
@@ -124,21 +128,30 @@ void redrawStatusBar() {
     // Left cluster (network reachability): WiFi puis MQTT côte à côte.
     drawIndicatorAt(ICON_WIFI_X, wifi, ICON_WIFI_COLOR);
     drawIndicatorAt(ICON_MQTT_X, mqtt, ICON_MQTT_COLOR);
+
     // Right cluster (keyboard input state): BT puis indicateur CapsLock 'A'/'a', séparés des chips réseau par le spacer de 50 px défini dans ICON_BT_X.
     drawIndicatorAt(ICON_BT_X, bt, ICON_BT_COLOR);
     drawCapsAt(ICON_CAPS_X, caps, ICON_CAPS_COLOR);
-    // Contact chip: hardcoded ON for now (see TODO above). Silhouette de personnage plutôt qu'un disque pour la distinguer des indicateurs réseau.
-    drawPersonAt(ICON_CONTACT_X, contact, ICON_CONTACT_COLOR);
+    // Contact silhouettes: 0 contact → 1 icône en contour, 1 contact → 1 icône pleine, 2+ contacts → 2 icônes pleines côte à côte (centrées sur
+    // l'ancre historique ICON_CONTACT_X). Le compte vient de contactGetActiveCount() (contacts.ino), alimenté par les liveness MQTT admin/live + admin/dead.
+    if (contactCount <= 0) {
+        drawPersonAt(ICON_CONTACT_X, false, ICON_CONTACT_COLOR);
+    } else if (contactCount == 1) {
+        drawPersonAt(ICON_CONTACT_X, true, ICON_CONTACT_COLOR);
+    } else {
+        drawPersonAt(ICON_CONTACT_X_LEFT, true, ICON_CONTACT_COLOR);
+        drawPersonAt(ICON_CONTACT_X_RIGHT, true, ICON_CONTACT_COLOR);
+    }
 
     // Separator hairline, one pixel above the bottom of the bar — the very bottom row stays black to give the icons breathing room.
     g_disp->drawFastHLine(0, STATUS_BAR_H - 2, FB_WIDTH, STATUS_BAR_SEPARATOR_COLOR);
 
-    g_lastDrawnBt      = bt;
-    g_lastDrawnWifi    = wifi;
-    g_lastDrawnMqtt    = mqtt;
-    g_lastDrawnCaps    = caps;
-    g_lastDrawnContact = contact;
-    g_statusBarDirty   = false;
+    g_lastDrawnBt           = bt;
+    g_lastDrawnWifi         = wifi;
+    g_lastDrawnMqtt         = mqtt;
+    g_lastDrawnCaps         = caps;
+    g_lastDrawnContactCount = contactCount;
+    g_statusBarDirty        = false;
 }
 
 

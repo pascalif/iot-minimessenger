@@ -35,13 +35,15 @@ Required libraries (Library Manager, exact versions known to work in comments):
 
 ## Per-device identity
 
-`identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It branches on the device's MAC and assigns: `g_deviceIdMe`, `g_deviceName` (e.g. `D1M_001`, `E32_004`), `g_userPseudo`, the two `g_deviceIdFriend*` IDs, the default recipient, and `g_displayType`. **Adding or moving a physical device requires editing this function** — there is no config file. An unknown MAC falls back to a random ID and pseudo "JohnDoe".
+`identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It reads the device's MAC and looks it up in the `COMPILED_DEVICE_DATA_ENTRIES` table (declared in `personal-data.h`, gitignored, copied from `personal-data.h.template`) to assign: `g_deviceIdMe`, `g_deviceName` (e.g. `D1M_001`, `E32_004`), `g_userPseudo`, the default recipient, and `g_displayType`. **Adding or moving a physical device means editing that table** — there is no NVS-stored identity, no portal flow for the per-device tuple. An unknown MAC falls back to a random ID in [100..999] and pseudo "JohnDoe" so a fresh ESP boots and joins MQTT without first editing the table.
+
+The same `personal-data.h` file is also accessed by `contacts.ino` (via `findCompiledDeviceByDeviceId()`) so peer liveness pings can be logged and bannered under their friendly pseudo rather than the bare deviceId. Peers not listed in the table show up as `device #<n>` in logs and banners. The list of remote peers is not declared anywhere: it is discovered dynamically at runtime from MQTT liveness pings — see the **Contact tracking** section below.
 
 On ESP32 (arduino-esp32 3.3.8) reading the MAC reliably requires the WiFi driver to be in STA mode first. `identifyDevice()` therefore calls `WiFi.mode(WIFI_STA)` before `WiFi.macAddress(buffer)` — this brings up the netif without connecting and lets the MAC read return the real address. `setupWifi()` later issues `WiFi.disconnect(true,true) + mode + begin` on top of that already-initialised STA mode, which is well-defined. We initially tried `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` from `<esp_mac.h>` per the IDF docs (which claim the eFuse path is dependency-free), but on this core/version it silently returns `00:00:00:00:00:00` until the WiFi driver is up — so we stopped relying on it. On D1mini the legacy `WiFi.macAddress()` path is kept under `#else`.
 
 ## WiFi onboarding (multi-network + portal)
 
-All WiFi-related code lives in **`wifi.ino`** (concatenated with `minimessenger.ino` by the Arduino IDE — they share one translation unit). The state machine, NVS-backed network list (Preferences namespace `"wifi"`), WiFiMulti integration, and WiFiManager captive portal are isolated there. The shared `WifiState` enum and exported function prototypes live in `wifi_state.h`, included by both files. Compile-time defaults come from `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`). The main sketch only calls `setupWifi()` once in `setup()` then `wifiTick(currentMillis)` every `loop()` — boot is non-blocking. The status screen (`showUpdatedInfoScreen`) branches on `wifiGetState()` to either show normal SSID/IP/MQTT/TIME rows or the captive-portal instructions. **See `docs/howto_wifi.md` for the full workflow documentation.**
+All WiFi-related code lives in **`wifi.ino`** (concatenated with `minimessenger.ino` by the Arduino IDE — they share one translation unit). The state machine, NVS-backed network list (Preferences namespace `"wifi"`), WiFiMulti integration, and WiFiManager captive portal are isolated there. The shared `WifiState` enum and exported function prototypes live in `wifi_state.h`, included by both files. Compile-time defaults come from `personal-data.h` (gitignored, copied from `personal-data.h.template`). The main sketch only calls `setupWifi()` once in `setup()` then `wifiTick(currentMillis)` every `loop()` — boot is non-blocking. The status screen (`showUpdatedInfoScreen`) branches on `wifiGetState()` to either show normal SSID/IP/MQTT/TIME rows or the captive-portal instructions. **See `docs/howto_wifi.md` for the full workflow documentation.**
 
 ## Command layer
 
@@ -57,7 +59,7 @@ All devices share one HiveMQ Cloud broker. Topics:
 
 - `msg/broadcast` — subscribed by all devices.
 - `msg/unicast/<deviceId>` — each device subscribes to its own; outgoing messages target one peer via `g_mqttOutoingRecipientTopic`, set by `setRecipient(int)`.
-- `admin/live` — retained "I'm alive" pings (boot / reconnect / 30 s keepalive). Drives the friend-presence LEDs via `onLiveness()`.
+- `admin/live` — retained "I'm alive" pings (boot / reconnect / 120 s keepalive). Drives the friend-presence LEDs and the contact silhouettes on the top bar via `onReceivedContactOnline()` (see **Contact tracking**).
 - `admin/dead` — MQTT Last Will published on disconnect; same liveness handler treats it as `isLive=false`.
 - `admin/logs` — currently unused for output but reserved.
 
@@ -85,10 +87,23 @@ HID reports arrive in `decodeHIDReport()`, which maintains `kbIsCapsLockOn` loca
 
 Three LEDs (`LED_STATUS`, `LED_FRIEND_1`, `LED_FRIEND_2`) are managed via a tiny non-blocking state machine: `g_ledRequiredState[pin]` holds OFF / ON / BLINK_FAST / BLINK_SLOW, and the `loop()` tail toggles blinking pins based on `LED_BLINK_*_DURATION`. Use `ledSetState(pin, state)` rather than `digitalWrite` directly so blink state stays consistent. The `LED_QTY` (17) array size is sized for raw GPIO numbers, not LED count.
 
+The two FRIEND LEDs reflect the **count** of online contacts rather than two specific peers: `LED_FRIEND_1` lights when at least one contact is online, `LED_FRIEND_2` when at least two are. Both are driven from `contactsApplyState()` in `contacts.ino`, never written to from anywhere else.
+
+## Contact tracking
+
+Dynamic remote-peer presence lives in **`contacts.ino`** (concatenated TU). A fixed-size table `g_contacts[MAX_CONTACTS]` (5 slots) records `(deviceId, lastSeenMs)` for every peer we currently believe online. The four entry points are:
+
+- `contactsSetup()` — called once from `setup()` to mark every slot free (`DEVICE_ID_UNSET`).
+- `onReceivedContactOnline(remoteDeviceId, isLive)` — called by `onMqttIncomingMessage()` (mqtt.ino) for every `admin/live` / `admin/dead` payload. Ignores `g_deviceIdMe` (own retained liveness replayed on subscribe). `isLive=true` allocates or refreshes a slot; `isLive=false` (Last Will) releases it immediately. A 6th simultaneous contact is logged and dropped — there is no LRU eviction.
+- `contactsTick()` — called every `loop()` iteration; reads `millis()` internally and releases any slot older than `MQTT_KEEPALIVE_INTERVAL_MS + 5 s` (~125 s with the current 120 s keepalive). Covers crashed peers that never published `admin/dead`. Does **not** take the loop-top `currentMillis` as a parameter on purpose: `onReceivedContactOnline()` stamps `lastSeenMs` with its own fresh `millis()`, so passing a stale `currentMillis` here would underflow the unsigned subtraction and immediately evict a contact whose liveness was received earlier in the same iteration.
+- `contactGetActiveCount()` — read by `redrawStatusBar()` (bars.ino) to pick between 0-icon (single outline), 1-icon (single filled) and 2-icon (two filled, straddling `ICON_CONTACT_X`) layouts.
+
+The previous static `g_deviceIdFriend1` / `g_deviceIdFriend2` pair is gone — `identifyDevice()` no longer declares any peer-side IDs. If a future "name of the connected peer" display is needed, add a `pseudoForDeviceId(int)` accessor in `identifyDevice()` (it still holds the MAC → pseudo mapping for *this* device, just not for peers).
+
 ## Logging
 
 Custom variadic templates `hlog` / `hlogn` / `log` / `logn` (in the sketch) prefix output with `g_deviceName`. All logging is gated by `#define WITH_LOGS`; removing it is the production path (see TODO list at top of `.ino`). Don't replace these with bare `Serial.print` — you lose the device-name prefix that's essential when watching multiple devices on one serial console.
 
 ## Secrets
 
-WiFi SSID/password are no longer in `minimessenger.ino` — they live in `compiled_wifi.h` (gitignored, copied from `compiled_wifi.h.template`) and/or NVS at runtime. See `docs/howto_wifi.md`. MQTT user/password are still hardcoded in `minimessenger.ino` (broker URL/port too), and the HiveMQ Let's Encrypt root CA sits in `mqtt.ino` (`g_hiveMQRootCA`); treat both files as sensitive when sharing diffs externally and don't commit alternate credentials without the user's say-so.
+WiFi SSID/password are no longer in `minimessenger.ino` — they live in `personal-data.h` (gitignored, copied from `personal-data.h.template`) and/or NVS at runtime. See `docs/howto_wifi.md`. That same file also holds `COMPILED_DEVICE_DATA_ENTRIES` (one row per physical device: MAC → deviceId, pseudo, namePrefix, screen, default recipient) — used by `identifyDevice()` and `contacts.ino`. MQTT user/password are still hardcoded in `minimessenger.ino` (broker URL/port too), and the HiveMQ Let's Encrypt root CA sits in `mqtt.ino` (`g_hiveMQRootCA`); treat all three files (`personal-data.h`, `minimessenger.ino`, `mqtt.ino`) as sensitive when sharing diffs externally and don't commit alternate credentials without the user's say-so.

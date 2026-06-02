@@ -1,2 +1,2 @@
-# Local WiFi credentials — created from compiled_wifi.h.template, never committed.
-compiled_wifi.h
+# Local personal data (WiFi credentials + per-device identity table) — created from personal-data.h.template, never committed.
+personal-data.h

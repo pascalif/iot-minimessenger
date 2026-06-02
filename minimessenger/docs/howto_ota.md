@@ -206,7 +206,7 @@ The switch is a one-time operation:
 - Conversation buffer (in BSS, untouched by partition change)
 - WiFi credentials stored in NVS (NVS partition layout doesn't change)
 - BLE bonds in NVS (same)
-- Compile-time WiFi defaults in `compiled_wifi.h` (in the app image)
+- Compile-time WiFi defaults in `personal-data.h` (in the app image)
 
 ### What you do lose
 

@@ -1,0 +1,96 @@
+#pragma once
+
+#include <Arduino.h>
+#include "symbols.h"  // DisplayType
+
+
+// Personal / per-deployment data. Copy this file to "personal-data.h", fill in the entries below with your real networks and devices, and DO NOT
+// commit "personal-data.h" (it is in .gitignore). Both tables are used at boot only — WiFi defaults are loaded into WiFiMulti, and the device
+// identity tuple is looked up by MAC in identifyDevice() to set g_deviceIdMe, g_userPseudo, g_deviceName, g_displayType.
+//
+// Workflow:
+//   1. cp personal-data.h.template personal-data.h
+//   2. Edit personal-data.h : fill COMPILED_WIFI_DEFAULTS and COMPILED_DEVICE_DATA_ENTRIES
+//   3. Flash
+//
+// A device whose MAC is not in COMPILED_DEVICE_DATA_ENTRIES falls back to a random ID + pseudo "JohnDoe" — useful when prototyping on a fresh ESP without
+// editing this file first. The device still boots and participates in MQTT messaging, but its peers will log it as "device #<n>" rather than under
+// a friendly name, and no "<pseudo> connecté" banner will be shown on the screen of peer devices when it joins.
+
+
+// === WiFi compile-time defaults ===
+
+// Up to MAX_WIFI_NETWORKS (5, defined in wifi.ino). Empty list is fine — boot will open the captive portal.
+// SSID dedup: if the same SSID is also in NVS, the NVS entry wins (its password may be fresher).
+
+struct CompiledWifiEntry {
+    const char* ssid;
+    const char* pwd;
+};
+
+static const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[] = {
+    // { "MyHomeWiFi",     "homepassword" },
+    // { "MyPhoneHotspot", "hotspotpass"  },
+    // { "OfficeWiFi",     "officepass"   },
+};
+
+static const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / sizeof(COMPILED_WIFI_DEFAULTS[0]);
+
+
+// === Per-device identity table ===
+
+// One row per physical device in the deployment. The MAC is the key — identifyDevice() walks this table at boot and applies the matching row.
+// Fields:
+//   mac                 : the device's WiFi MAC address as an uppercase colon-separated string (e.g. "xx:xx:xx:xx:xx:xx"). What ESP-IDF
+//                         esp_read_mac(ESP_MAC_WIFI_STA) returns once WIFI_STA mode is up.
+//   deviceId            : small integer ID (1..254), used in MQTT topics (msg/unicast/<id>) and in admin/live keepalive payloads. Unique per row.
+//   pseudo              : human-readable name shown in logs / banners ("Alice", "Bob", …). Latin-1 only (no smart punctuation, no em-dash) — see
+//                         the display charset memo.
+//   namePrefix          : 3-letter prefix for g_deviceName ("D1M" for D1 mini, "E32" for ESP32). Combined with deviceId as e.g. "D1M_002".
+//   screen              : DisplayType — ST7789 (320×240 TFT) or OLEDSHIELD (SSD1306). The latter is partially implemented.
+//   defaultRecipientId  : default unicast recipient for outgoing messages. 0 = use the global default (3). Any other value overrides on this device.
+
+struct CompiledDeviceDataEntry {
+    const char* mac;
+    byte        deviceId;
+    const char* pseudo;
+    const char* namePrefix;
+    DisplayType screen;
+    byte        defaultRecipientId;
+};
+
+static const CompiledDeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[] = {
+    // { "AA:BB:CC:DD:EE:01", 1, "Alice", "D1M", ST7789,     0 },
+    // { "AA:BB:CC:DD:EE:02", 2, "Bob",   "D1M", ST7789,     0 },
+    // { "AA:BB:CC:DD:EE:03", 3, "Carol", "D1M", OLEDSHIELD, 2 },
+    // { "AA:BB:CC:DD:EE:04", 4, "Dave",  "E32", ST7789,     0 },
+};
+
+static const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_ENTRIES) / sizeof(COMPILED_DEVICE_DATA_ENTRIES[0]);
+
+
+// === Accessors ===
+
+// Both lookups are O(N) but N is bounded (<= a handful of devices) so this is negligible.
+
+// Find the entry matching the given MAC (case-sensitive — keep MACs uppercase in the table). Returns nullptr if no row matches.
+static inline const CompiledDeviceDataEntry* findCompiledDeviceByMac(const char* mac) {
+    for (size_t i = 0; i < COMPILED_DEVICE_DATA_ENTRIES_COUNT; i++) {
+        if (strcmp(COMPILED_DEVICE_DATA_ENTRIES[i].mac, mac) == 0) {
+            return &COMPILED_DEVICE_DATA_ENTRIES[i];
+        }
+    }
+    return nullptr;
+}
+
+// Find the entry matching the given deviceId. Returns nullptr if no row matches (e.g. liveness from a peer not declared in this table — typically a
+// JohnDoe device with a random ID). Used by the contact-tracking code to log a pseudo alongside the deviceId and to surface "<pseudo> connecté"
+// banners in the conversation.
+static inline const CompiledDeviceDataEntry* findCompiledDeviceByDeviceId(byte deviceId) {
+    for (size_t i = 0; i < COMPILED_DEVICE_DATA_ENTRIES_COUNT; i++) {
+        if (COMPILED_DEVICE_DATA_ENTRIES[i].deviceId == deviceId) {
+            return &COMPILED_DEVICE_DATA_ENTRIES[i];
+        }
+    }
+    return nullptr;
+}

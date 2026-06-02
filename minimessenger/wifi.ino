@@ -29,7 +29,7 @@
 #include <Preferences.h>
 #include <WiFiManager.h>
 #include "wifi_state.h"
-#include "compiled_wifi.h"
+#include "personal-data.h"
 #include "mm_log.h"
 
 // ================================================================================
@@ -133,7 +133,7 @@ void setupWifi() {
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(g_deviceName);
 
-    // Populate WiFiMulti with every known network: NVS entries first (priority on duplicate SSID), then compile-time defaults from compiled_wifi.h
+    // Populate WiFiMulti with every known network: NVS entries first (priority on duplicate SSID), then compile-time defaults from personal-data.h
     // as a permanent safety net. /wifi clean only wipes NVS, so the device can always come back up on a compiled default without a reflash.
     int n = wifiLoadNVSAndCompiledIntoMulti();
 
@@ -394,7 +394,7 @@ WifiState wifiGetState() {
 // ================================================================================
 
 // Loads every known network into WiFiMulti: first the NVS-saved ones (user-managed, password may have been updated via portal), then the
-// compile-time defaults from compiled_wifi.h. Deduplication is by SSID with NVS winning: if "SatelliteThree" is both in NVS and in the compiled
+// compile-time defaults from personal-data.h. Deduplication is by SSID with NVS winning: if "SatelliteThree" is both in NVS and in the compiled
 // defaults, only the NVS entry is used — its password is potentially fresher (user reconfigured via portal after changing the home router pass).
 // The compile-time list therefore acts as a permanent safety net: a `/wifi clean` wipes NVS but the defaults still get loaded at the next boot,
 // so the device can still come up on a known network without recompiling.
@@ -404,6 +404,12 @@ static int wifiLoadNVSAndCompiledIntoMulti() {
     // Track SSIDs already added so the compile-default pass can skip duplicates. Capped at MAX_WIFI_NETWORKS — same cap as NVS storage.
     String nvsSsids[MAX_WIFI_NETWORKS];
     int    nvsSsidCount = 0;
+
+    // Capture every entry actually pushed into WiFiMulti (NVS + non-duplicate compiled) so we can dump the final list once at the end. Size cap:
+    // NVS contributes up to MAX_WIFI_NETWORKS, compiled defaults contribute up to COMPILED_WIFI_DEFAULTS_COUNT, never both for the same SSID.
+    String loadedSsids[MAX_WIFI_NETWORKS + COMPILED_WIFI_DEFAULTS_COUNT];
+    String loadedPwds[MAX_WIFI_NETWORKS + COMPILED_WIFI_DEFAULTS_COUNT];
+    int    loadedCount = 0;
 
     // === Pass 1: NVS (priority) ===
     g_wifiPrefs.begin(WIFI_PREFS_NAMESPACE, true);
@@ -421,6 +427,9 @@ static int wifiLoadNVSAndCompiledIntoMulti() {
         if (nvsSsidCount < MAX_WIFI_NETWORKS) {
             nvsSsids[nvsSsidCount++] = ssid;
         }
+        loadedSsids[loadedCount] = ssid;
+        loadedPwds[loadedCount]  = pwd;
+        loadedCount++;
         ESP_LOGD(TAG_WIFI, "  NVS  → addAP([%s], %u chars)", ssid.c_str(), (unsigned)pwd.length());
         loadedNvs++;
     }
@@ -449,6 +458,9 @@ static int wifiLoadNVSAndCompiledIntoMulti() {
         }
 
         g_wifiMulti.addAP(e.ssid, e.pwd ? e.pwd : "");
+        loadedSsids[loadedCount] = e.ssid;
+        loadedPwds[loadedCount]  = e.pwd ? e.pwd : "";
+        loadedCount++;
         ESP_LOGD(TAG_WIFI, "  COMP → addAP([%s])", e.ssid);
         loadedCompiled++;
     }
@@ -458,6 +470,13 @@ static int wifiLoadNVSAndCompiledIntoMulti() {
              loadedNvs,
              loadedCompiled,
              skippedCompiled);
+
+    // Debug dump of the final list. Cleartext password on purpose — this is a dev-time aid to confirm the right credentials are loaded after a
+    // /wifi forget / portal save / template-bump. Strip or gate behind a stricter log level if you ever ship this to non-trusted hands.
+    for (int i = 0; i < loadedCount; i++) {
+        ESP_LOGI(TAG_WIFI, "- #%d : %s / %s", i, loadedSsids[i].c_str(), loadedPwds[i].c_str());
+    }
+
     return loadedNvs + loadedCompiled;
 }
 

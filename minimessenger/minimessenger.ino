@@ -38,22 +38,7 @@ LINK   : OK
 UPLOAD : OK
 RUN    : OK
 
-Sa console web : https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-g_mqttClient
-
-TODO
-- couleur et affichage du pseudo remote (pour chan room multi )
-- taille program:
-  Remove Debug Code: Strip out all Serial.print() and debug code for production.
-  Use PROGMEM: Store large constants (e.g., strings, images) in PROGMEM.
-    pour la font ? ou le logo ? ou certificat ?
-  Disable Unused Features: In your library includes, disable features you don’t use (e.g., Adafruit_GFX has options for this).
-
-- indicator
-BTKB bonded
-BTKB capslock
-WIFI ok
-MQ ok
-Friend present
+Envois et formats des msgs MQTT, cf mqtt.h
 */
 
 // ================================================================================
@@ -63,6 +48,7 @@ Friend present
 
 // Provided by ESP32 boards
 #include <WiFi.h>
+
 // esp_read_mac(ESP_MAC_EFUSE_FACTORY) reads the silicon eFuse directly with no cache layer — works in setup() before any driver init. The
 // related esp_efuse_mac_get_default() is a TRAP on arduino-esp32 3.3.8 (IDF 5.x): it wraps esp_read_mac(ESP_MAC_BASE) which queries a RAM cache
 // populated late in IDF startup, returning ESP_OK + zeros when called too early. See identifyDevice() for the 3-strategy waterfall.
@@ -80,6 +66,10 @@ Friend present
 // MQTT plumbing (topics, globals, reconnect, publish, incoming dispatch, TLS root CA) lives in mqtt.ino. This header pulls in PubSubClient and the
 // shared constants / extern declarations / function prototypes. Library Manager: "PubSubClient" (2.8).
 #include "mqtt.h"
+
+// Per-deployment data: WiFi compile-time defaults + per-device identity table (MAC → deviceId, pseudo, namePrefix, screen). Gitignored; copied from
+// personal-data.h.template. Used by identifyDevice() at boot and by onReceivedContactOnline() to surface peer pseudos in logs and banners.
+#include "personal-data.h"
 
 // Provided by Arduino IDE (with ESP8266 board plugins ?)
 #include <WiFiClientSecure.h>
@@ -139,7 +129,7 @@ Friend present
 // User configuration
 // ================================================================================
 
-// WiFi credentials are no longer kept here — see wifi.ino + compiled_wifi.h (gitignored) + NVS for the new onboarding flow. WiFiMulti picks the
+// WiFi credentials are no longer kept here — see wifi.ino + personal-data.h (gitignored) + NVS for the new onboarding flow. WiFiMulti picks the
 // strongest known network at boot; if none respond, the WiFiManager captive portal opens automatically. See docs/howto_wifi.md.
 
 // MQTT Broker credentials. Kept here next to the other "Secrets" — the rest of the MQTT config (topics, timing, QoS flags) lives in mqtt.h/mqtt.ino.
@@ -272,7 +262,12 @@ uint16_t g_drawY   = 0;
 // BT sits 50 px right of MQTT's right edge: ICON_MQTT_X + ICON_RADIUS + 50 + ICON_RADIUS = 32 + 6 + 50 + 6 = 94.
 #define ICON_BT_X      94
 #define ICON_CAPS_X    114
-#define ICON_CONTACT_X (FB_WIDTH - 12)  // 228
+#define ICON_CONTACT_X (FB_WIDTH - 12)  // 228 — used when 0 or 1 contact is online (single silhouette on the historical anchor).
+// When 2+ contacts are online, two silhouettes are drawn straddling ICON_CONTACT_X. Body width = 11 px and head r = 3 px, so a ±9 px split leaves
+// ~7 px d'air entre les deux silhouettes : assez pour rester lisibles en mode plein, sans déborder du framebuffer 240 px de large (X_RIGHT atteint au
+// pire 237+5 = 242, soit 2 px hors champ — réduire l'écart à ±8 si jamais le débordement est visible à l'écran).
+#define ICON_CONTACT_X_LEFT  (ICON_CONTACT_X - 15)
+#define ICON_CONTACT_X_RIGHT (ICON_CONTACT_X)
 
 // Last-drawn-state cache + color palette + bar drawing functions all live in bars.ino. Two globals stay here because they are SET from many
 // places in this file (boot, mode switches, caps toggle, etc.): g_statusBarDirty toggles a forced repaint, g_lastStatusBarPollMs is the
@@ -382,9 +377,7 @@ byte g_inNextCharIndex = 0;
 // Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — any
 // real device gets a small positive ID assigned in identifyDevice().
 #define DEVICE_ID_UNSET 0xFF
-byte g_deviceIdMe      = DEVICE_ID_UNSET;
-byte g_deviceIdFriend1 = DEVICE_ID_UNSET;
-byte g_deviceIdFriend2 = DEVICE_ID_UNSET;
+byte g_deviceIdMe = DEVICE_ID_UNSET;
 char g_deviceIdChars[4];
 char g_deviceName[40];
 char g_userPseudo[40];
@@ -428,7 +421,12 @@ void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
 void resetSerialBuffer();
+// contacts.ino API — explicit forward decls because the Arduino auto-prototype pass occasionally misses cross-.ino calls (notably from bars.ino into
+// contacts.ino, which is concatenated AFTER bars.ino in alphabetical order). Without these the build fails with "not declared in this scope".
+void contactsSetup();
+void contactsTick();
 void onReceivedContactOnline(int remoteDeviceId, bool isLive);
+int  contactGetActiveCount();
 // Two overloads — see definitions for the contract.
 //   single-string: prints `msg` left-aligned, full line. Used for banners / status messages.
 //   two-string:    prints `left` left-aligned and `right` at a fixed column (INFO_LINE_RIGHT_COL_X). Used for /help listings: cmd + description.
@@ -825,52 +823,25 @@ void identifyDevice() {
     }
 
     // ---------------------
-    int recipientId = 3;
+    // Default unicast recipient when the matching COMPILED_DEVICE_DATA_ENTRIES row has defaultRecipientId == 0 (i.e. no per-device override). Historical
+    // value preserved from the previous hardcoded cascade — Jolan was the only device with an override (2).
+    constexpr int DEFAULT_RECIPIENT_ID = 3;
 
-    if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
-        g_deviceIdMe = 1;
-        snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
+    int recipientId = DEFAULT_RECIPIENT_ID;
 
-        strcpy(g_userPseudo, "Papa");
-        g_deviceIdFriend1 = 2;
-        g_deviceIdFriend2 = 3;
-
-        //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
-        g_displayType = DisplayType::ST7789;
-    } else if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
-        g_deviceIdMe = 2;
-        snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
-
-        strcpy(g_userPseudo, "Maïa");
-        g_deviceIdFriend1 = 1;
-        g_deviceIdFriend2 = 3;
-    } else if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
-        g_deviceIdMe = 3;
-        snprintf(g_deviceName, sizeof(g_deviceName), "D1M_%03d", g_deviceIdMe);
-
-        strcpy(g_userPseudo, "Jolan");
-        g_deviceIdFriend1 = 1;
-        g_deviceIdFriend2 = 2;
-        recipientId       = 2;
-
-        g_displayType = DisplayType::OLEDSHIELD;
-
-    } else if (strcmp(macStr, "xx:xx:xx:xx:xx:xx") == 0) {
-        // ESP32-02
-        g_deviceIdMe = 4;
-
-        snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
-
-        strcpy(g_userPseudo, "Proto");
-        g_deviceIdFriend1 = 2;
-        g_deviceIdFriend2 = 3;
-
-        //    g_displayType = DISPLAY_TYPE_OLEDSHIELD;
-        g_displayType = DisplayType::ST7789;
+    const CompiledDeviceDataEntry* entry = isAllZero(macBytes) ? nullptr : findCompiledDeviceByMac(macStr);
+    if (entry != nullptr) {
+        g_deviceIdMe = entry->deviceId;
+        strcpy(g_userPseudo, entry->pseudo);
+        snprintf(g_deviceName, sizeof(g_deviceName), "%s_%03d", entry->namePrefix, g_deviceIdMe);
+        g_displayType = entry->screen;
+        if (entry->defaultRecipientId != 0) {
+            recipientId = entry->defaultRecipientId;
+        }
     } else if (isAllZero(macBytes)) {
         ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
-
     } else {
+        // Unknown MAC: prototype / new device not yet listed in personal-data.h. Random ID in [100..999] avoids colliding with the small declared IDs.
         strcpy(g_userPseudo, "JohnDoe");
         g_deviceIdMe = random(100, 1000);
         snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
@@ -1726,7 +1697,7 @@ void showUpdatedInfoScreen() {
         int nextY = 0;
 
         // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
-        nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe), colHeaders, colValues, nextY, lineHeight);
+        nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe) + " " + g_userPseudo, colHeaders, colValues, nextY, lineHeight);
         nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
         nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
 
@@ -1843,6 +1814,7 @@ void setup() {
 
     setupDisplay();
     setupLeds();
+    contactsSetup();
 
     //setupTests();
 
@@ -1928,10 +1900,14 @@ void loop() {
         }
     }
 
+    // Contact tracking: expire any peer whose admin/live keepalive hasn't been refreshed for longer than CONTACT_TIMEOUT_MS. Placed after the MQTT
+    // block so a freshly-received liveness on this same iteration (via g_mqttClient.loop() → onMqttIncomingMessage()) has already updated the slot's
+    // lastSeenMs, avoiding a spurious one-cycle eviction. contactsTick() reads millis() itself rather than reusing the loop-top currentMillis — see
+    // the comment above its definition for the underflow scenario this avoids.
+    contactsTick();
 
 
 #ifdef FLAG_READ_SERIAL_INPUTS
-
     // Add a new char to the buffer
     while (Serial.available() > 0) {
         g_inChar = Serial.read();
@@ -2021,21 +1997,4 @@ void loop() {
     // dispatch, MQTT keepalive and the LED blink tick all live in this loop and
     // each extra millisecond shows up directly as input lag.
     delay(5);
-}
-
-// onMqttIncomingMessage() moved to mqtt.ino.
-
-void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
-    if (remoteDeviceId == g_deviceIdMe) {
-        return;
-    }
-
-    ESP_LOGI(TAG_MQTT, "Liveness device #%d isLive=%d", remoteDeviceId, isLive ? 1 : 0);
-    if (remoteDeviceId == g_deviceIdFriend1) {
-        ledSetState(LED_FRIEND_1, (isLive ? LED_STATE_ON : LED_STATE_OFF));
-        //digitalWrite(LED_FRIEND_1, (isLive ? HIGH : LOW) );
-    } else if (remoteDeviceId == g_deviceIdFriend2) {
-        ledSetState(LED_FRIEND_2, (isLive ? LED_STATE_ON : LED_STATE_OFF));
-        //digitalWrite(LED_FRIEND_2, (isLive ? HIGH : LOW) );
-    }
 }

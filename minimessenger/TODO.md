@@ -13,12 +13,6 @@ Règles:
 
 Extraire fichiers de constantes
 
-================
-
-test portal
-
-
-resoudre identifi
 
 
 ================

@@ -1,10 +1,12 @@
 # WiFi onboarding & runtime — minimessenger
 
+> Note: `personal-data.h` (anciennement `compiled_wifi.h`) contient maintenant **deux** tableaux : `COMPILED_WIFI_DEFAULTS` (cf. ce doc) et `COMPILED_DEVICE_DATA_ENTRIES` (tuple `MAC → deviceId, pseudo, namePrefix, screen, defaultRecipientId`, consommé par `identifyDevice()` et `contacts.ino`). Le schéma complet et les conventions de remplissage sont documentés en haut de `personal-data.h.template`.
+
 ## Vue d'ensemble
 
 Minimessenger gère sa connexion WiFi via une **machine à état non-bloquante** qui combine trois sources de configuration:
 
-1. **Compile-time defaults** dans `compiled_wifi.h` (gitignored, créé à partir de `compiled_wifi.h.template`) — **toujours chargés** dans WiFiMulti à chaque boot, en plus du NVS. Servent de safety net permanent.
+1. **Compile-time defaults** dans `personal-data.h` (gitignored, créé à partir de `personal-data.h.template`) — **toujours chargés** dans WiFiMulti à chaque boot, en plus du NVS. Servent de safety net permanent.
 2. **NVS (Preferences)** — réseaux ajoutés au runtime (via portail captif), prio sur les defaults compilés en cas de SSID dupliqué (password potentiellement plus frais)
 3. **Portail captif WiFiManager** — fallback automatique quand aucun réseau connu ne répond, accessible via téléphone à l'AP `minimessenger-config`
 
@@ -58,9 +60,9 @@ L'état courant est lu par `showUpdatedInfoScreen()` qui adapte les rows affich�
 1. Cloner le repo
 2. Copier le template:
    ```bash
-   cp compiled_wifi.h.template compiled_wifi.h
+   cp personal-data.h.template personal-data.h
    ```
-3. Éditer `compiled_wifi.h` pour y mettre tes SSIDs/passwords (jusqu'à 5):
+3. Éditer `personal-data.h` pour y mettre tes SSIDs/passwords (jusqu'à 5):
    ```cpp
    static const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[] = {
      { "MyHomeWiFi",     "homepass"    },
@@ -70,7 +72,7 @@ L'état courant est lu par `showUpdatedInfoScreen()` qui adapte les rows affich�
 4. Compiler + flasher via Arduino IDE
 5. Au boot, NVS est vide → WiFiMulti est nourri uniquement par les compile defaults → connexion immédiate au SSID le plus fort des deux
 
-**Si tu laisses `compiled_wifi.h` vide**: le device boote, WiFiMulti est vide, le portail s'ouvre tout seul. Tu configures depuis ton téléphone sans toucher au code. C'est le mode "distribution à un utilisateur final".
+**Si tu laisses `personal-data.h` vide**: le device boote, WiFiMulti est vide, le portail s'ouvre tout seul. Tu configures depuis ton téléphone sans toucher au code. C'est le mode "distribution à un utilisateur final".
 
 ### Configurer un nouveau réseau via le portail
 
@@ -106,7 +108,7 @@ Cas typique: la box maison a été reset, le password est nouveau.
 
 Alternative manuelle: `/wifi forget MyHomeWiFi` puis `/wifi portal` pour ouvrir immédiatement le portail.
 
-**⚠️ Cas particulier**: si tu fais `/wifi forget MyHomeWiFi` et que `MyHomeWiFi` est aussi déclaré dans `compiled_wifi.h`, l'entrée disparaît de NVS mais reste injectée dans WiFiMulti au prochain boot via les compile defaults (avec le password compilé, possiblement périmé). Pour vraiment ne plus s'y connecter du tout, supprime aussi l'entrée de `compiled_wifi.h` et reflashe.
+**⚠️ Cas particulier**: si tu fais `/wifi forget MyHomeWiFi` et que `MyHomeWiFi` est aussi déclaré dans `personal-data.h`, l'entrée disparaît de NVS mais reste injectée dans WiFiMulti au prochain boot via les compile defaults (avec le password compilé, possiblement périmé). Pour vraiment ne plus s'y connecter du tout, supprime aussi l'entrée de `personal-data.h` et reflashe.
 
 ### Déménagement complet / reset du device
 
@@ -151,7 +153,7 @@ Les commandes sont organisées en 4 commandes orphelines (`/help`, `/status`, `/
 | `/wifi drop` | Force un disconnect WiFi (test de résilience). Le device passe en LOST puis tente de se reconnecter |
 | `/wifi list` | Affiche en rose les SSIDs sauvés en NVS |
 | `/wifi forget <ssid>` | Supprime un SSID précis de NVS (laisse les autres). Ex: `/wifi forget OldWiFi` |
-| `/wifi clean` | Vide totalement NVS WiFi. Au prochain reboot, re-seed depuis `compiled_wifi.h` ou portail |
+| `/wifi clean` | Vide totalement NVS WiFi. Au prochain reboot, re-seed depuis `personal-data.h` ou portail |
 | `/wifi portal` | Force l'ouverture du portail captif immédiatement, sans attendre un échec |
 | `/dbg` | Aide partielle: liste uniquement les sous-commandes du groupe `/dbg *` |
 | `/dbg redraw` | Repaint complet des 3 zones (status bar + scroll + footer) |
@@ -165,7 +167,7 @@ Namespace `wifi` (via Arduino `Preferences`). Clés:
 - `count` (uint8): nombre de slots **alloués**. Borne supérieure quand on itère; certains slots intermédiaires peuvent être vides (trous laissés par `/wifi forget`, réclamés au prochain `wifiSaveToNvs`).
 - `ssid_0`, `pwd_0`, …, `ssid_4`, `pwd_4` (String): jusqu'à `MAX_WIFI_NETWORKS=5` paires. SSID vide = slot libre.
 
-Les `COMPILED_WIFI_DEFAULTS` ne sont **jamais écrits en NVS** — ils sont injectés directement dans WiFiMulti au boot par `wifiLoadNVSAndCompiledIntoMulti()`. Modifier `compiled_wifi.h` + reflasher est donc immédiatement effectif au prochain boot, sans dépendre de l'état NVS. `/wifi list` ne montre que les entrées NVS (les compile defaults sont des constantes du code, pas des données utilisateur).
+Les `COMPILED_WIFI_DEFAULTS` ne sont **jamais écrits en NVS** — ils sont injectés directement dans WiFiMulti au boot par `wifiLoadNVSAndCompiledIntoMulti()`. Modifier `personal-data.h` + reflasher est donc immédiatement effectif au prochain boot, sans dépendre de l'état NVS. `/wifi list` ne montre que les entrées NVS (les compile defaults sont des constantes du code, pas des données utilisateur).
 
 ## Que dit chaque ligne du status screen ?
 
@@ -210,5 +212,5 @@ Pour ajuster les timeouts, voir les `#define` en tête de `wifi.ino`:
 ## Pour aller plus loin
 
 - Ajouter un OTA (Over-The-Air update) basé sur la même connexion: hors scope ce PR, mais l'architecture non-bloquante le permet maintenant.
-- Hot-reload de `compiled_wifi.h` sans `/wifi clean`: faudrait un hash des defaults stocké en NVS, comparer au boot, re-seeder si différent. Pas implémenté.
+- Hot-reload de `personal-data.h` sans `/wifi clean`: faudrait un hash des defaults stocké en NVS, comparer au boot, re-seeder si différent. Pas implémenté.
 - Filtrer les commandes destructives (`/wifi clean`, `/dbg bt-clean`) selon le canal d'entrée: un `/wifi clean` venu de MQTT broadcast efface NVS sur tous les peers. Pour l'instant, accepté tel quel.
