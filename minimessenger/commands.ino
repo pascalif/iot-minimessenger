@@ -71,21 +71,21 @@ const char* const CMD_DBG_REDRAW = "/dbg redraw";
 void printHelpGlobal() {
     ESP_LOGI(TAG_MM, "Listing global commands");
     printInfoLine("Commands:");
-    printInfoLine("/help",      "list cmds");
-    printInfoLine("/status",    "info screen");
-    printInfoLine("/clear",     "wipe history");
+    printInfoLine("/help", "list cmds");
+    printInfoLine("/status", "info screen");
+    printInfoLine("/clear", "wipe history");
     printInfoLine("/mqtt-drop", "drop MQTT");
-    printInfoLine("/bt-clean",  "clear bonds");
-    printInfoLine("/wifi *",    "WiFi mgmt");
-    printInfoLine("/dbg *",     "diagnostics");
+    printInfoLine("/bt-clean", "clear bonds");
+    printInfoLine("/wifi *", "WiFi mgmt");
+    printInfoLine("/dbg *", "diagnostics");
 }
 
 void printHelpWifi() {
     ESP_LOGI(TAG_MM, "Listing /wifi subcommands");
     printInfoLine("/wifi subcmds:");
-    printInfoLine("- drop",   "drop link");
-    printInfoLine("- clean",  "wipe NVS");
-    printInfoLine("- list",   "known nets");
+    printInfoLine("- drop", "drop link");
+    printInfoLine("- clean", "wipe NVS");
+    printInfoLine("- list", "known nets");
     printInfoLine("- forget", "<ssid>");
     printInfoLine("- portal", "open portal");
 }
@@ -93,8 +93,8 @@ void printHelpWifi() {
 void printHelpDbg() {
     ESP_LOGI(TAG_MM, "Listing /dbg subcommands");
     printInfoLine("/dbg subcmds:");
-    printInfoLine("- chip",   "chip + MACs");
-    printInfoLine("- mem",    "heap + stack");
+    printInfoLine("- chip", "chip + MACs");
+    printInfoLine("- mem", "heap + stack");
     printInfoLine("- redraw", "full repaint");
 }
 

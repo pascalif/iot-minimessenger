@@ -27,16 +27,16 @@ extern const char* mqtt_password;
 // extern here is purely for clarity / so this file reads standalone.
 extern WiFiClientSecure g_wifiClient;
 
-// Identity strings used by mqttReconnect (client id / will message) and mqttSendAlive — declared in minimessenger.ino, see identifyDevice().
+// Identity strings used by mqttReconnectAttempt (client id / will message) and mqttSendAlive — declared in minimessenger.ino, see identifyDevice().
 extern char g_deviceName[];
-extern char g_deviceIdChars[];
+extern char g_deviceIdAsChars[];
 extern byte g_deviceIdMe;
 
 // LED + display helpers called from this file (LED on after a successful connect, message routing for incoming chat messages, contact liveness LEDs).
 // Forward-declared so the auto-prototype ordering does not bite us.
-extern void ledSetState(int pin, int requiredState);
-extern void routeMessage(const String& message, MessageSource source);
-extern void onReceivedContactOnline(int remoteDeviceId, bool isLive);
+extern void  ledSetState(int pin, int requiredState);
+extern void  routeMessage(const String& message, MessageSource source);
+extern void  onReceivedContactOnline(int remoteDeviceId, bool isLive);
 extern char* getCurrentDateTime();
 
 // ================================================================================
@@ -57,23 +57,54 @@ unsigned int  g_mqttOutputMsgId                  = 0;
 bool          g_mqttWasConnected                 = false;
 unsigned long g_mqttLastReconnectTryTimestampMs  = 0;
 unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
+uint8_t       g_mqttReconnectAttempts            = 0;
 
 char g_mqttOutgoingMsg[MSG_BUFFER_SIZE];
-char g_mqttOutoingRecipientTopic[MQTT_TOPIC_SIZE];
+char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
 
 
 // ================================================================================
 // MQTT — connect / publish / receive
 // ================================================================================
 
+// Current wait interval between two reconnect attempts. Exponential backoff: BASE * 2^attempts, capped at MAX. Cap k early so the shift never
+// overflows unsigned long (2^32 = 4 GB ms — we hit MAX_MS long before that, but a defensive cap keeps the math obvious).
+unsigned long mqttReconnectDelayMs() {
+    uint8_t       k     = (g_mqttReconnectAttempts > 16) ? 16 : g_mqttReconnectAttempts;
+    unsigned long delay = (unsigned long)MQTT_CONNECT_RETRY_BASE_MS << k;
+    if (delay > (unsigned long)MQTT_CONNECT_RETRY_MAX_MS) {
+        delay = (unsigned long)MQTT_CONNECT_RETRY_MAX_MS;
+    }
+    return delay;
+}
+
 // Return true is reconnection is successfull
-bool mqttReconnect() {
+bool mqttReconnectAttempt() {
     // Pour voir s'il y a assez de bloc memoire pour la connection TLS.
     // mbedtls handshake = ~38-40 KB contigus (16 KB IN + 16 KB OUT + ~6 KB SSL ctx).
     // Heap dispo (largest block) observé :
     //   - Bluedroid : ~24 KB → insuffisant, rc=-2
     //   - NimBLE    : ~60-70 KB attendus → handshake OK
-    ESP_LOGI(TAG_MQTT, "Attempting connection... heap free=%u largest block=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    /*
+    const uint32_t largestBlock = ESP.getMaxAllocHeap();
+    ESP_LOGI(TAG_MQTT, "Attempting connection... required=%u largest_free_block=%u heap_free=%u", MQTT_TLS_MIN_FREE_HEAP_B, largestBlock, ESP.getFreeHeap());
+
+    // Pre-flight: skip the connect entirely when the largest contiguous heap block is too small to host the mbedtls TLS buffers + context. Going
+    // through the connect() call anyway burns ~40 KB and ends up with rc=-2 — better to surface the condition immediately so the user sees something
+    // changed, and so the retry loop doesn't keep producing identical opaque failures every interval. Failure counter still bumps so the next
+    // attempt waits with the exponential backoff.
+
+    if (largestBlock < (uint32_t)MQTT_TLS_MIN_FREE_HEAP_B) {
+        ESP_LOGE(TAG_MQTT, "Insufficient heap for TLS handshake: largest block=%u < threshold=%u — skipping connect", largestBlock, MQTT_TLS_MIN_FREE_HEAP_B);
+        if (g_inConversationMode) {
+            char banner[64];
+            snprintf(banner, sizeof(banner), "Low heap %u B - MQTT skipped", (unsigned)largestBlock);
+            printInfoLine(banner, CONVO_ERROR_COLOR);
+        }
+        refreshInfoScreenIfShown();
+        return false;
+    }
+    */
 
     unsigned long t0              = millis();
     bool          isMQTTConnected = g_mqttClient.connect(g_deviceName,
@@ -82,7 +113,7 @@ bool mqttReconnect() {
                                                 g_mqttOutgoingTopicWill,
                                                 MQTT_QOS_0,
                                                 MQTT_MSG_NOT_RETAINED,
-                                                g_deviceIdChars,
+                                                g_deviceIdAsChars,
                                                 MQTT_SESSION_VOLATILE);
     ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d", isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
 
@@ -96,7 +127,8 @@ bool mqttReconnect() {
         g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
         g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
 
-        g_mqttWasConnected = true;
+        g_mqttWasConnected      = true;
+        g_mqttReconnectAttempts = 0;  // success — reset the backoff so a future outage starts at BASE_MS again instead of inheriting the previous wait.
         g_mqttConnectionId++;
         ledSetState(LED_STATUS, LED_STATE_ON);
 
@@ -110,7 +142,14 @@ bool mqttReconnect() {
     } else {
         // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
         // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
-        ESP_LOGE(TAG_MQTT, "Connect failed (rc=%d), retrying in %dms", g_mqttClient.state(), MQTT_CONNECT_RETRY_INTERVAL_MS);
+        if (g_mqttReconnectAttempts < UINT8_MAX) {
+            g_mqttReconnectAttempts++;
+        }
+        ESP_LOGE(TAG_MQTT,
+                 "Connect failed (rc=%d), attempt #%u, retrying in %lums",
+                 g_mqttClient.state(),
+                 (unsigned)g_mqttReconnectAttempts,
+                 mqttReconnectDelayMs());
         return false;
     }
 }
@@ -162,6 +201,31 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
 }
 
 
+// Parses the leading positive integer in `str` (admin/dead is just the deviceId, admin/live is "<deviceId> boot mac:..." — both share the leading-int
+// shape) and returns true iff it is a valid deviceId in [1..254]. 0 and 255 are reserved (DEVICE_ID_UNSET). Anything malformed (empty, non-numeric,
+// out of range, or followed by an unexpected non-separator character) is rejected so a peer cannot spoof "device 0" via a crafted payload.
+static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
+    if (str == nullptr) {
+        return false;
+    }
+    char* endptr = nullptr;
+    long  val    = strtol(str, &endptr, 10);
+    if (endptr == str) {
+        return false;  // no digits parsed at the start
+    }
+    if (val < 1 || val > 254) {
+        return false;
+    }
+    // Accept either end-of-string (admin/dead payload) or a whitespace separator before the rest of the alive payload.
+    const char trailing = *endptr;
+    if (trailing != '\0' && trailing != ' ' && trailing != '\t' && trailing != '\r' && trailing != '\n') {
+        return false;
+    }
+    outDeviceId = (int)val;
+    return true;
+}
+
+
 // PubSubClient subscribe callback — dispatches by topic. admin/live + admin/dead drive the friend-presence LEDs; msg/* topics route through the
 // shared routeMessage() funnel which handles screen wake / /cmd interception / display.
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
@@ -174,10 +238,18 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     ESP_LOGD(TAG_MQTT, "Incoming message [%s] -> [%s]", topic, message.c_str());
 
     if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
-        int remoteDeviceId = atoi(message.c_str());
+        int remoteDeviceId;
+        if (!parseLeadingDeviceId(message.c_str(), remoteDeviceId)) {
+            ESP_LOGW(TAG_MQTT, "Ignoring malformed admin/live payload: [%s]", message.c_str());
+            return;
+        }
         onReceivedContactOnline(remoteDeviceId, true);
     } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
-        int remoteDeviceId = atoi(message.c_str());
+        int remoteDeviceId;
+        if (!parseLeadingDeviceId(message.c_str(), remoteDeviceId)) {
+            ESP_LOGW(TAG_MQTT, "Ignoring malformed admin/dead payload: [%s]", message.c_str());
+            return;
+        }
         onReceivedContactOnline(remoteDeviceId, false);
     }
     // msg/unicast/<me> or msg/broadcast

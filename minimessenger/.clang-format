@@ -1,6 +1,11 @@
 # Project-wide clang-format style. Applied by Arduino IDE 2.x on Ctrl+T (or via `clang-format -i` from the shell).
 # Lines longer than ColumnLimit are wrapped at natural boundaries — see CLAUDE.md "comment formatting" section for the prose convention.
 
+# Dry-run:
+#   clang-format --dry-run *.ino *.h *.cpp
+# Fix:
+#   clang-format -i *.ino *.h *.cpp
+
 BasedOnStyle: LLVM
 
 

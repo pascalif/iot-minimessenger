@@ -73,9 +73,10 @@ void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* a
     // standard HID service — Logitech, Apple, generic ChiCony, you name it — without recompiling. The previous name filter ("Bluetooth Keyboard")
     // worked only for the one specific keyboard model that was set up at flashing time, which blocked any swap to a differently-named device.
     //
-    // With setActiveScan(true) (set in setup() below), NimBLE issues a SCAN_REQ on every adv it sees and merges the SCAN_RSP payload into the
-    // NimBLEAdvertisedDevice. So even keyboards that advertise the HID UUID only in the scan response (and not in the primary adv data) are detected
-    // here. isAdvertisingService() inspects the merged service list.
+    // When active scan is enabled (first onboarding — see setup() below), NimBLE issues a SCAN_REQ on every adv it sees and merges the SCAN_RSP
+    // payload into the NimBLEAdvertisedDevice, so even keyboards that advertise the HID UUID only in the scan response are detected here. On
+    // reconnect after a bond, we drop to passive scan to free the radio for WiFi: that path assumes the bonded keyboard puts the HID UUID in its
+    // primary adv data (the case for sane HID stacks). isAdvertisingService() inspects the merged service list in either mode.
     //
     // Trade-off: this also matches BLE mice / gamepads / etc. that happen to be in pairing mode within range. In practice such collisions are rare
     // (the user usually puts only their target keyboard into pairing mode), and even if a mouse bonds by accident, its 3–4-byte HID reports are
@@ -109,8 +110,7 @@ void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* a
 void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanResults, int reason) {
     // NimBLE scans are asynchronous: the start() call returns immediately and this fires when the scan window elapses. Re-arm doScan so the next
     // tryToMaintainConnection() iteration kicks off a new round — unless paused (e.g. during WiFi portal, see pauseScan()).
-    ESP_LOGI(TAG_BTKB, "Scan ended (reason=%d, %d devices seen) — %s", reason, scanResults.getCount(),
-             m_scanPaused ? "paused, not rescanning" : "will rescan");
+    ESP_LOGI(TAG_BTKB, "Scan ended (reason=%d, %d devices seen) — %s", reason, scanResults.getCount(), m_scanPaused ? "paused, not rescanning" : "will rescan");
     if (!m_connectionDone && !m_scanPaused) {
         doScan = true;
     }
@@ -166,13 +166,23 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
         clearAllExistingBonds();
     }
 
-    // setActiveScan(true) is what makes the HID-UUID filter in onResult() reliable: NimBLE sends a SCAN_REQ on every adv received, and the SCAN_RSP
-    // payload — where many keyboards put their service UUIDs — gets merged into the NimBLEAdvertisedDevice before onResult() runs.
-    ESP_LOGI(TAG_BTKB, "Starting scan for any device advertising HID service 0x%04X", BT_SERVICE_HID_1812);
+    // Active scan triggers a SCAN_REQ/SCAN_RSP exchange on every adv received: NimBLE merges the SCAN_RSP payload (where many keyboards put their
+    // service UUIDs) into the NimBLEAdvertisedDevice before onResult() runs, which is what makes the HID-UUID filter reliable for first onboarding.
+    // The trade-off is that active scan sits at ~100 % duty cycle on the shared 2.4 GHz front-end and starves WiFi RX (see pauseScan() + the
+    // portal-time mitigation in wifi.ino). Once a keyboard is bonded its address is known and connectToServer() will only complete the pairing-secured
+    // link with that specific peer — the UUID filter doesn't need to round-trip a SCAN_RSP to be useful, so we drop to passive scan and free the radio
+    // for WiFi. NB: this relies on the bonded keyboard advertising its HID UUID in the primary adv data (the case for sane HID stacks); if a future
+    // model only puts it in the SCAN_RSP, force a re-bond via g_kb.setup(true, ...) to get active scan back.
+    const int  bondedCount     = NimBLEDevice::getNumBonds();
+    const bool hasExistingBond = (bondedCount > 0);
+    ESP_LOGI(TAG_BTKB, "Starting scan for any device advertising HID service 0x%04X (activeScan=%d, bondedCount=%d)",
+             BT_SERVICE_HID_1812,
+             hasExistingBond ? 0 : 1,
+             bondedCount);
 
     NimBLEScan* pBLEScan = NimBLEDevice::getScan();
     pBLEScan->setScanCallbacks(this, false);
-    pBLEScan->setActiveScan(true);
+    pBLEScan->setActiveScan(!hasExistingBond);
     // NimBLE-Arduino 2.x: scan duration is in MILLISECONDS (1.x was in seconds)
     pBLEScan->start(m_scanningDurationSec * 1000);
     // Scan already running; onScanEnd() will re-arm doScan if it ends without finding the keyboard.

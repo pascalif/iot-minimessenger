@@ -21,7 +21,7 @@
 #define STATUS_BAR_SEPARATOR_COLOR 0xDEFB
 
 // Background of the whole status-bar strip — also used as the wipe color before each repaint.
-#define STATUS_BAR_BG_COLOR RGB565(0x30, 0x15, 0x10) //ST77XX_BLACK
+#define STATUS_BAR_BG_COLOR RGB565(0x30, 0x15, 0x10)  //ST77XX_BLACK
 
 // Per-indicator colors on the top status bar. ICON_BT_COLOR is reused by the footer's "<no keyboard>" placeholder so the BT state stays
 // visually coherent across both bars (same hue when the keyboard is absent, regardless of which bar is showing it).
@@ -32,7 +32,7 @@
 #define ICON_CONTACT_COLOR ST77XX_RED
 
 // Background of the whole keyboard bar (input footer) strip — wipe color before each repaint.
-#define KB_BAR_BG_COLOR  ST77XX_BLACK
+#define KB_BAR_BG_COLOR ST77XX_BLACK
 
 // Hairline separator on the top row of the footer. Mirrors STATUS_BAR_SEPARATOR_COLOR — kept as a separate macro so the two bars can drift
 // apart later (e.g. different shade on the footer) without a cascading rename.
@@ -49,12 +49,12 @@
 // Used by redrawStatusBar() to skip a repaint when no indicator's state changed. Lives here because nothing outside redrawStatusBar reads or
 // writes these — they are entirely internal to the bar's repaint debounce. g_statusBarDirty (defined in minimessenger.ino) is the external
 // override flag that callers use to FORCE a repaint regardless of cache.
-static bool g_lastDrawnBt           = false;
-static bool g_lastDrawnWifi         = false;
-static bool g_lastDrawnMqtt         = false;
-static bool g_lastDrawnCaps         = false;
+static bool g_lastDrawnBt   = false;
+static bool g_lastDrawnWifi = false;
+static bool g_lastDrawnMqtt = false;
+static bool g_lastDrawnCaps = false;
 // Sentinel -1 forces a paint on the very first redraw — any real count from contactGetActiveCount() (0..MAX_CONTACTS) breaks the cache match.
-static int  g_lastDrawnContactCount = -1;
+static int g_lastDrawnContactCount = -1;
 
 
 // === Status bar (TFA) ===========================================================
@@ -104,11 +104,11 @@ static void drawPersonAt(int cx, bool filled, uint16_t color) {
 // Read current connection states and repaint the bar if any of them changed since the last draw (or if forced by g_statusBarDirty). No-op when
 // a fullscreen mode (splash, info) is showing — would otherwise paint icons over their content.
 void redrawStatusBar() {
-        if (g_displayType != DisplayType::ST7789) {
-            return;
-        }
+    if (g_displayType != DisplayType::ST7789) {
+        return;
+    }
 
-        if (!g_inConversationMode) {
+    if (!g_inConversationMode) {
         return;
     }
 

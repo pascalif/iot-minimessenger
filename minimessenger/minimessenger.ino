@@ -71,7 +71,7 @@ Docs (/docs):
 
 // Cf howto_fond pour la bascule vers une font buildée pour les accents
 //#include <Fonts/FreeSans9pt8b.h>  // Police SANS accents 9x7 au lieu de 7x5 de la font par defaut
-#include "FreeSans9pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
+#include "FreeSans9pt8b_latin1.h"   // Police AVEC accents (et 9x7 au lieu de 7x5)
 #include "FreeSans10pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
 
 // Alias to decouple the sketch from the specific generated font. To switch
@@ -138,7 +138,7 @@ const char* mqtt_password = "xxxxxxx";                                          
 #define LED_BLINK_FAST_DURATION_MS 150
 #define LED_BLINK_SLOW_DURATION_MS 700
 
-// MQTT timing constants (MQTT_KEEPALIVE_INTERVAL_MS, MQTT_CONNECT_RETRY_INTERVAL_MS) moved to mqtt.h.
+// MQTT timing constants (MQTT_KEEPALIVE_INTERVAL_MS, MQTT_CONNECT_RETRY_BASE_MS, MQTT_CONNECT_RETRY_MAX_MS) moved to mqtt.h.
 
 // "Screen saver" Burn-in protection: time without local input (BT keystroke / serial) and
 // without a remote message before the screen dims, then fully turns off.
@@ -177,15 +177,15 @@ const char* mqtt_password = "xxxxxxx";                                          
 // STT7789v pins, vue de dessus : GND, VCC, SCL, SDA, RST, DC, CS
 // - TFT_SCL : D18 = GPIO18 "SCK" by default
 // - TFT_SDA : D23 = GPIO23 "MOSI" by default
-#define TFT_RST GPIO_NUM_NC   // not wired — the ST7789 has an internal Power-On Reset, see docs/info_tft_rst.md
-#define TFT_DC  GPIO_NUM_2    // Data/Command select
+#define TFT_RST GPIO_NUM_NC  // not wired — the ST7789 has an internal Power-On Reset, see docs/info_tft_rst.md
+#define TFT_DC  GPIO_NUM_2   // Data/Command select
 
 // Chip select — MUST be wired to a real GPIO on this module. Empirically tested: tying the TFT's CS pin to GND on the breadboard side and setting
 // `TFT_CS = GPIO_NUM_NC` (so Adafruit_SPITFT skips every CS digitalWrite via its `if (_cs >= 0)` guard) leaves the panel dark — only the backlight
 // stays lit. The Sitronix datasheet says CS-permanently-low should work in single-device mode, but this particular AliExpress clone of the ST7789
 // controller does not behave that way; it apparently needs the rising edge of CS between commands to reset its parser state. Keep CS on a real
 // GPIO and let Adafruit_SPITFT toggle it per transaction.
-#define TFT_CS  GPIO_NUM_5
+#define TFT_CS GPIO_NUM_5
 
 // Backlight pin for PWM dimming. Set to a GPIO if the BL/LED pin of the panel
 // is wired to one (then dim = 50% PWM, off = 0% PWM). Set to -1 if the BL pin
@@ -301,8 +301,8 @@ int      g_lineCount = 0;
 #define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
 #define CONV0_TS_COLOR         ST77XX_CYAN
 
-#define CONVO_MSG_FONT_SIZE     1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
-#define CONVO_MSG_MARGIN_BOTTOM 7  //
+#define CONVO_MSG_FONT_SIZE      1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
+#define CONVO_MSG_MARGIN_BOTTOM  7  //
 #define CONVO_HELP_MARGIN_BOTTOM 4  //
 
 #define CONVO_INFO_COLOR  ST77XX_GREEN
@@ -338,12 +338,6 @@ Adafruit_GFX* g_disp = NULL;
 DisplayPowerState g_displayPowerState = DISPLAY_ON;
 unsigned long     g_lastActivityMs    = 0;
 
-static const unsigned char PROGMEM logo16_glcd_bmp[] = { B00000000, B11000000, B00000001, B11000000, B00000001, B11000000, B00000011, B11100000,
-                                                         B11110011, B11100000, B11111110, B11111000, B01111110, B11111111, B00110011, B10011111,
-                                                         B00011111, B11111100, B00001101, B01110000, B00011011, B10100000, B00111111, B11100000,
-                                                         B00111111, B11110000, B01111100, B11110000, B01110000, B01110000, B00000000, B00110000 };
-
-
 // format "YYYY-MM-DD HH:MM:SS"
 char g_ts[20];
 
@@ -361,9 +355,19 @@ byte g_inNextCharIndex = 0;
 // real device gets a small positive ID assigned in identifyDevice().
 #define DEVICE_ID_UNSET 0xFF
 byte g_deviceIdMe = DEVICE_ID_UNSET;
-char g_deviceIdChars[4];
-char g_deviceName[40];
-char g_userPseudo[40];
+char g_deviceIdAsChars[4];
+
+// Sizes of the per-device identity buffers.
+// - `g_deviceName` holds `<namePrefix>_<003-padded-id>` (e.g. "D1M_001") — 3-letter prefix + '_' + 3-digit ID + '\0' fits in 10.
+// - `g_userPseudo` holds the friendly name from the compile-time table (e.g. "Alice", "Maïa") — capped at 11 chars + '\0'; Latin-1
+// accented bytes count as one each here since the table source is UTF-8 and any accented byte (e.g. "ï" = C3 AF) takes 2 bytes, so 12 covers names
+// up to ~5 accented characters or ~11 ASCII characters before snprintf truncates.
+// 12 + 10 not ok
+// ZZZ
+#define G_DEVICE_NAME_LEN 12 // 12 (+40) OK
+#define G_USER_PSEUDO_LEN 10 // 20 ok
+char g_deviceName[G_DEVICE_NAME_LEN];
+char g_userPseudo[G_USER_PSEUDO_LEN];
 
 
 #define LED_STATE_NOT_CONFIGURED -1
@@ -371,7 +375,12 @@ char g_userPseudo[40];
 #define LED_STATE_ON             1
 #define LED_STATE_BLINK_FAST     2
 #define LED_STATE_BLINK_SLOW     3
-#define LED_QTY                  17
+// LED arrays are indexed by raw GPIO pin number (ledSetState(pin, …) → g_ledRequiredState[pin] = …). The ESP32 exposes GPIOs up to 39, so the arrays
+// must be sized to cover that range — otherwise ledSetState(32, …) writes 32 bytes past a too-small array and corrupts adjacent BSS globals. The
+// previously-used value of 17 came from the D1 mini era (ESP8266, GPIO 0..16) and stealthily wrote on top of g_deviceName / g_userPseudo on ESP32,
+// producing 0x02 (LED_STATE_BLINK_FAST as a byte → rendered as a smiley by the Adafruit GLCD font) at the offset matching LED_STATUS=GPIO32 minus
+// the array's actual length. 40 covers the full ESP32 GPIO range (0..39); bump to 48 if porting to ESP32-S2/S3/C3 with larger GPIO maps.
+#define LED_QTY                  40
 byte          g_ledRequiredState[LED_QTY];
 bool          g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
@@ -563,7 +572,20 @@ void currentMsgClear() {
 }
 
 void currentMsgInsertCharAtCursor(char c) {
-    g_currentMsgFromKeyboard = g_currentMsgFromKeyboard.substring(0, g_msgCursorIdx) + c + g_currentMsgFromKeyboard.substring(g_msgCursorIdx);
+    const size_t lenBefore = g_currentMsgFromKeyboard.length();
+    if (g_msgCursorIdx > lenBefore) {
+        return;  // invariant violated — should never happen since the caller helpers clamp the cursor; bail rather than corrupting the buffer.
+    }
+    // In-place edit: append the char at the end (String::concat reuses the reserve(100) buffer with no heap allocation as long as length stays below
+    // capacity), then if the cursor was somewhere before the end, walk the tail right one position with setCharAt so the new char ends up at the cursor.
+    // This avoids the previous substring+concat reassignment which allocated four short-lived String temporaries per keystroke and fragmented the heap.
+    g_currentMsgFromKeyboard.concat(c);
+    if (g_msgCursorIdx < lenBefore) {
+        for (size_t i = lenBefore; i > g_msgCursorIdx; i--) {
+            g_currentMsgFromKeyboard.setCharAt(i, g_currentMsgFromKeyboard.charAt(i - 1));
+        }
+        g_currentMsgFromKeyboard.setCharAt(g_msgCursorIdx, c);
+    }
     g_msgCursorIdx++;
     ESP_LOGD(TAG_BTKB, "Insert [%c] at %u → msg=[%s] cur=%u", c, (unsigned)(g_msgCursorIdx - 1), g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
     redrawInputFooter();
@@ -819,39 +841,38 @@ String getRealHardwareMAC() {
 
 
 void identifyDevice() {
-    String      mac      = getRealHardwareMAC();
-    const char* macCstr  = mac.c_str();
-    bool        macIsAllZero = (mac == "00:00:00:00:00:00");
+    String      mac          = getRealHardwareMAC();
+    const char* macCstr      = mac.c_str();
 
     // ---------------------
     // Default unicast recipient when the matching COMPILED_DEVICE_DATA_ENTRIES row has defaultRecipientId == 0 (i.e. no per-device override). Historical
     // value preserved from the previous hardcoded cascade — Jolan was the only device with an override (2).
     constexpr int DEFAULT_RECIPIENT_ID = 3;
-
     int recipientId = DEFAULT_RECIPIENT_ID;
 
-    const CompiledDeviceDataEntry* entry = macIsAllZero ? nullptr : findCompiledDeviceByMac(macCstr);
+    const CompiledDeviceDataEntry* entry = findCompiledDeviceByMac(macCstr);
     if (entry != nullptr) {
         g_deviceIdMe = entry->deviceId;
-        strcpy(g_userPseudo, entry->pseudo);
+
+         ESP_LOGE(TAG_MM, "BLABLA [%d]", g_deviceIdMe);
+
         snprintf(g_deviceName, sizeof(g_deviceName), "%s_%03d", entry->namePrefix, g_deviceIdMe);
+        snprintf(g_userPseudo, sizeof(g_userPseudo), "%s", entry->pseudo);
         g_displayType = entry->screen;
         if (entry->defaultRecipientId != 0) {
             recipientId = entry->defaultRecipientId;
         }
-    } else if (macIsAllZero) {
-        ESP_LOGE(TAG_MM, "MAC address is all zeros — WiFi.begin() was not enough in bootstrap sequence");
     } else {
         // Unknown MAC: prototype / new device not yet listed in personal-data.h. Random ID in [100..999] avoids colliding with the small declared IDs.
-        strcpy(g_userPseudo, "JohnDoe");
+        snprintf(g_userPseudo, sizeof(g_userPseudo), "%s", "JohnDoe");
         g_deviceIdMe = random(100, 1000);
-        snprintf(g_deviceName, sizeof(g_deviceName), "E32_%03d", g_deviceIdMe);
+        snprintf(g_deviceName, sizeof(g_deviceName), "UNK_%03d", g_deviceIdMe);
     }
 
     // Non formated g_deviceIdMe (pour Will topic)
-    snprintf(g_deviceIdChars, 4, "%d", g_deviceIdMe);
+    snprintf(g_deviceIdAsChars, 4, "%d", g_deviceIdMe);
 
-    ESP_LOGI(TAG_MM, "Identified device: name=%s id=%d screenType=%d", g_deviceName, g_deviceIdMe, (int)g_displayType);
+    ESP_LOGI(TAG_MM, "Identified device: name=[%s] id=%d screenType=%d for [%s]", g_deviceName, g_deviceIdMe, (int)g_displayType, g_userPseudo);
 
     setRecipient(recipientId);
 }
@@ -884,11 +905,6 @@ boolean setupKeyboard() {
 }
 
 
-
-// MQTT functions (mqttReconnect, mqttSendAlive, mqttPushFormattedMessage) moved to mqtt.ino along with their flag #defines (MQTT_QOS_*,
-// MQTT_MSG_*, MQTT_SESSION_*).
-
-
 // ================================================================================
 // LED
 // ================================================================================
@@ -905,17 +921,13 @@ void ledSetState(int pin, int requiredState) {
         g_ledBlinkStateIsHigh[pin]     = false;
         g_ledBlinkLastTimestampMs[pin] = millis();
         digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
-        //hlogn("details pin #", pin, " g_ledBlinkStateIsHigh[pin]=", g_ledBlinkStateIsHigh[pin], " g_ledBlinkLastTimestampMs[pin]=", g_ledBlinkLastTimestampMs[pin]);
     }
-
-    // drawIndicatorAt
 }
 
 void ledCommuteBlinkState(int pin) {
     g_ledBlinkStateIsHigh[pin]     = !g_ledBlinkStateIsHigh[pin];
     g_ledBlinkLastTimestampMs[pin] = millis();
     digitalWrite(pin, g_ledBlinkStateIsHigh[pin] ? HIGH : LOW);
-    //hlogn("Switching led state for blinking pin #", pin, " to new state ", g_ledBlinkStateIsHigh[pin]);
 }
 
 void setupLeds() {
@@ -1466,8 +1478,8 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 // ================================================================================
 
 void setRecipient(int recipientDeviceId) {
-    snprintf(g_mqttOutoingRecipientTopic, MQTT_TOPIC_SIZE, "msg/unicast/%d", recipientDeviceId);
-    ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutoingRecipientTopic);
+    snprintf(g_mqttOutgoingRecipientTopic, MQTT_TOPIC_SIZE, "msg/unicast/%d", recipientDeviceId);
+    ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutgoingRecipientTopic);
 }
 
 // Called once per successful MQTT (re)connect. Two distinct cases:
@@ -1586,7 +1598,7 @@ void routeMessage(const String& message, MessageSource source) {
     // LOCAL (serial ou BT)
     else {
         addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
-        bool published = mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str());
+        bool published = mqttPushFormattedMessage(g_mqttOutgoingRecipientTopic, message.c_str());
         if (!published) {
             // Naive WhatsApp-style "send failed" indicator: append a second block right under the original one, in error red, prefixed with [ERROR] so
             // the user knows that specific message didn't reach the broker. To be replaced later with a per-message status icon (sending / sent / failed)
@@ -1676,11 +1688,11 @@ static int drawInfoRow(Adafruit_ST7789* pDisp, const char* header, const String&
 
 void showUpdatedInfoScreen() {
     if (g_displayType != DisplayType::ST7789) {
-                ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
-    return;
-        }
+        ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
+        return;
+    }
 
-            String mac = getRealHardwareMAC();
+    String mac = getRealHardwareMAC();
 
     // Diagnostic: trace every entry to this function with the exact state we're about to draw. Lets us tell apart 3 scenarios when the screen
     // shows scrambled data after /status: (1) called multiple times in rapid succession (double-render race), (2) called once with wrong data
@@ -1695,60 +1707,66 @@ void showUpdatedInfoScreen() {
              (int)wifiGetState());
 
 
-        Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
+    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
-        g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
-        hwScrollReset();               // info screen draws at fixed coordinates, scroll must be 0
+    g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
+    hwScrollReset();               // info screen draws at fixed coordinates, scroll must be 0
 
-        pDisp->setFont(NULL);  // font par défaut
+    pDisp->setFont(NULL);  // font par défaut
 
-        int colHeaders = 2;
-        int colValues  = 68;
-        int lineHeight = 22;
-    int separatorHeight = 10;
+    int colHeaders      = 2;
+    int colValues       = 66;
+    int lineHeight      = 22;
+    int separatorHeight = 16;
 
-        int nextY = 0;
+    int nextY = 0;
 
-        // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
-        nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe) + " " + g_userPseudo, colHeaders, colValues, nextY, lineHeight);
-        nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
-        nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
+    // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
+    //nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe) + " " + g_userPseudo, colHeaders, colValues, nextY, lineHeight);
+    nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe) , colHeaders, colValues, nextY, lineHeight);
+    nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
+    nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
 
-        nextY += separatorHeight;
-        nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found", colHeaders, colValues, nextY, lineHeight);
-        nextY += separatorHeight;
+    nextY += separatorHeight;
+    nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found", colHeaders, colValues, nextY, lineHeight);
+    nextY += separatorHeight;
 
-        // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
-        // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
-        // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
-        WifiState st = wifiGetState();
-        if (st == WifiState::PORTAL) {
-            drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
+    // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
+    // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
+    // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
+    WifiState st = wifiGetState();
+    if (st == WifiState::PORTAL) {
+        drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
+    } else {
+        String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
+        String ipStr;
+        if (WiFi.status() == WL_CONNECTED) {
+            ipStr = WiFi.localIP().toString();
+        } else if (st == WifiState::TRYING_KNOWN) {
+            ipStr = "Connecting...";
+        } else if (st == WifiState::LOST) {
+            ipStr = "Lost, retrying";
         } else {
-            String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
-            String ipStr;
-            if (WiFi.status() == WL_CONNECTED) {
-                ipStr = WiFi.localIP().toString();
-            } else if (st == WifiState::TRYING_KNOWN) {
-                ipStr = "Connecting...";
-            } else if (st == WifiState::LOST) {
-                ipStr = "Lost, retrying";
-            } else {
-                ipStr = "Booting...";
-            }
-            nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
-            nextY += drawInfoRow(pDisp, "IP:", ipStr, colHeaders, colValues, nextY, lineHeight);
-            nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK", colHeaders, colValues, nextY, lineHeight);
-            nextY += drawInfoRow(pDisp, "TIME:", String(getTimezoneLabel()), colHeaders, colValues, nextY, lineHeight);
+            ipStr = "Booting...";
         }
+        nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
+        nextY += drawInfoRow(pDisp, "IP:", ipStr, colHeaders, colValues, nextY, lineHeight);
+        nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK", colHeaders, colValues, nextY, lineHeight);
+        nextY += drawInfoRow(pDisp, "NTP:", String(getTimezoneLabel()), colHeaders, colValues, nextY, lineHeight);
+    }
 
-        nextY += lineHeight * 2;
-        nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
+    nextY += separatorHeight;
 
-
+    // Heap row — always shown, regardless of WiFi state. The largest contiguous block is the figure that matters for the TLS handshake (compared
+    // against MQTT_TLS_MIN_FREE_HEAP_B in mqttReconnectAttempt()); the free figure is the headline number most users expect to see. Format keeps both
+    // values on one row to avoid stealing two info-screen lines.
+    char heapStr[24];
+    snprintf(heapStr, sizeof(heapStr), "%u/%u", (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getFreeHeap());
+    nextY += drawInfoRow(pDisp, "HEAP:", String(heapStr), colHeaders, colValues, nextY, lineHeight);
+    nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
 }
 
-// Single funnel for all event-driven info-screen refreshes. Callers (wifiTransitionTo, mqttReconnect, BLE connect callback, setupNTP, …) call
+// Single funnel for all event-driven info-screen refreshes. Callers (wifiTransitionTo, mqttReconnectAttempt, BLE connect callback, setupNTP, …) call
 // this without checking whether the info screen is currently visible — the gate is here, so we never repaint when the user is in conversation
 // mode (would clobber the chat). Safe to call from any hook on any state transition; no-op when the screen isn't ours.
 void refreshInfoScreenIfShown() {
@@ -1889,13 +1907,14 @@ void loop() {
 
         // Don't even try to reconnect while the WiFi link is down. Without an IP the TLS connect just fails on DNS (errno 118 / "Host is unreachable",
         // lwIP rc -54) after wasting heap and spamming the serial console. The wifi state machine in wifi.ino is the one driving re-association; as soon
-        // as it transitions back to CONNECTED, the time gate below will fire a fresh attempt within MQTT_CONNECT_RETRY_INTERVAL_MS.
-        if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > MQTT_CONNECT_RETRY_INTERVAL_MS)) {
+        // as it transitions back to CONNECTED, the time gate below will fire a fresh attempt. The delay grows exponentially across consecutive failures
+        // (mqttReconnectDelayMs()) so a long broker outage doesn't burn TLS handshakes every 5 s.
+        if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > mqttReconnectDelayMs())) {
             // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
             // up to ~30 s; starting the timer from the call's *end* would compound.
             g_mqttLastReconnectTryTimestampMs = currentMillis;
 
-            if (mqttReconnect()) {
+            if (mqttReconnectAttempt()) {
                 onMQTTReconnected();
             }
             // On failure: no delay() — the time gate above throttles the next retry.
@@ -1976,7 +1995,7 @@ void loop() {
 
     // Periodic status bar polling (only in conversation mode). Cheap: redrawStatusBar short-circuits if nothing changed since the last paint.
     // The info screen is NOT polled — it's refreshed via refreshInfoScreenIfShown() called from the state-change hooks (wifiTransitionTo,
-    // mqttReconnect, BLE connect callback, setupNTP). Avoids the double-render race that the old 2 s timer caused after /status.
+    // mqttReconnectAttempt, BLE connect callback, setupNTP). Avoids the double-render race that the old 2 s timer caused after /status.
     if (g_inConversationMode) {
         if (currentMillis - g_lastStatusBarPollMs >= STATUS_BAR_POLL_INTERVAL_MS) {
             g_lastStatusBarPollMs = currentMillis;

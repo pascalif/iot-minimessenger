@@ -16,7 +16,7 @@
 // (called by mqtt.ino's incoming-message dispatcher via auto-prototype). No contacts.h — same "light case" pattern as wifi_state.h.
 
 #include "mqtt.h"
-#include "mm_log.h"  // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
+#include "mm_log.h"         // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
 #include "personal-data.h"  // findCompiledDeviceByDeviceId — résolution pseudo / namePrefix / screen du contact distant pour les logs et les bannières.
 
 
@@ -71,7 +71,7 @@ static const char* pseudoOrPlaceholder(byte deviceId) {
 // admin/live, remove via admin/dead, remove via applicative timeout) — never on the periodic refresh of an already-known contact.
 static void announceContactTransition(byte deviceId, bool isLive) {
     const CompiledDeviceDataEntry* entry = findCompiledDeviceByDeviceId(deviceId);
-    String           label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
+    String                         label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
     label += isLive ? " connected" : " disconnected";
     addConversationBlock("", label, isLive ? CONVO_INFO_COLOR : CONVO_ERROR_COLOR, CENTER);
 }
@@ -103,7 +103,7 @@ void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
         return;
     }
 
-    const byte    id  = (byte)remoteDeviceId;
+    const byte          id  = (byte)remoteDeviceId;
     const unsigned long now = millis();
 
     int slotIdxIfKnown = -1;
@@ -153,15 +153,22 @@ void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
 // Comparing a stale currentMillis with a fresher lastSeenMs underflows the unsigned subtraction and instantly evicts the contact we just received.
 // Keeping the clock read in here (matching what onReceivedContactOnline already does) makes the two sites use the same time reference.
 void contactsTick() {
-    const unsigned long now = millis();
-    bool anyFreed = false;
+    const unsigned long now      = millis();
+    bool                anyFreed = false;
     for (int i = 0; i < MAX_CONTACTS; i++) {
         if (g_contacts[i].deviceId == DEVICE_ID_UNSET) {
             continue;
         }
         if (now - g_contacts[i].lastSeenMs > CONTACT_TIMEOUT_MS) {
             const byte expiredId = g_contacts[i].deviceId;
-            ESP_LOGI(TAG_MM, "CONTACT -timeout id=%d (%s) slot=%d ageMs=%lu lastSeen=%lu now=%lu", expiredId, pseudoOrPlaceholder(expiredId), i, now - g_contacts[i].lastSeenMs, g_contacts[i].lastSeenMs, now);
+            ESP_LOGI(TAG_MM,
+                     "CONTACT -timeout id=%d (%s) slot=%d ageMs=%lu lastSeen=%lu now=%lu",
+                     expiredId,
+                     pseudoOrPlaceholder(expiredId),
+                     i,
+                     now - g_contacts[i].lastSeenMs,
+                     g_contacts[i].lastSeenMs,
+                     now);
             g_contacts[i].deviceId   = DEVICE_ID_UNSET;
             g_contacts[i].lastSeenMs = 0;
             anyFreed                 = true;

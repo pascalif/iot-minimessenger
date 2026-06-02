@@ -36,16 +36,16 @@
 // Constants
 // ================================================================================
 
-#define MAX_WIFI_NETWORKS                   5          // hard cap of slot count in NVS. Bumping requires no migration since slots are key-indexed.
-#define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000      // how often we call WiFiMulti.run() inside the TRYING_KNOWN state.
+#define MAX_WIFI_NETWORKS                   5      // hard cap of slot count in NVS. Bumping requires no migration since slots are key-indexed.
+#define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000  // how often we call WiFiMulti.run() inside the TRYING_KNOWN state.
 // After this much time in TRYING_KNOWN with no success, fall through to the captive portal. Set to 45 s (not 15) because a single failed association
 // on a marginal AP burns ~11-13 s before ASSOC_EXPIRE fires; with 15 s we only got one attempt in before bailing, and the second attempt would often
 // have worked. 45 s lets WiFiMulti retry 3-4 times before giving up. Tradeoff: if the known AP is truly gone the user waits 45 s before the portal
 // appears instead of 15 s — acceptable because "known AP transiently unreachable" is more common than "known AP definitely gone".
-#define WIFI_TRYING_KNOWN_TIMEOUT_MS        45'000
-#define WIFI_PORTAL_TIMEOUT_MS              300'000UL  // 5 min: portal auto-closes and the state machine reverts to TRYING_KNOWN for one more pass.
-#define WIFI_LOST_RETRY_INTERVAL_MS         5'000      // how often we call WiFiMulti.run() inside the LOST state.
-#define WIFI_LOST_TO_PORTAL_MS              60'000     // if the connection has been LOST for more than this, drop into PORTAL (router probably gone).
+#define WIFI_TRYING_KNOWN_TIMEOUT_MS 45'000
+#define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: portal auto-closes and the state machine reverts to TRYING_KNOWN for one more pass.
+#define WIFI_LOST_RETRY_INTERVAL_MS  5'000      // how often we call WiFiMulti.run() inside the LOST state.
+#define WIFI_LOST_TO_PORTAL_MS       60'000     // if the connection has been LOST for more than this, drop into PORTAL (router probably gone).
 
 #define WIFI_PORTAL_AP_SSID "minimsg-cfg"  // generic on purpose so the user knows what SSID to look for in the phone's WiFi list.
 // WPA2 password for the captive portal AP. Set to a real string (8+ chars) rather than "" (open AP) because:
@@ -141,10 +141,10 @@ void setupWifi() {
     // with g_wifiManager.process() inside wifiTick. The save callback fires when the user submits credentials via the web UI.
     g_wifiManager.setConfigPortalBlocking(false);
     g_wifiManager.setSaveConfigCallback(wifiOnPortalSave);
-    // Temporarily enable WiFiManager's own verbose log to see what happens at /wifi portal: phones can see the SSID but fail to associate without
-    // any user-visible error, and we need the lib's internal trace (AP setup, DHCP, DNS catcher, HTTP server) to know which layer is broken.
-    // Flip back to false (or the single-arg form) once the connect path is confirmed stable. setDebugOutput overload: (enabled, level).
-    g_wifiManager.setDebugOutput(true, WM_DEBUG_VERBOSE);
+    // WiFiManager's own logs stay off in normal operation: at 115200 baud the AP-setup / DHCP / DNS-catcher / HTTP-server trace is loud enough to bury
+    // our own ESP_LOGx lines and slows the portal flow visibly. Flip back to setDebugOutput(true, WM_DEBUG_VERBOSE) on demand if a future onboarding
+    // regression needs the lib's internal trace (past episode: phones could see the SSID but failed to associate without any user-visible error).
+    g_wifiManager.setDebugOutput(false);
 
     if (n == 0) {
         // No networks known at all → skip the TRYING_KNOWN dance, go straight to portal.
@@ -282,11 +282,13 @@ static void wifiTransitionTo(WifiState newState) {
 static void wifiStartPortal() {
     ESP_LOGI(TAG_WIFI, "Starting captive portal AP [%s]", WIFI_PORTAL_AP_SSID);
 
-    // Pause the BLE keyboard scan before touching the WiFi mode. On ESP32 the BLE and WiFi radios share the same 2.4 GHz front-end; an active
-    // BLE scan at ~100 % duty cycle (which our default setActiveScan(true) + 30 s window + immediate re-arm produces) starves the WiFi RX path.
-    // The symptom is: AP beacons go out fine (so the phone sees the SSID in its list and prompts for the password), but auth/association frames
-    // from the phone never reach the ESP32 — NUM CLIENTS stays at 0 forever, Android pops "Impossible de se connecter au réseau Wi-Fi" with no
-    // further detail. Suspending the scan during the portal phase frees the RX path. Resumed in wifiStopPortal().
+    // Pause the BLE keyboard scan before touching the WiFi mode. On ESP32 the BLE and WiFi radios share the same 2.4 GHz front-end; a BLE scan at
+    // ~100 % duty cycle (the active-scan + 30 s window + immediate re-arm pattern used on first-onboarding boots — see mm_blekb.cpp setup()) starves
+    // the WiFi RX path. The symptom is: AP beacons go out fine (so the phone sees the SSID in its list and prompts for the password), but
+    // auth/association frames from the phone never reach the ESP32 — NUM CLIENTS stays at 0 forever, Android pops "Impossible de se connecter au
+    // réseau Wi-Fi" with no further detail. We pause the scan unconditionally here because the portal can also be triggered after a bond exists
+    // (manual `/wifi portal`), in which case the scan is in passive mode but its overhead — plus the keyboard's keep-alive notify traffic — still
+    // perturbs association. Resumed in wifiStopPortal().
     g_kb.pauseScan();
 
     // Hard reset of the WiFi driver BEFORE handing over to WiFiManager. Symmetric to the cleanup we already do in wifiStopPortal() (see the long
@@ -397,6 +399,17 @@ WifiState wifiGetState() {
 // NVS persistence
 // ================================================================================
 
+// Centralised NVS key shape so the four call-sites that touch the saved-network list (load/save/forget/print) cannot drift apart. Slot indices are
+// stored as "ssid_<n>" / "pwd_<n>" where <n> is the small loop index (0..MAX_WIFI_NETWORKS-1). Changing the prefix or padding rule only needs an
+// edit here.
+static inline String wifiNvsSsidKey(uint8_t i) {
+    return String("ssid_") + (int)i;
+}
+static inline String wifiNvsPwdKey(uint8_t i) {
+    return String("pwd_") + (int)i;
+}
+
+
 // Loads every known network into WiFiMulti: first the NVS-saved ones (user-managed, password may have been updated via portal), then the
 // compile-time defaults from personal-data.h. Deduplication is by SSID with NVS winning: if "SatelliteThree" is both in NVS and in the compiled
 // defaults, only the NVS entry is used — its password is potentially fresher (user reconfigured via portal after changing the home router pass).
@@ -420,8 +433,8 @@ static int wifiLoadNVSAndCompiledIntoMulti() {
     uint8_t count     = g_wifiPrefs.getUChar("count", 0);
     int     loadedNvs = 0;
     for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
-        String ssidKey = "ssid_" + String((int)i);
-        String pwdKey  = "pwd_" + String((int)i);
+        String ssidKey = wifiNvsSsidKey(i);
+        String pwdKey  = wifiNvsPwdKey(i);
         String ssid    = g_wifiPrefs.getString(ssidKey.c_str(), "");
         String pwd     = g_wifiPrefs.getString(pwdKey.c_str(), "");
         if (ssid.length() == 0) {
@@ -494,10 +507,10 @@ bool wifiSaveToNvs(const char* ssid, const char* pwd) {
 
     // First pass: is this SSID already saved? If yes, overwrite the password in place.
     for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
-        String ssidKey  = "ssid_" + String((int)i);
+        String ssidKey  = wifiNvsSsidKey(i);
         String existing = g_wifiPrefs.getString(ssidKey.c_str(), "");
         if (existing == ssid) {
-            String pwdKey = "pwd_" + String((int)i);
+            String pwdKey = wifiNvsPwdKey(i);
             g_wifiPrefs.putString(pwdKey.c_str(), pwd ? pwd : "");
             g_wifiPrefs.end();
             ESP_LOGI(TAG_WIFI, "Updated password for existing SSID [%s] in slot %u", ssid, (unsigned)i);
@@ -507,10 +520,10 @@ bool wifiSaveToNvs(const char* ssid, const char* pwd) {
 
     // Second pass: find a free slot (empty SSID from a previous /wifi forget).
     for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
-        String ssidKey  = "ssid_" + String((int)i);
+        String ssidKey  = wifiNvsSsidKey(i);
         String existing = g_wifiPrefs.getString(ssidKey.c_str(), "");
         if (existing.length() == 0) {
-            String pwdKey = "pwd_" + String((int)i);
+            String pwdKey = wifiNvsPwdKey(i);
             g_wifiPrefs.putString(ssidKey.c_str(), ssid);
             g_wifiPrefs.putString(pwdKey.c_str(), pwd ? pwd : "");
             g_wifiPrefs.end();
@@ -521,8 +534,8 @@ bool wifiSaveToNvs(const char* ssid, const char* pwd) {
 
     // Third pass: append a new slot if we haven't reached MAX yet.
     if (count < MAX_WIFI_NETWORKS) {
-        String ssidKey = "ssid_" + String((int)count);
-        String pwdKey  = "pwd_" + String((int)count);
+        String ssidKey = wifiNvsSsidKey(count);
+        String pwdKey  = wifiNvsPwdKey(count);
         g_wifiPrefs.putString(ssidKey.c_str(), ssid);
         g_wifiPrefs.putString(pwdKey.c_str(), pwd ? pwd : "");
         g_wifiPrefs.putUChar("count", count + 1);
@@ -545,10 +558,10 @@ bool wifiForgetFromNvs(const char* ssid) {
     uint8_t count   = g_wifiPrefs.getUChar("count", 0);
     bool    removed = false;
     for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
-        String ssidKey  = "ssid_" + String((int)i);
+        String ssidKey  = wifiNvsSsidKey(i);
         String existing = g_wifiPrefs.getString(ssidKey.c_str(), "");
         if (existing == ssid) {
-            String pwdKey = "pwd_" + String((int)i);
+            String pwdKey = wifiNvsPwdKey(i);
             g_wifiPrefs.putString(ssidKey.c_str(), "");
             g_wifiPrefs.putString(pwdKey.c_str(), "");
             removed = true;
@@ -577,17 +590,17 @@ void wifiPrintListToConversation() {
     printInfoLine("Saved WiFi networks:");
     int shown = 0;
     for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
-        String ssidKey = "ssid_" + String((int)i);
+        String ssidKey = wifiNvsSsidKey(i);
         String ssid    = g_wifiPrefs.getString(ssidKey.c_str(), "");
         if (ssid.length() == 0) {
             continue;
         }
         String line = "  " + ssid;
-        printInfoLine( line);
+        printInfoLine(line);
         shown++;
     }
     if (shown == 0) {
-        printInfoLine( "  (none)");
+        printInfoLine("  (none)");
     }
     g_wifiPrefs.end();
 }

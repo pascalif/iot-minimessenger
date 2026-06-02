@@ -1,5 +1,7 @@
 # Features à faire
 
+LEdt de statu consolidé (pas wifi ou pas mqtt). Necessaire si bloque sur info screen + eco d'ecran
+
 
 # Features à modifier
 
@@ -9,18 +11,68 @@ Mettre en cohérence la status bar et les leds sachant que les leds sont structu
 Règles:
 - LED_STATUS
 
+
+Tu dis
+"Le rc=-4 est MQTT_CONNECTION_TIMEOUT côté PubSubClient"
+
+ce qui n'est pas comme le commentaire
+// rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
+// rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
+
+Quelle est la bonne version. Complete mon commentaire dans le code avec des rc qui sont possibles et utiles (pas toute la liste) et leur fichier source.
+
+
+=====
+TODO quest defaultRecipientId
+
+puis remplacer tout
+g_deviceIdMe = entry->deviceId;
+snprintf(g_userPseudo, sizeof(g_userPseudo), "%s", entry->pseudo);
+snprintf(g_deviceName, sizeof(g_deviceName), "%s_%03d", entry->namePrefix, g_deviceIdMe);
+g_displayType = entry->screen;
+
+
+==
+creds
+// MQTT Broker credentials. Kept here next to the other "Secrets" — the rest of the MQTT config (topics, timing, QoS flags) lives in mqtt.h/mqtt.ino.
+const char* mqtt_server   = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
+const int   mqtt_port     = 8883;                                                   // TLS Port
+const char* mqtt_user     = "xxxxx";                                                // Credential Username
+const char* mqtt_password = "xxxxxxx";                                             // Credential Password
+
+
+================
+pq multiwifi si long à se connecter au boot ? c'était presque instantanné avant
+================
+
+Nom de l'emetteur
+
+
+====
+bug constantes 40
+
+=============
+
+section debug avec tous les logs
+
+147 +    g_wifiManager.setDebugOutput(false);
+
+Si tu chasses une instabilité actuelle, je regarderais d'abord :
+1. Quelle est la nature de l'instabilité ? reboot ESP, freeze écran, MQTT qui décroche, BLE qui se déconnecte, ESP qui panic ? Le profil de symptôme oriente la cause.
+2. Active esp_log_set_level("*", ESP_LOG_VERBOSE) un moment et regarde le dernier log avant l'événement.
+3. Active CONFIG_HEAP_POISONING_COMPREHENSIVE (menuconfig / sdkconfig) pour détecter les use-after-free.
+
+
+
+================
+
+Point sur les QoS
+
 ================
 
 Extraire fichiers de constantes
 
 
-
-=====
-
-Refait un audit complet du projet.
-
-- logo16_glcd_bmp
--
 ================
 
 ❯ a quoi sert dans loop() le timer pour faire un redrawStatusBar ?  N'est ce pas dessiné à la demande qd un toggle change ou qu'on revient sur l'écran de conversations?

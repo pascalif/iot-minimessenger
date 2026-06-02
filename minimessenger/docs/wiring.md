@@ -18,30 +18,28 @@ wrapper ces defines dans #ifdef PAC_ON_ESP32 ou utiliser des valeurs différente
 
 ```
                           ┌─────────────────────────┐                                                  ┌──────┬──────────────────────────────────────────────────┐
-                    EN ──►│ 1                    30 ├── GPIO23 ──────────────────────────────────────┐ │      │                                                  │
-                  GPIO36 ─┤ 2 (input only)       29 │     GPIO22 (free)                              │ │      │                                                  │
-                  GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser                      │ │      │                                                  │
-                  GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser                 ┌────┼►│ST(CS)│                                                  │
-                  GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                       │┌───┼►│  DC  │                                                  │
-  GND ─[220Ω]─|◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                       ││   │ │ RST  │                                                  │
-  GND ─[220Ω]─|◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ─────────────────────────────────────┼┼──┐└►│ SDA  │                                                  │
-  GND ─[220Ω]─|◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ─────────────────────────────────────┘│  └─►│ SCL  │             ST7789 panel — 320 × 240             │
-                  GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                        │┌───►│ VCC  │                                                  │
-                  GPIO27 ─┤ 10                   21 │     GPIO16 (free)                        ││    │ GND  │                                                  │
-                  GPIO14 ─┤ 11                   20 │     GPIO4  (free)                        ││    │      │                                                  │
-                  GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ──────────────────────────────────┘│    │      │                                                  │
-                  GPIO13 ─┤ 13                   18 │     GPIO15 *strap                           │    │      │                                                  │
-                     GND ─┤ 14                   17 │     GND ─────────┐                          │    │      │                                                  │
-                  5V/VIN ─┤ 15                   16 ├── 3V3    ────────┼──────────────────────────┘    │      │                                                  │
+                    EN ──►│ 1                    30 ├── GPIO23 ─────────────────────────────────┐      │      │                                                  │
+                  GPIO36 ─┤ 2 (input only)       29 │     GPIO22 (free)                         │      │      │                                                  │
+                  GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser                 │      │      │                                                  │
+                  GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser         ┌───────┼───►  │ST(CS)│                                                  │
+                  GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                 │ ┌─────┼───►  │  DC  │                                                  │
+  GND ─[220Ω]─|◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                 │ │     │      │ RST  │                                                  │
+  GND ─[220Ω]─|◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ─────────────────────────┼─┼───┐ └───►  │ SDA  │                                                  │
+  GND ─[220Ω]─|◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ─────────────────────────┘ │   └─────►  │ SCL  │             ST7789 panel — 320 × 240             │
+                  GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                   │ ┌───────►  │ VCC  │                                                  │
+                  GPIO27 ─┤ 10                   21 │     GPIO16 (free)                   │ │          │ GND  │                                                  │
+                  GPIO14 ─┤ 11                   20 │     GPIO4  (free)                   │ │          │      │                                                  │
+                  GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ───────────────────────────┘ │          │      │                                                  │
+                  GPIO13 ─┤ 13                   18 │     GPIO15 *strap                     │          │      │                                                  │
+                     GND ─┤ 14                   17 │     GND ─────────┐                    │          │      │                                                  │
+                  5V/VIN ─┤ 15                   16 ├── 3V3    ────────┼────────────────────┘          │      │                                                  │
                           └────────────┬────────────┘                  │                               └──────┴─────────────────────┬────────────────────────────┘
                                     ┌──┴──┐                            │                                                            │
                                     │ USB │                            │                                                            │  (TFT GND)
                                     └─────┘                            │                                                            │
                                                                        │                                                            │
-══════════════════════════════════════════════════════════════════════╧════════════════════════════════════════════════════════════╧═════════════ GND rail
-                                                                       (common ground — tied to ESP32 GND pin 17, the three LED cathodes
-                                                                        via 220 Ω each, and the TFT GND pin. Pin 14 (left header) is
-                                                                        internally bonded to pin 17 on the ESP32 module, so one wire suffices.)
+═══════════════════════════════════════════════════════════════════════╧════════════════════════════════════════════════════════════╧═════════════ GND rail
+                           (common ground — tied to ESP32 GND pin 17, the three LED cathodes via 220 Ω each, and the TFT GND pin.
 ```
 
 **Legend**
