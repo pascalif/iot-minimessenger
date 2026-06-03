@@ -154,8 +154,106 @@ Le partition scheme change tout :
 | Minimal SPIFFS              | 1.9 MB  | 1.9 MB   | 16 KB  | 192 KB        |
 
 Pour changer ces valeurs au-delà des presets, il faut fournir un
-`partitions.csv` custom (placé à côté du sketch) — possible mais sort des
-sentiers Arduino classiques.
+`partitions.csv` custom (placé à côté du sketch) — voir section
+suivante.
+
+### `partitions.csv` — verrouiller le layout dans le repo
+
+Pour qu'un clone du projet ait une garantie sur le layout flash sans
+dépendre du choix manuel dans `Tools → Partition Scheme`, on peut
+poser un fichier `partitions.csv` à côté du `.ino` principal.
+arduino-esp32 le ramasse automatiquement quand on sélectionne
+`PartitionScheme=custom` dans le menu Tools (ou dans le FQBN
+arduino-cli). Le fichier est versionné dans git → reproductibilité.
+
+#### Format
+
+Une ligne par partition, séparateurs virgule, commentaires `#`. Cinq
+colonnes obligatoires plus une optionnelle :
+
+```
+# Name,    Type, SubType,  Offset,    Size,     Flags
+```
+
+- **Name** : étiquette interne (apparaît dans les logs ESP-IDF, sans
+  contrainte d'unicité côté firmware mais pratique unique).
+- **Type** : `app` (partition contenant un firmware exécutable) ou
+  `data` (tout le reste : NVS, SPIFFS, OTA metadata, coredump…).
+- **SubType** : précise le rôle.
+  - Pour `app` : `factory` (slot unique, jamais OTA), `ota_0` /
+    `ota_1` / … / `ota_15` (slots OTA), `test`.
+  - Pour `data` : `nvs`, `ota` (le 8 KB qui dit quel `ota_X` booter),
+    `spiffs`, `littlefs`, `fat`, `coredump`, `phy`, `nvs_keys`,
+    `efuse`.
+- **Offset** : adresse de début dans la flash (hex). Doit être aligné
+  sur 0x10000 (64 KB) pour les partitions `app`, sur 0x1000 (4 KB)
+  pour les `data`. Peut être laissé vide → calculé automatiquement.
+- **Size** : taille (hex). Pour `app`, multiple de 0x10000.
+- **Flags** (optionnel) : `encrypted` si flash encryption activé. La
+  plupart du temps laissé vide.
+
+Le total doit tenir dans la taille de la flash (4 MB = 0x400000 sur
+les modules ESP32 typiques).
+
+#### Exemple 1 — layout actuel (Huge App, pas d'OTA)
+
+```csv
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x300000,
+spiffs,     data, spiffs,   0x310000,  0xE0000,
+coredump,   data, coredump, 0x3F0000,  0x10000,
+```
+
+Bilan : 20 KB NVS + 8 KB otadata + **3 MB app** + 896 KB spiffs +
+64 KB coredump = 4 MB. Un seul slot app → pas d'OTA possible (rien
+vers quoi basculer), mais 3 MB pour le binaire (qui consomme ~1.56 MB
+aujourd'hui = 51 % occupé).
+
+Curiosité : la sous-partition s'appelle `ota_0` malgré l'absence
+d'OTA. C'est juste la convention arduino-esp32 ; le bootloader IDF
+sait booter un seul `ota_0` sans `ota_1` (il regarde `otadata`,
+trouve "boot ota_0", boote).
+
+#### Exemple 2 — double OTA sans SPIFFS
+
+Pour activer l'OTA tout en laissant assez de place pour notre binaire
+de 1.56 MB **et** se débarrasser du SPIFFS qu'on n'utilise pas :
+
+```csv
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x1F0000,
+app1,       app,  ota_1,    0x200000,  0x1F0000,
+coredump,   data, coredump, 0x3F0000,  0x10000,
+```
+
+Bilan : 20 KB NVS + 8 KB otadata + 2× **1.94 MB** app + 64 KB
+coredump = 4 MB. 0x1F0000 = 2 031 616 B par slot → ~470 KB de
+headroom au-delà du binaire actuel (1.94 MB − 1.56 MB). Aucun SPIFFS,
+mais ce projet ne s'en sert pas.
+
+Le bootloader basculera entre app0 et app1 à chaque OTA réussie ; en
+cas d'OTA boguée, il sait rollback vers l'autre slot (mécanique gérée
+par ESP-IDF + l'API `Update` côté Arduino).
+
+#### Comment activer un `partitions.csv` custom
+
+Trois voies :
+
+1. **Arduino IDE GUI** : `Tools → Partition Scheme → Custom`. À ce
+   moment-là, arduino-esp32 utilise le `partitions.csv` du dossier
+   sketch. Inconvénient : facile à oublier après un changement de
+   préférence — d'où l'intérêt du `sketch.yaml` ci-dessous.
+2. **arduino-cli + sketch.yaml** : le fichier `sketch.yaml`
+   (versionné dans le repo) fixe le FQBN à
+   `esp32:esp32:esp32:PartitionScheme=custom,...`. Aucune action
+   manuelle côté contributeur, le build est reproductible.
+3. **PlatformIO** : variable `board_build.partitions =
+   partitions.csv` dans `platformio.ini`. Hors scope d'un projet
+   Arduino IDE classique.
 
 ## DRAM — où vivent les variables au runtime
 
@@ -382,10 +480,72 @@ Caractéristiques NVS :
 - Atomicité par clé (pas par batch).
 
 **Pas le bon endroit pour** :
-- Logs (écriture trop fréquente → use SPIFFS ou rien).
+- Logs (écriture trop fréquente → use SPIFFS / LittleFS, ou rien).
+- Gros blobs structurés (> ~1 KB) — la limite NVS par valeur tape
+  vite, et la sérialisation devient pénible.
 - Identités device permanentes (préférer hardcoder dans
   `personal-data.h` indexé par MAC → la table compilée est dans
   `.rodata` et n'a pas le coût d'écriture).
+
+## SPIFFS / LittleFS — système de fichiers embarqué (non utilisé ici)
+
+Mentionné en passant dans les sections précédentes : **SPIFFS** (*SPI
+Flash File System*) est un mini-FS qui vit dans une partition flash
+dédiée et expose une API POSIX-like (`open`, `read`, `write`,
+`close`). Sur arduino-esp32 on l'utilise via le global `SPIFFS` (ou
+`LittleFS`, son successeur recommandé) :
+
+```cpp
+File f = SPIFFS.open("/config.json", "r");
+String content = f.readString();
+f.close();
+```
+
+### À quoi ça sert
+
+C'est le bon endroit pour des données plus volumineuses ou plus
+structurées que ce que NVS gère bien :
+
+- **Pages web** pour un serveur HTTP embarqué (HTML/CSS/JS qu'on
+  flashe avec l'app et qu'on sert au navigateur).
+- **Assets binaires** : images bitmap, échantillons audio TTS, glyphes
+  de fontes custom non bakés en `.rodata`.
+- **Logs persistants** : append-only de quelques KB par fichier — ce
+  pour quoi NVS est mal adapté (écritures à chaque ligne usent la
+  flash trop vite, valeurs limitées en taille).
+- **Configurations exportables** : JSON / YAML lisibles à l'œil nu,
+  remplaçables sans reflasher tout le firmware.
+
+### Pourquoi ce projet ne s'en sert pas
+
+- **Identités peers** → table `COMPILED_DEVICE_DATA_ENTRIES` en dur
+  dans `personal-data.h`, gitignored par déploiement, compilée en
+  `.rodata`. Zéro écriture flash, lecture instantanée.
+- **Credentials WiFi** → NVS namespace `wifi` (faible volume,
+  écriture rare via le portail captif, atomicité gratuite).
+- **Bonds BLE** → NVS sous le namespace de NimBLE.
+- **Logs** → sortis sur le port série, pas persistés.
+- **Pages web** → pas de serveur HTTP embarqué.
+- **Assets graphiques** → les fontes `FreeSans*_latin1.h` et le logo
+  `splash.h` sont des tableaux C `const` → en flash via `.rodata`,
+  accédés via cache MMU, pas besoin d'un FS pour ça.
+
+Résultat : on n'a aucun besoin actif → on supprime la partition pour
+récupérer de la place pour l'OTA (cf. Exemple 2 du `partitions.csv`).
+
+### SPIFFS vs LittleFS
+
+Si un jour on en a besoin :
+
+| Critère                | SPIFFS                  | LittleFS (recommandé)         |
+|------------------------|-------------------------|-------------------------------|
+| Sous-dossiers          | Non (flat)              | Oui                           |
+| Wear leveling          | Basique                 | Meilleur, moins de power-fail |
+| Maturité ESP32         | Long historique         | Plus récent, activement maintenu |
+| API arduino-esp32      | `SPIFFS.open(...)`      | `LittleFS.open(...)` (même shape) |
+
+Pour un projet neuf en 2026 on choisirait LittleFS. SPIFFS reste là
+pour la compatibilité ascendante.
 
 ## eFuse — bits OTP en silicon
 
