@@ -27,16 +27,15 @@ Quelle est la bonne version. Complete mon commentaire dans le code avec des rc q
 ================
 
 
-
+remplacer les addConversationBlock pour les erreurs actelles (mais centrées :( )
 
 ================
 
-Que propose tu pour identifier le device d'un emetteur afin
-- d'exclure mes propres messages lorsque émis par notre code sur le topic de broadcast puis recus en tant que subscribed dans ce meme topic de broadcast
-- afficher le pseudo de l'auteur avant le timestamp du message
 
-avec la contrainte suivante afin de pouvoir debuger facilement et emettre des msgs rapidement depuis une console web ou app smartphone : un msg broadcast doit pouvoir
-etre "simple" (cad juste du texte, sans identification de l'emetteur ou autre format compliqué). On peut garder un format laxiste ou definir un 2eme topic de broadcast ?
+faire un bilan des tailles:
+- 500 pour mqtt
+- serial ?
+- bt ?
 
 
 =============
@@ -53,11 +52,6 @@ Si tu chasses une instabilité actuelle, je regarderais d'abord :
 ================
 
 Extraire fichiers de constantes
-
-
-================
-
-exclure les msgs broadcast venant de moi
 
 ================
 

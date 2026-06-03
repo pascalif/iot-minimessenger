@@ -303,8 +303,12 @@ int      g_lineCount = 0;
 #define CONVO_MSG_MARGIN_BOTTOM  7  //
 #define CONVO_HELP_MARGIN_BOTTOM 4  //
 
+#define CONVO_MYSELF_COLOR   ST77XX_WHITE
+#define CONVO_OTHERS_COLOR   ST77XX_YELLOW
+
 #define CONVO_INFO_COLOR  ST77XX_GREEN
 #define CONVO_ERROR_COLOR ST77XX_RED
+
 // Hot pink (RGB565 ≈ #FF69B4). Used by command-output listings (help / cmd echoes) to make them visually distinct from regular messages and from info/error notices.
 #define CONVO_CMD_COLOR 0xFB56
 
@@ -313,10 +317,11 @@ int      g_lineCount = 0;
 // instead of the default 5×7 font: the longest command name "/wifi forget" is ~75 px wide in FreeSans 9pt — 90 px leaves a clean ~15 px gap.
 #define INFO_LINE_RIGHT_COL_X 90
 
-// When two messages (incoming or outgoing) land within this many seconds,
-// suppress the second one's timestamp to declutter the conversation view.
-// The "last visible timestamp" tracking continues until a message arrives
-// outside the window, at which point the timestamp is shown again.
+// When two messages from the SAME author land within this many seconds, suppress the second one's timestamp to declutter the conversation view.
+// "Same author" is determined by senderDeviceId (see g_lastMsgSenderId, declared lower with DEVICE_ID_UNSET in scope): a sender change bypasses the
+// clustering window and always shows the timestamp, so the conversation visually breathes between speakers even if their messages arrive
+// back-to-back. The "last visible timestamp" tracking continues until either (a) a message arrives outside the window OR (b) a different sender
+// shows up, at which point the timestamp is shown again.
 #define CONVO_TS_HIDE_THRESHOLD_S 10
 time_t g_lastShownTsEpoch = 0;
 
@@ -350,6 +355,11 @@ byte g_inNextCharIndex = 0;
 // Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — only used by contacts.ino as the free-slot marker for the dynamic peer
 // table (`g_contacts[i].deviceId == DEVICE_ID_UNSET`). The local device's identity lives entirely in g_deviceData below.
 #define DEVICE_ID_UNSET 0xFF
+
+// deviceId of the author whose message last drove the ts-clustering tracker (see g_lastShownTsEpoch / CONVO_TS_HIDE_THRESHOLD_S above). Initialised
+// to DEVICE_ID_UNSET so the very first real message always shows its ts (any valid sender id ∈ [1..254] differs from UNSET → bypass triggers).
+// Updated inside addConversationBlock for every call with a non-empty ts; system messages (Ready / Lost server) pass ts="" and don't touch this.
+byte g_lastMsgSenderId = DEVICE_ID_UNSET;
 
 // Unified per-device identity record — populated once by identifyDevice() at boot. Two paths: clone the matching row of COMPILED_DEVICE_DATA_ENTRIES
 // (known MAC), or synthesise an entry on the fly (unknown MAC: random ID, "JohnDoe" pseudo, "UNK" prefix, ST7789 screen). After identifyDevice()
@@ -396,7 +406,7 @@ void refreshInfoScreenIfShown();
 void redrawStatusBar();
 void redrawInputFooter();
 bool noteUserActivity();
-void routeMessage(const String& message, MessageSource source);
+void routeMessage(const String& message, MessageSource source, byte senderDeviceId);
 void ledSetState(int pin, int requiredState);
 // mqttSendLiveness / mqttPushFormattedMessage / onMqttIncomingMessage prototypes provided by mqtt.h.
 void goAndResetConversationScreen();
@@ -719,8 +729,8 @@ void decodeHIDReport(uint8_t* pData, size_t length) {
             continue;
         } else if (key == KEY_ENTER) {
             if (g_currentMsgFromKeyboard.length() > 0) {
-                ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgId, g_currentMsgFromKeyboard.c_str());
-                routeMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL);
+                ESP_LOGI(TAG_BTKB, "ENTER — sending msg #%u: %s", g_mqttOutputMsgNextId, g_currentMsgFromKeyboard.c_str());
+                routeMessage(String(g_currentMsgFromKeyboard), MessageSource::LOCAL, g_deviceData.deviceId);
                 currentMsgClear();
             } else {
                 ESP_LOGD(TAG_BTKB, "ENTER on empty buffer — nothing to send");
@@ -1305,24 +1315,48 @@ void printInfoLineNumber(const String& left, uint32_t right, uint16_t color, con
     printInfoLine(left, String(right), color, font);
 }
 
-void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align) {
+void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align, byte senderDeviceId = DEVICE_ID_UNSET) {
     char msgBuf[CONVO_MSG_MAX_LEN];
     strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
     msgBuf[sizeof(msgBuf) - 1] = '\0';
     utf8ToLatin1(msgBuf);
     // Then use msgBuf everywhere instead of msg.c_str() for the on-screen draw.
 
-    // Timestamp clustering: if a timestamp was drawn less than
-    // CONVO_TS_HIDE_THRESHOLD_S ago, drop this one to declutter. Only "real"
-    // timestamps (non-empty ts) update the tracker — status lines like
-    // "Lost server" / "Ready !" pass ts="" and don't reset the window.
+    // Timestamp clustering + author prefix. Two-pronged:
+    //   - Clustering: hide ts if the previous message was from the SAME author and arrived less than CONVO_TS_HIDE_THRESHOLD_S ago. A sender change
+    //     bypasses the window — the ts is always re-shown so the eye can track who said what.
+    //   - Author prefix: prepend the sender's pseudo before the ts (e.g. "Pac 14:23:11") when the message is from a peer. For our own messages
+    //     (senderDeviceId == g_deviceData.deviceId) the RIGHT alignment is already the visual cue, no prefix. For system lines (Ready / Lost
+    //     server / [ERROR]) ts is "" and we skip the whole block.
     if (!ts.isEmpty()) {
-        time_t now = time(nullptr);
-        if (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S) {
-            ts = "";  // suppress the timestamp; the rest of the function handles it
+        const time_t now              = time(nullptr);
+        const bool   sameSenderAsLast = (senderDeviceId == g_lastMsgSenderId);
+        const bool   insideWindow     = (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
+
+        if (sameSenderAsLast && insideWindow) {
+            ts = "";  // suppressed; the empty-ts path below skips the ts row entirely
+        } else if (senderDeviceId != DEVICE_ID_UNSET && senderDeviceId != g_deviceData.deviceId) {
+            // Peer or anonymous "unk" — prefix the pseudo. findById() does an O(N) walk over COMPILED_DEVICE_DATA_ENTRIES; the table is small
+            // (a handful of rows) so the lookup is essentially free, and doing it here keeps the routing layer agnostic to identity.
+            const char* pseudoSrc = "unk";  // default = received without trailer (web console / mosquitto_pub)
+            if (senderDeviceId != 0) {
+                const DeviceDataEntry* entry = DeviceDataEntry::findById(senderDeviceId);
+                pseudoSrc                    = (entry != nullptr) ? entry->pseudo : "???";
+            }
+            // Pseudos in personal-data.h may carry accents (Aimée, François, …). The font used to draw `ts` only knows Latin-1 codepoints, so we
+            // convert via utf8ToLatin1 — same pre-treatment we do further below for `msg`. Buffer sized for short pseudos (convention: < 16 chars).
+            char pseudoBuf[24];
+            strncpy(pseudoBuf, pseudoSrc, sizeof(pseudoBuf) - 1);
+            pseudoBuf[sizeof(pseudoBuf) - 1] = '\0';
+            utf8ToLatin1(pseudoBuf);
+            ts = String(pseudoBuf) + " - " + ts;
         }
-        // Reset dans tous les cas, on compare chaque message à la date de son précédent (meme si TS pas affiché)
+
+        // Always update the trackers when we entered this block, even if ts was suppressed: the NEXT message compares against this most recent
+        // arrival, not the most recent DISPLAYED ts. Otherwise a long stream of same-sender messages would never reset and a sender change after
+        // many silent clusters wouldn't bypass cleanly.
         g_lastShownTsEpoch = now;
+        g_lastMsgSenderId  = senderDeviceId;
     }
 
     // Dimension TS
@@ -1576,7 +1610,7 @@ void dumpMemInfo() {
 
 }
 
-void routeMessage(const String& message, MessageSource source) {
+void routeMessage(const String& message, MessageSource source, byte senderDeviceId) {
     //ESP_LOGI(TAG_MM, "routing msg [%s]", message.c_str());
 
     // Step 1 — always wake the screen. We ignore noteUserActivity()'s "was sleeping"
@@ -1590,21 +1624,18 @@ void routeMessage(const String& message, MessageSource source) {
         return;
     }
 
-    // Step 3 — render in the conversation; for LOCAL, also publish so peers see it.
+    // Step 3 — render in the conversation
+    char * now = getCurrentTime();
     if (source == MessageSource::REMOTE) {
-        addConversationBlock(getCurrentTime(), message, ST77XX_YELLOW, LEFT);
+        addConversationBlock(now, message, CONVO_OTHERS_COLOR, LEFT, senderDeviceId);
     }
     // LOCAL (serial ou BT)
     else {
-        addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
-        // Chat messages are events, not state — published with retained=false so the broker doesn't replay them to fresh subscribers (which would
-        // make every reboot re-display the last conversation line). The retain flag is only used by mqttSendLiveness() on admin/liveness/<id>.
         bool published = mqttPushFormattedMessage(g_mqttOutgoingRecipientTopic, message.c_str());
         if (!published) {
-            // Naive WhatsApp-style "send failed" indicator: append a second block right under the original one, in error red, prefixed with [ERROR] so
-            // the user knows that specific message didn't reach the broker. To be replaced later with a per-message status icon (sending / sent / failed)
-            // overlaid on the original block — but the present block-pair is enough to surface the failure without any new UI machinery.
-            addConversationBlock("", "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT);
+            addConversationBlock(now, "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT, senderDeviceId);
+        } else {
+            addConversationBlock(now, message, CONVO_MYSELF_COLOR, RIGHT, senderDeviceId);
         }
     }
 }
@@ -1961,22 +1992,14 @@ void loop() {
     while (Serial.available() > 0) {
         g_inChar = Serial.read();
 
-        // Wake screen on any serial char. If we were sleeping, swallow this char:
-        // the user typed it to light the screen, not to compose a message.
-        if (noteUserActivity()) {
-            continue;
-        }
+        // Wake screen on any serial char but do not swallow the char
+        noteUserActivity();
 
         // 'Enter key' : send message
         if (g_inChar == '\n') {
             if (g_inNextCharIndex > 0) {
-                ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s", g_mqttOutputMsgId, g_fullMsgFromSerial);
-                // Hand the buffer to the common funnel: wakes the screen, intercepts
-                // CMD_* commands locally, otherwise renders RIGHT + publishes via
-                // MQTT. Don't inline displayLocalMessage + mqttPushFormattedMessage
-                // here — that would skip command interception and force every serial
-                // 'cmd ...' string to be echoed/published to peers.
-                routeMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL);
+                ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s", g_mqttOutputMsgNextId, g_fullMsgFromSerial);
+                routeMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL, g_deviceData.deviceId);
                 resetSerialBuffer();
             } else {
                 // Message is empty. Do nothing

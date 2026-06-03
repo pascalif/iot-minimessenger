@@ -32,7 +32,7 @@ extern WiFiClientSecure g_wifiClient;
 // LED + display helpers called from this file (LED on after a successful connect, message routing for incoming chat messages, contact liveness LEDs).
 // Forward-declared so the auto-prototype ordering does not bite us.
 extern void  ledSetState(int pin, int requiredState);
-extern void  routeMessage(const String& message, MessageSource source);
+extern void  routeMessage(const String& message, MessageSource source, byte senderDeviceId);
 extern void  onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 extern char* getCurrentDateTime();
 
@@ -52,13 +52,15 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // ================================================================================
 PubSubClient  g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
 int           g_mqttConnectionId                 = -1;
-unsigned int  g_mqttOutputMsgId                  = 0;
+unsigned int  g_mqttOutputMsgNextId                  = 0;
 bool          g_mqttWasConnected                 = false;
 unsigned long g_mqttLastReconnectTryTimestampMs  = 0;
 unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
 uint8_t       g_mqttReconnectAttempts            = 0;
 
+// Pas partagé, mais permet d'allouer une fois pour toute dans la mémoire .bss
 char g_mqttOutgoingMsg[MSG_BUFFER_SIZE];
+
 char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
 
 
@@ -258,12 +260,14 @@ void mqttSendLiveness(MQTTLiveness subtype) {
 // topics, MQTT_MSG_NOT_RETAINED for events (chat messages). See docs/howto_mqtt.md. Note: liveness publishes go through mqttSendLiveness() with a
 // dedicated minimal payload (no trailer), they don't call this function.
 bool mqttPushFormattedMessage(const char* topic, const char* payload) {
-    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgId);
+    // The sentinel between user payload and trailer is the shared MQTT_TRAILER_SENTINEL constant from mqtt.h — same string is matched by
+    // extractSenderAndStripTrailer() on the receiver side. The C string concatenation glues it into the snprintf format literal at compile time.
+    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s" MQTT_TRAILER_SENTINEL "ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgNextId);
 
     // Publishing. Only QoS 0 is possible at publish time with PubSubClient
     bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_NOT_RETAINED);
     if (ok) {
-        ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
+        ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgNextId, topic, g_mqttOutgoingMsg);
     } else {
         // On failure, include state() and the payload size so we can tell apart the four PubSubClient failure modes (see CLAUDE.md / discussions):
         //   state =  0 (MQTT_CONNECTED)         → write to the socket failed mid-send (TCP buffer full, TLS error, link dropped between connected()
@@ -273,14 +277,14 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
         //   state = -4 (MQTT_CONNECTION_TIMEOUT)→ TCP-level timeout. Mostly during a fresh connect, not on publish.
         ESP_LOGE(TAG_MQTT,
                  "Publish FAILED for #%u to [%s] state=%d size=%u : [%s]",
-                 g_mqttOutputMsgId,
+                 g_mqttOutputMsgNextId,
                  topic,
                  g_mqttClient.state(),
                  (unsigned)strlen(g_mqttOutgoingMsg),
                  g_mqttOutgoingMsg);
     }
 
-    g_mqttOutputMsgId++;
+    g_mqttOutputMsgNextId++;
     return ok;
 }
 
@@ -324,6 +328,42 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
 // On subscribe we receive it, compare the embedded epoch against our local time(nullptr), and ignore it if older than the keepalive window + 5 s of
 // margin. The check is gated by "our own clock is plausibly synced" (time(nullptr) > 1.7e9 — same threshold setupNTP uses) — early-boot devices
 // without NTP yet can't compare, so they fall back to trusting the LIVE rather than locking out every peer.
+
+
+// Trailer parser for chat payloads on msg/broadcast and msg/unicast/<id>. mqttPushFormattedMessage() appends "<userMsg> ### ts:<…> deviceId:<n>
+// msgId:<n>" to every outgoing chat — we use that trailer here for self-echo filtering AND for author identification.
+//
+// Stripping policy — three cases:
+//   1. Sentinel " ### " absent                     → message intact, return 0 (anonymous, e.g. web console / mosquitto_pub publishing raw text).
+//   2. Sentinel present WITHOUT "deviceId:" field  → probably user-typed content that happened to contain " ### ". Don't touch the message, return 0.
+//   3. Sentinel present AND "deviceId:" field      → it IS our format. ALWAYS strip the trailer, regardless of whether the deviceId field parses
+//                                                    as a number in [1..254]. Otherwise a payload like "hello ### deviceId:Z" would display its
+//                                                    whole mangled trailer on screen. Return the valid id, or 0 if non-parseable / out-of-range.
+//
+// Return values:
+//   0      = no author identified (cases 1, 2, or 3-with-bad-id). Caller displays whatever remains with the "ext" prefix.
+//   1..254 = valid sender deviceId. Caller looks up pseudo and (unless == us) prefixes it to the ts.
+static byte extractSenderAndStripTrailer(String& message) {
+    const int sentinelIdx = message.indexOf(MQTT_TRAILER_SENTINEL);
+    if (sentinelIdx < 0) {
+        return 0;
+    }
+    const int devIdx = message.indexOf("deviceId:", sentinelIdx);
+    if (devIdx < 0) {
+        return 0;  // sentinelle isolée — probablement du texte utilisateur, on n'altère pas le payload
+    }
+
+    // À partir d'ici on est confiants que c'est notre format de trailer : on strip TOUJOURS, même si le deviceId est non-parseable / hors plage.
+    byte       senderId = 0;
+    const long parsed   = strtol(message.c_str() + devIdx + 9 /* strlen("deviceId:") */, nullptr, 10);
+    if (parsed >= 1 && parsed <= 254) {
+        senderId = (byte)parsed;
+    }
+    message = message.substring(0, sentinelIdx);
+    return senderId;
+}
+
+
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     String message;
     for (unsigned int i = 0; i < length; i++) {
@@ -385,9 +425,22 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     }
     // msg/unicast/<me> or msg/broadcast
     else if (topic[0] == 'm') {
+        // Trailer "… ### ts:<…> deviceId:<n> msgId:<n>" is added by mqttPushFormattedMessage() for every chat message published by our own code.
+        // We use it for two things:
+        //   1. Self-filter: when WE publish on msg/broadcast, the broker echoes our payload back to us through the same subscription. The trailer
+        //      identifies the echo and we drop it silently (no double-display).
+        //   2. Identify the author for the UI pseudo prefix — passed through to routeMessage and ultimately to addConversationBlock.
+        // Messages from a web-MQTT console / mosquitto_pub have no trailer; they fall through with senderId=0 and are displayed as "ext".
+        byte senderId = extractSenderAndStripTrailer(message);
+
+        if (senderId != 0 && senderId == g_deviceData.deviceId) {
+            ESP_LOGD(TAG_MQTT, "Ignoring self-echo on [%s]", topic);
+            return;
+        }
+
         // Route through the common funnel: wakes the screen, intercepts CMD_*
         // commands, otherwise renders LEFT.
-        routeMessage(message, MessageSource::REMOTE);
+        routeMessage(message, MessageSource::REMOTE, senderId);
 
     } else {
         ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());

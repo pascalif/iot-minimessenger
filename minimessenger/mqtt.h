@@ -90,6 +90,13 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
 #define MQTT_QOS_1 1
 #define MQTT_QOS_2 2
 
+// Sentinel that separates the user payload from the metadata trailer ("ts:… deviceId:… msgId:…") appended by mqttPushFormattedMessage() to every
+// outgoing chat message. The string MUST stay in sync between the writer side (the snprintf format in mqtt.ino) and the parser side
+// (extractSenderAndStripTrailer in mqtt.ino) — that's why it lives here as a single source of truth. The leading + trailing spaces are part of the
+// sentinel; they make accidental collisions with user-typed content less likely and visually break the trailer in serial logs. Defined as a string
+// literal so it can be concatenated directly into a snprintf format ("%s" MQTT_TRAILER_SENTINEL "ts:%s …").
+#define MQTT_TRAILER_SENTINEL " ### "
+
 
 // ================================================================================
 // Buffers
@@ -129,7 +136,7 @@ extern const MQTTServerInfo g_mqttServerInfo;
 // ================================================================================
 extern PubSubClient  g_mqttClient;        // PubSubClient bound to the WiFiClientSecure declared in minimessenger.ino.
 extern int           g_mqttConnectionId;  // monotonically incremented on each successful (re)connect. -1 before the first.
-extern unsigned int  g_mqttOutputMsgId;   // monotonic id appended to every outgoing payload (### msgId:<n>).
+extern unsigned int  g_mqttOutputMsgNextId;   // monotonic id appended to every outgoing payload (### msgId:<n>).
 extern bool          g_mqttWasConnected;  // edge-detection latch — true while connected, falls to false on the first loop iteration that sees the link down.
 extern unsigned long g_mqttLastReconnectTryTimestampMs;             // millis() of the last mqttReconnectAttempt() attempt — used to throttle retries.
 extern uint8_t       g_mqttReconnectAttempts;                       // failed attempts since the last successful (re)connect; drives mqttReconnectDelayMs().
