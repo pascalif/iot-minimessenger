@@ -3,7 +3,7 @@
 // ================================================================================
 //
 // This file owns everything related to the "/cmd" surface area: the CMD_*/GROUP_* constants, the top-level dispatcher processPayloadAsCommand,
-// the per-group sub-dispatchers (/wifi *, /dbg *), and the three help printers (global + per-group partial).
+// the per-group sub-dispatchers (/wifi *, /mqtt *, /bt *, /dbg *), and the help printers (global + one partial per group).
 //
 // It does NOT own the funnel — routeMessage() in minimessenger.ino is the single insertion point for any payload arriving over MQTT, Serial or
 // the BLE keyboard, and it calls processPayloadAsCommand() as one of its steps. See the header comment in minimessenger.ino around routeMessage
@@ -16,7 +16,7 @@
 #include <Arduino.h>
 #include "wifi.h"
 #include "mm_log.h"
-#include "mqtt.h"  // /mqtt-drop calls g_mqttClient.disconnect(); the symbol is defined in mqtt.ino which is concatenated AFTER commands.ino.
+#include "mqtt.h"  // /mqtt drop calls g_mqttClient.disconnect(); the symbol is defined in mqtt.ino which is concatenated AFTER commands.ino.
 
 // ----------------------------------------------------------------------------
 // Local commands + message funnel
@@ -28,26 +28,26 @@
 //   1. Wake the screen via noteUserActivity() — every payload is a real user-initiated event and must be visible, regardless of dim/off state.
 //   2. Try to interpret the payload as a local command (CMD_* / GROUP_* below). Commands run locally and are NEITHER displayed in the conversation
 //      NOR republished to peers, so an MQTT "/wifi drop" cleanly disconnects the recipient without polluting anyone's screen, and a serial
-//      "/bt-clean" wipes BLE bonds without leaking that string to other devices.
+//      "/bt clean" wipes BLE bonds without leaking that string to other devices.
 //   3. Otherwise route to display: LEFT for REMOTE, RIGHT for LOCAL — and for LOCAL, also publish to peers over MQTT so they receive the text.
 //
 // Why ONE funnel rather than scattering the wake / interpret logic across each channel's handler: it keeps the command vocabulary in one place,
 // and any future channel just has to call routeMessage() with the right source to inherit all three steps.
 // ----------------------------------------------------------------------------
 
-// Orphan commands — shown directly in the global /help listing. /mqtt-drop and /bt-clean stay top-level for now (no /mqtt * or /bt * group
-// would have a second subcommand to justify it); promote them into a group later if more verbs land in those families.
-const char* const CMD_HELP      = "/help";
-const char* const CMD_STATUS    = "/status";
-const char* const CMD_CLEAR     = "/clear";
-const char* const CMD_MQTT_DROP = "/mqtt-drop";
-const char* const CMD_BT_CLEAN  = "/bt-clean";
+// Orphan commands — shown directly in the global /help listing. Pure top-level verbs, no group structure (yet).
+const char* const CMD_HELP   = "/help";
+const char* const CMD_STATUS = "/status";
+const char* const CMD_CLEAR  = "/clear";
 
 // Group prefixes. Typing the bare prefix (e.g. just "/wifi") prints the group's partial help. Subcommands use a SPACE separator, not a hyphen:
 // "/wifi drop" instead of "/wifi-drop". This lets the dispatcher branch on `startsWith("/wifi ")` and parse the remaining argv with simple
 // substring math. The bare prefixes themselves are listed in the global /help so users discover the groups exist.
+// /mqtt and /bt currently host one subcommand each (drop / clean); the group skeleton is in place so additional verbs slot in without re-routing.
 const char* const GROUP_WIFI = "/wifi";
 const char* const GROUP_DBG  = "/dbg";
+const char* const GROUP_MQTT = "/mqtt";
+const char* const GROUP_BT   = "/bt";
 
 // WiFi subcommands. /wifi forget takes an SSID argument so it's matched via startsWith() with a trailing space rather than equality.
 const char* const CMD_WIFI_DROP   = "/wifi drop";
@@ -56,11 +56,16 @@ const char* const CMD_WIFI_LIST   = "/wifi list";
 const char* const CMD_WIFI_FORGET = "/wifi forget";  // payload: "/wifi forget <ssid>"
 const char* const CMD_WIFI_PORTAL = "/wifi portal";
 
-// Debug / diagnostic subcommands. Kept under /dbg because they're either visual recovery (redraw) or diagnostic dumps (chip, mem). User-facing
-// connectivity actions (/mqtt-drop, /bt-clean) live as orphans above.
+// Debug / diagnostic subcommands. Visual recovery (redraw) and diagnostic dumps (chip, mem).
 const char* const CMD_DBG_CHIP   = "/dbg chip";
 const char* const CMD_DBG_MEM    = "/dbg mem";
 const char* const CMD_DBG_REDRAW = "/dbg redraw";
+
+// MQTT subcommands.
+const char* const CMD_MQTT_DROP = "/mqtt drop";
+
+// BLE subcommands.
+const char* const CMD_BT_CLEAN = "/bt clean";
 
 
 // === Help printers ============================================================
@@ -74,9 +79,9 @@ void printHelpGlobal() {
     printInfoLine("/help", "list cmds");
     printInfoLine("/status", "info screen");
     printInfoLine("/clear", "wipe history");
-    printInfoLine("/mqtt-drop", "drop MQTT");
-    printInfoLine("/bt-clean", "clear bonds");
     printInfoLine("/wifi *", "WiFi mgmt");
+    printInfoLine("/mqtt *", "MQTT mgmt");
+    printInfoLine("/bt *", "BLE mgmt");
     printInfoLine("/dbg *", "diagnostics");
 }
 
@@ -90,6 +95,18 @@ void printHelpWifi() {
     printInfoLine("- portal", "open portal");
 }
 
+void printHelpMqtt() {
+    ESP_LOGI(TAG_MM, "Listing /mqtt subcommands");
+    printInfoLine("/mqtt subcmds:");
+    printInfoLine("- drop", "drop MQTT");
+}
+
+void printHelpBt() {
+    ESP_LOGI(TAG_MM, "Listing /bt subcommands");
+    printInfoLine("/bt subcmds:");
+    printInfoLine("- clean", "clear bonds");
+}
+
 void printHelpDbg() {
     ESP_LOGI(TAG_MM, "Listing /dbg subcommands");
     printInfoLine("/dbg subcmds:");
@@ -101,9 +118,9 @@ void printHelpDbg() {
 
 // === Dispatchers ==============================================================
 
-// Top-level command dispatcher. Two orphan commands (/help, /status) and two prefix groups (/wifi *, /dbg *). For groups, the bare prefix
-// (e.g. "/wifi" alone with no subcommand) prints the group's partial help; a typo subcommand (e.g. "/wifi xyzzy") prints an "Unknown" banner
-// followed by the same partial help. Returns true if the message was consumed as a command (caller skips display + republish).
+// Top-level command dispatcher. Three orphan commands (/help, /status, /clear) and four prefix groups (/wifi *, /mqtt *, /bt *, /dbg *). For groups,
+// the bare prefix (e.g. "/wifi" alone with no subcommand) prints the group's partial help; a typo subcommand (e.g. "/wifi xyzzy") prints an "Unknown"
+// banner followed by the same partial help. Returns true if the message was consumed as a command (caller skips display + republish).
 bool processPayloadAsCommand(const String& message) {
     if (message == CMD_HELP) {
         printHelpGlobal();
@@ -120,22 +137,16 @@ bool processPayloadAsCommand(const String& message) {
         clearConversationHistory();
         return true;
     }
-    if (message == CMD_MQTT_DROP) {
-        ESP_LOGI(TAG_MM, "Command [%s] — disconnecting MQTT", CMD_MQTT_DROP);
-        g_mqttClient.disconnect();
-        return true;
-    }
-    if (message == CMD_BT_CLEAN) {
-        // Delegated to the keyboard wrapper so the NimBLEDevice API stays encapsulated in mm_blekb. The wrapper emits its own "All bonds cleared"
-        // log under TAG_BTKB for traceability.
-        ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BT_CLEAN);
-        g_kb.clearAllExistingBonds();
-        return true;
-    }
     // Group routing: the bare prefix OR the prefix followed by a space. The trailing-space check rules out false positives like "/wifix" (no
     // such command, must not be misrouted into the WiFi dispatcher).
     if (message == GROUP_WIFI || message.startsWith(String(GROUP_WIFI) + " ")) {
         return processWifiSubcommand(message);
+    }
+    if (message == GROUP_MQTT || message.startsWith(String(GROUP_MQTT) + " ")) {
+        return processMqttSubcommand(message);
+    }
+    if (message == GROUP_BT || message.startsWith(String(GROUP_BT) + " ")) {
+        return processBtSubcommand(message);
     }
     if (message == GROUP_DBG || message.startsWith(String(GROUP_DBG) + " ")) {
         return processDbgSubcommand(message);
@@ -186,8 +197,43 @@ bool processWifiSubcommand(const String& message) {
     }
     // Unknown subcommand — show what's available so the user can correct.
     ESP_LOGW(TAG_MM, "Unknown /wifi subcommand: [%s]", message.c_str());
-    printInfoLine("Unknown /wifi cmd:", CONVO_ERROR_COLOR);
+    printInfoLine("Unknown /wifi cmd", CONVO_ERROR_COLOR);
     printHelpWifi();
+    return true;
+}
+
+bool processMqttSubcommand(const String& message) {
+    if (message == GROUP_MQTT) {
+        printHelpMqtt();
+        return true;
+    }
+    if (message == CMD_MQTT_DROP) {
+        ESP_LOGI(TAG_MM, "Command [%s] — disconnecting MQTT", CMD_MQTT_DROP);
+        g_mqttClient.disconnect();
+        return true;
+    }
+    ESP_LOGW(TAG_MM, "Unknown /mqtt subcommand: [%s]", message.c_str());
+    printInfoLine("Unknown /mqtt cmd", CONVO_ERROR_COLOR);
+    printHelpMqtt();
+    return true;
+}
+
+bool processBtSubcommand(const String& message) {
+    if (message == GROUP_BT) {
+        printHelpBt();
+        return true;
+    }
+    if (message == CMD_BT_CLEAN) {
+        // Delegated to the keyboard wrapper so the NimBLEDevice API stays encapsulated in mm_blekb. The wrapper emits its own "All bonds cleared"
+        // log under TAG_BTKB for traceability.
+        ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BT_CLEAN);
+        g_kb.clearAllExistingBonds();
+        printInfoLine("NVS BT bonds cleared");
+        return true;
+    }
+    ESP_LOGW(TAG_MM, "Unknown /bt subcommand: [%s]", message.c_str());
+    printInfoLine("Unknown /bt cmd", CONVO_ERROR_COLOR);
+    printHelpBt();
     return true;
 }
 
@@ -214,7 +260,7 @@ bool processDbgSubcommand(const String& message) {
         return true;
     }
     ESP_LOGW(TAG_MM, "Unknown /dbg subcommand: [%s]", message.c_str());
-    printInfoLine("Unknown /dbg cmd:", CONVO_ERROR_COLOR);
+    printInfoLine("Unknown /dbg cmd", CONVO_ERROR_COLOR);
     printHelpDbg();
     return true;
 }

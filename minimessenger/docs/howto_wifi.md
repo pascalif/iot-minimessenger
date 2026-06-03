@@ -141,20 +141,23 @@ Si le SSID **n'est pas** dans la liste NVS → après 15s de TRYING_KNOWN → PO
 
 Toutes les commandes peuvent venir du **clavier BLE** (Enter pour valider), de **Serial** (via cable USB et console à 115200), ou de **MQTT** (broadcast vers tous les peers — utile pour scripter à distance).
 
-Les commandes sont organisées en 4 commandes orphelines (`/help`, `/status`, `/mqtt-drop`, `/bt-clean`) et 2 groupes (`/wifi *`, `/dbg *`). Taper la racine du groupe seule (ex: `/wifi` sans argument) affiche l'aide partielle du groupe.
+Les commandes sont organisées en 3 commandes orphelines (`/help`, `/status`, `/clear`) et 4 groupes (`/wifi *`, `/mqtt *`, `/bt *`, `/dbg *`). Taper la racine du groupe seule (ex: `/wifi` sans argument) affiche l'aide partielle du groupe.
 
 | Commande | Effet |
 |----------|-------|
 | `/help` | Liste les commandes orphelines + les racines de groupes |
 | `/status` | Affiche l'écran d'info pendant 10s |
-| `/mqtt-drop` | Disconnect MQTT (test de résilience). MQTT se reconnecte automatiquement via la boucle de retry |
-| `/bt-clean` | Vide les bonds BLE (clavier doit re-pair après reboot) |
+| `/clear` | Vide l'historique de la conversation + la scroll area |
 | `/wifi` | Aide partielle: liste uniquement les sous-commandes du groupe `/wifi *` |
 | `/wifi drop` | Force un disconnect WiFi (test de résilience). Le device passe en LOST puis tente de se reconnecter |
 | `/wifi list` | Affiche en rose les SSIDs sauvés en NVS |
 | `/wifi forget <ssid>` | Supprime un SSID précis de NVS (laisse les autres). Ex: `/wifi forget OldWiFi` |
 | `/wifi clean` | Vide totalement NVS WiFi. Au prochain reboot, re-seed depuis `personal-data.h` ou portail |
 | `/wifi portal` | Force l'ouverture du portail captif immédiatement, sans attendre un échec |
+| `/mqtt` | Aide partielle: liste uniquement les sous-commandes du groupe `/mqtt *` |
+| `/mqtt drop` | Disconnect MQTT (test de résilience). MQTT se reconnecte automatiquement via la boucle de retry |
+| `/bt` | Aide partielle: liste uniquement les sous-commandes du groupe `/bt *` |
+| `/bt clean` | Vide les bonds BLE (clavier doit re-pair après reboot) |
 | `/dbg` | Aide partielle: liste uniquement les sous-commandes du groupe `/dbg *` |
 | `/dbg redraw` | Repaint complet des 3 zones (status bar + scroll + footer) |
 | `/dbg chip` | Diagnostic: chip model, revision, MACs, IDF version, reset reason |

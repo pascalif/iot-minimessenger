@@ -104,7 +104,7 @@ automatically. Each file:
      defined in `mqtt.ino`. They are all `extern`'d (or `#define`'d) in
      `mqtt.h`, which is included by both `minimessenger.ino` and
      `commands.ino` (the latter calls `g_mqttClient.disconnect()` for
-     `/mqtt-drop`, and `commands.ino` runs before `mqtt.ino` in concat
+     `/mqtt drop`, and `commands.ino` runs before `mqtt.ino` in concat
      order).
 
    Practical rule of thumb: it's tempting to think "all `.ino` are
@@ -123,7 +123,7 @@ Roughly grouped by subject. Each row is a candidate `.ino` file alongside
 | `minimessenger.ino` | `setup()`, `loop()`, includes, top-level constants, global state declarations. Stays small. |
 | `commands.ino` | `routeMessage()`, `processPayloadAsCommand()`, `CMD_*` constants, the funnel doc-comment. |
 | `display.ino` | `setupDisplay()`, `cleanScreen()`, `hwScrollSetupArea()`, `hwScrollTo()`, `hwScrollReset()`, `addConversationBlock()`, `redrawAllConversations()`, `redrawStatusBar()`, `redrawInputFooter()`, `drawIndicatorAt()`, `printValueWrapped()`, `drawInfoRow()`, `showUpdatedInfoScreen()`, `showSplashScreen()`. |
-| `mqtt.ino` | `mqttReconnect()`, `mqttPushFormattedMessage()`, `mqttSendAlive()`, `onMqttIncomingMessage()`, `onMQTTReconnected()`, `onReceivedContactLiveness()`, `onOutgoingMessage()`, `onIncomingTextMessage()`, `setRecipient()`. |
+| `mqtt.ino` | `mqttReconnect()`, `mqttPushFormattedMessage()`, `mqttSendLiveness()`, `onMqttIncomingMessage()`, `onMQTTReconnected()`, `onReceivedContactLiveness()`, `onOutgoingMessage()`, `onIncomingTextMessage()`, `setRecipient()`. |
 | `keyboard.ino` | `decodeHIDReport()`, `keymapLower` / `keymapUpper` arrays, `onBluetoothKeyboardConnectionCallback()`, `onBluetoothKeyboardNotifyCallback()`, `setupKeyboard()`. |
 | `wifi_time.ino` | `setupWifi()`, `setupNTP()`, `getCurrentDateTime()`, `getCurrentTime()`, `getTimezoneLabel()`. |
 | `identity.ino` | `identifyDevice()` (and its 8 MAC-matching branches). |

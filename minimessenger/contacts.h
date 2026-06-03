@@ -44,3 +44,16 @@ struct DeviceDataEntry {
 // Materialised by personal-data.h, included from wifi.ino.
 extern const DeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[];
 extern const size_t          COMPILED_DEVICE_DATA_ENTRIES_COUNT;
+
+
+// === Contact liveness transition ===
+//
+// Two-state outcome of an incoming admin/liveness/<id> payload, resolved by the MQTT dispatcher in mqtt.ino before it calls into contacts.ino. Replaces
+// the bare bool that used to mean "isLive=true|false" — `enum class` gives type-safety (no implicit conversion to int) and self-documents the call
+// sites in onMqttIncomingMessage() / onReceivedContactOnline(). The mapping from MQTT payload TYPE words is:
+//   BOOT / RECO / LIVE  →  ContactLiveness::LIVE  (peer is present; allocate or refresh its slot)
+//   DEAD                →  ContactLiveness::DEAD  (peer is gone; release its slot immediately, no LRU wait)
+enum class ContactLiveness {
+    LIVE,
+    DEAD,
+};

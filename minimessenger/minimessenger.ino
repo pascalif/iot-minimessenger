@@ -398,7 +398,7 @@ void redrawInputFooter();
 bool noteUserActivity();
 void routeMessage(const String& message, MessageSource source);
 void ledSetState(int pin, int requiredState);
-// mqttSendAlive / mqttPushFormattedMessage / onMqttIncomingMessage prototypes provided by mqtt.h.
+// mqttSendLiveness / mqttPushFormattedMessage / onMqttIncomingMessage prototypes provided by mqtt.h.
 void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
@@ -407,15 +407,11 @@ void resetSerialBuffer();
 // contacts.ino, which is concatenated AFTER bars.ino in alphabetical order). Without these the build fails with "not declared in this scope".
 void contactsSetup();
 void contactsTick();
-void onReceivedContactOnline(int remoteDeviceId, bool isLive);
+void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 int  contactGetActiveCount();
-// Two overloads — see definitions for the contract.
-//   single-string: prints `msg` left-aligned, full line. Used for banners / status messages.
-//   two-string:    prints `left` left-aligned and `right` at a fixed column (INFO_LINE_RIGHT_COL_X). Used for /help listings: cmd + description.
-// The compiler picks via overload resolution: a const-char* literal as 2nd arg → 2-string ; a numeric color as 2nd arg → 1-string. See the
-// String-vs-uint16_t ambiguity analysis in the .cpp impl docstring.
 void printInfoLine(const String& msg, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
 void printInfoLine(const String& left, const String& right, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
+void printInfoLineNumber(const String& left, uint32_t right, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
 
 // String utilities — defined in strings.ino. Called from printInfoLine / addConversationBlock below, which would compile before the strings.ino
 // concatenation appends the definition, so the forward decl is mandatory.
@@ -425,9 +421,13 @@ size_t utf8ToLatin1(char* s);
 // internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
 bool processPayloadAsCommand(const String& message);
 bool processWifiSubcommand(const String& message);
+bool processMqttSubcommand(const String& message);
+bool processBtSubcommand(const String& message);
 bool processDbgSubcommand(const String& message);
 void printHelpGlobal();
 void printHelpWifi();
+void printHelpMqtt();
+void printHelpBt();
 void printHelpDbg();
 
 
@@ -1297,9 +1297,12 @@ void printInfoLine(const String& left, const String& right, uint16_t color, cons
     hwScrollTo(g_scrollY);
 }
 
-// Single-string forwarder — kept so existing call sites that pass just a message (with or without an explicit color) keep working unchanged.
 void printInfoLine(const String& msg, uint16_t color, const GFXfont* font) {
     printInfoLine(msg, String(), color, font);
+}
+
+void printInfoLineNumber(const String& left, uint32_t right, uint16_t color, const GFXfont* font) {
+    printInfoLine(left, String(right), color, font);
 }
 
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align) {
@@ -1543,6 +1546,13 @@ void dumpMemInfo() {
     ESP_LOGI(TAG_MM, "--- /dbg mem ---");
     ESP_LOGI(TAG_MM, "Heap: total=%u used=%u free=%u largest=%u min-ever-free=%u", totalHeap, usedHeap, freeHeap, largest, minEverFree);
     ESP_LOGI(TAG_MM, "Heap fragmentation: %u%% (= 1 - largest/free)", freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
+    // All byte-counts shown in KB on the device screen (integer division — values < 1 KB display as "0 KB", which is itself a useful red-flag signal
+    // for the stack low-watermark). The serial log above keeps the raw byte counts for precise diagnostics.
+    printInfoLine("heap:");
+    printInfoLine("- free", String(freeHeap / 1024) + " KB");
+    printInfoLine("- max block", String(largest / 1024) + " KB");
+    printInfoLine("- min ever", String(minEverFree / 1024) + " KB");
+    printInfoLine("- frag", String(freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0) + " %");
 
     // PSRAM is only present on certain ESP32 variants (e.g. WROVER). On chips without PSRAM these calls return 0.
     if (ESP.getPsramSize() > 0) {
@@ -1554,16 +1564,16 @@ void dumpMemInfo() {
     // Stack high-water-mark for the task currently running this code (typically the Arduino loop task). Lower number = closer to overflow.
     // Returns the minimum free stack the task has ever had since boot, in WORDS (uint32_t units on ESP32) — multiply by 4 for bytes.
     UBaseType_t stackHWMWords = uxTaskGetStackHighWaterMark(NULL);
-    ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)(stackHWMWords * 4));
+    uint32_t    stackHWMBytes = (uint32_t)stackHWMWords * 4;
+    ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)stackHWMBytes);
+    printInfoLine("stack:");
+    printInfoLine("- min ever", String(stackHWMBytes / 1024) + " KB");
 
     ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
+    printInfoLine("sketch:");
+    printInfoLine("- size", String(ESP.getSketchSize() / 1024) + " KB");
+    printInfoLine("- free", String(ESP.getFreeSketchSpace() / 1024) + " KB");
 
-    // Echo a compact summary into the conversation.
-    char line[64];
-    snprintf(line, sizeof(line), "heap free=%u largest=%u", freeHeap, largest);
-    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
-    snprintf(line, sizeof(line), "min-ever-free=%u frag=%u%%", minEverFree, freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
-    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
 }
 
 void routeMessage(const String& message, MessageSource source) {
@@ -1587,6 +1597,8 @@ void routeMessage(const String& message, MessageSource source) {
     // LOCAL (serial ou BT)
     else {
         addConversationBlock(getCurrentTime(), message, ST77XX_WHITE, RIGHT);
+        // Chat messages are events, not state — published with retained=false so the broker doesn't replay them to fresh subscribers (which would
+        // make every reboot re-display the last conversation line). The retain flag is only used by mqttSendLiveness() on admin/liveness/<id>.
         bool published = mqttPushFormattedMessage(g_mqttOutgoingRecipientTopic, message.c_str());
         if (!published) {
             // Naive WhatsApp-style "send failed" indicator: append a second block right under the original one, in error red, prefixed with [ERROR] so
@@ -1932,12 +1944,12 @@ void loop() {
             // Met à jour le temps de la dernière exécution
             g_mqttPreviousKeepAliveTimestampMs = currentMillis;
 
-            // Send public liveness
-            mqttSendAlive(2);
+            // Send public liveness — periodic keepalive while connected.
+            mqttSendLiveness(MQTTLiveness::LIVE);
         }
     }
 
-    // Contact tracking: expire any peer whose admin/live keepalive hasn't been refreshed for longer than CONTACT_TIMEOUT_MS. Placed after the MQTT
+    // Contact tracking: expire any peer whose admin/liveness/<id> keepalive hasn't been refreshed for longer than CONTACT_TIMEOUT_MS. Placed after the MQTT
     // block so a freshly-received liveness on this same iteration (via g_mqttClient.loop() → onMqttIncomingMessage()) has already updated the slot's
     // lastSeenMs, avoiding a spurious one-cycle eviction. contactsTick() reads millis() itself rather than reusing the loop-top currentMillis — see
     // the comment above its definition for the underflow scenario this avoids.

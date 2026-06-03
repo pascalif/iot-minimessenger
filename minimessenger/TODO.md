@@ -25,10 +25,19 @@ Quelle est la bonne version. Complete mon commentaire dans le code avec des rc q
 
 
 ================
-pq multiwifi est si long à se connecter au boot ? c'était presque instantanné avant
+
+
+
+
 ================
 
-Afficher Nom de l'emetteur
+Que propose tu pour identifier le device d'un emetteur afin
+- d'exclure mes propres messages lorsque émis par notre code sur le topic de broadcast puis recus en tant que subscribed dans ce meme topic de broadcast
+- afficher le pseudo de l'auteur avant le timestamp du message
+
+avec la contrainte suivante afin de pouvoir debuger facilement et emettre des msgs rapidement depuis une console web ou app smartphone : un msg broadcast doit pouvoir
+etre "simple" (cad juste du texte, sans identification de l'emetteur ou autre format compliqué). On peut garder un format laxiste ou definir un 2eme topic de broadcast ?
+
 
 =============
 
@@ -40,11 +49,6 @@ Si tu chasses une instabilité actuelle, je regarderais d'abord :
 1. Quelle est la nature de l'instabilité ? reboot ESP, freeze écran, MQTT qui décroche, BLE qui se déconnecte, ESP qui panic ? Le profil de symptôme oriente la cause.
 2. Active esp_log_set_level("*", ESP_LOG_VERBOSE) un moment et regarde le dernier log avant l'événement.
 3. Active CONFIG_HEAP_POISONING_COMPREHENSIVE (menuconfig / sdkconfig) pour détecter les use-after-free.
-
-
-================
-
-Point sur les QoS
 
 ================
 

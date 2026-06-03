@@ -79,10 +79,6 @@ WiFiManager g_wifiManager;
 
 Preferences g_wifiPrefs;
 
-// True once we've called setupNTP() at least once after the first CONNECTED transition. Subsequent CONNECTED transitions skip it (configTzTime
-// is idempotent and re-issuing it would just re-arm SNTP without value).
-bool g_wifiNtpDoneOnce = false;
-
 // Edge-detection flag for the "WiFi back" / "WiFi lost" banners: set true on CONNECTED entry, reset false on LOST entry. Lets us print each
 // banner exactly once per LOST↔CONNECTED transition (the state machine wouldn't fire transitions redundantly today, but the flag also gates the
 // "WiFi lost" banner against the boot path where we've never been connected yet — see the LOST branch in wifiTransitionTo).
@@ -192,15 +188,32 @@ void wifiTick(unsigned long currentMillis) {
     }
 
     case WifiState::PORTAL: {
-        // Pump the WiFiManager HTTP / DNS / portal logic. process() returns true when the user has just successfully configured a network — the
-        // saveConfigCallback already added it to NVS / WiFiMulti for us, so we just have to flip the state.
+        // Pump the WiFiManager HTTP / DNS / portal logic. In non-blocking mode, process() returns true as soon as the save callback has run (creds
+        // saved to NVS + added to WiFiMulti) and WiFiManager has torn down its captive AP — it does NOT wait for the STA to actually associate to
+        // the new SSID. So `process() == true` only means "portal is closed", not "we're online".
         bool justConnected = g_wifiManager.process();
-        if (justConnected || WiFi.status() == WL_CONNECTED) {
-            ESP_LOGI(TAG_WIFI, "Portal closed — STA is now connected");
+
+        // True CONNECTED detection: STA reports WL_CONNECTED AND has a real IP. Without the IP check, we trigger a false transition during the
+        // ~1-2 s transient where the driver is tearing down AP+STA-portal mode — WiFi.status() briefly returns WL_CONNECTED while WiFi.SSID() is
+        // still "" and WiFi.localIP() is 0.0.0.0. That false CONNECTED would then run setupNTP() on a dead link, log "Connected to [], IP=0.0.0.0",
+        // and flap to LOST 15 s later — costing ~30 s of dead UI before the real association finally comes through via the LOST retry loop.
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+            ESP_LOGI(TAG_WIFI, "Portal closed — STA is genuinely connected (SSID=[%s], IP=%s)", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
             wifiStopPortal();
             wifiTransitionTo(WifiState::CONNECTED);
             return;
         }
+
+        // Portal self-closed but STA not yet associated: WiFiManager handed back control after the save callback but `WiFi.begin(newSSID)` is still
+        // pending under the hood. The credentials are already in WiFiMulti (added by wifiOnPortalSave), so the cleanest handoff is TRYING_KNOWN —
+        // the standard retry loop will pick up the new SSID alongside any other known ones, with proper timing and no phantom CONNECTED in between.
+        if (justConnected) {
+            ESP_LOGI(TAG_WIFI, "WiFiManager closed portal but STA not yet associated — handing off to TRYING_KNOWN for clean assoc");
+            wifiStopPortal();
+            wifiTransitionTo(WifiState::TRYING_KNOWN);
+            return;
+        }
+
         // Portal idle timeout: WiFiManager's own setConfigPortalTimeout is ignored in non-blocking mode (per its header comment), so we track time
         // ourselves. After WIFI_PORTAL_TIMEOUT_MS without a successful save, close the portal and give the known networks one more chance.
         if (currentMillis - g_wifiStateEnteredMs >= WIFI_PORTAL_TIMEOUT_MS) {
@@ -356,11 +369,10 @@ static void wifiOnConnected() {
     String ip = WiFi.localIP().toString();
     ESP_LOGI(TAG_WIFI, "Connected to [%s], IP=%s, RSSI=%d", WiFi.SSID().c_str(), ip.c_str(), WiFi.RSSI());
 
-    // NTP needs WiFi up and is idempotent. We run it once per boot only — subsequent reconnects don't need to re-arm SNTP.
-    if (!g_wifiNtpDoneOnce) {
-        setupNTP();
-        g_wifiNtpDoneOnce = true;
-    }
+    // NTP needs WiFi up. setupNTP() is idempotent: if the clock is already synced (from a previous CONNECTED transition), its wait loop exits on the
+    // first iteration without delay — so calling it on every reconnect is essentially free, and gives us a fresh SNTP arm in case the new network
+    // resolves the NTP pool differently.
+    setupNTP();
 
     // Banner on the rising edge (first CONNECTED after a LOST or initial connect).
     if (!g_wifiWasConnected) {
@@ -603,7 +615,7 @@ void wifiPrintListToConversation() {
         if (ssid.length() == 0) {
             continue;
         }
-        String line = "  " + ssid;
+        String line = "- " + ssid;
         printInfoLine(line);
         shown++;
     }
@@ -657,7 +669,7 @@ void drawPortalInstructions(Adafruit_ST7789* pDisp, int& nextY, int colHeaders, 
 
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
-    pDisp->print("THEN:");
+    pDisp->print("then:");
     pDisp->setCursor(colValues, nextY);
     pDisp->setTextColor(ST77XX_WHITE);
     pDisp->print("pick WiFi");

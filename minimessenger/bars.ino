@@ -133,7 +133,7 @@ void redrawStatusBar() {
     drawIndicatorAt(ICON_BT_X, bt, ICON_BT_COLOR);
     drawCapsAt(ICON_CAPS_X, caps, ICON_CAPS_COLOR);
     // Contact silhouettes: 0 contact → 1 icône en contour, 1 contact → 1 icône pleine, 2+ contacts → 2 icônes pleines côte à côte (centrées sur
-    // l'ancre historique ICON_CONTACT_X). Le compte vient de contactGetActiveCount() (contacts.ino), alimenté par les liveness MQTT admin/live + admin/dead.
+    // l'ancre historique ICON_CONTACT_X). Le compte vient de contactGetActiveCount() (contacts.ino), alimenté par les liveness MQTT admin/liveness/<id>.
     if (contactCount <= 0) {
         drawPersonAt(ICON_CONTACT_X, false, ICON_CONTACT_COLOR);
     } else if (contactCount == 1) {

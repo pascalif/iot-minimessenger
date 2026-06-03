@@ -5,9 +5,9 @@ Console HiveMQ : https://console.hivemq.cloud/clusters — l'identifiant du clus
 
 Tester manuellement depuis le web-client du broker :
 
-  - Notifier qu'un device est LIVE :        topic admin/live           payload "1 keep"
-  - Notifier qu'un device n'est plus là :   topic admin/dead           payload "1"
-  - Envoyer un message à tous :             topic msg/broadcast        payload "hello"
+  - Notifier qu'un device 1 est LIVE :    topic admin/liveness/1   payload "LIVE 1717459200"   (retained=true — voir docs/howto_mqtt.md)
+  - Notifier qu'un device 1 est mort :    topic admin/liveness/1   payload "DEAD"              (retained=true — tombstone d'état)
+  - Envoyer un message à tous :           topic msg/broadcast      payload "hello"             (retained=false : évènement de chat)
 */
 
 
@@ -23,17 +23,48 @@ Tester manuellement depuis le web-client du broker :
 // ================================================================================
 // Topic names — shared so that incoming-message dispatch in mqtt.ino and the broker-connect / subscribe code can refer to the same strings.
 // ================================================================================
-extern const char* g_mqttOutgoingTopicLogs;       // admin/logs    — reserved, no consumer yet.
-extern const char* g_mqttOutgoingTopicLive;       // admin/live    — retained "I'm alive" pings (boot / reconnect / 30 s keepalive).
-extern const char* g_mqttOutgoingTopicWill;       // admin/dead    — MQTT Last Will published on disconnect.
 extern const char* g_mqttIncomingTopicBroadcast;  // msg/broadcast — subscribed by all devices; the "everyone" channel.
 //                                                   msg/unicast/<deviceId> — built at runtime in setRecipient().
+
+// admin/liveness/<deviceId> — retained state topic, ONE per device. Carries every flavour of liveness signal (BOOT / RECO / LIVE / DEAD) so the
+// broker's retained store always reflects "what each device believes is its current state". Per-device topic lets a fresh subscriber to
+// admin/liveness/+ get one retained per peer in a single shot (a shared topic would only retain the last publisher). The DEAD payload doubles as
+// the MQTT Last Will, set in connect() with retained=true so the broker-detected disconnect leaves a tombstone visible to future subscribers. The
+// admin/dead topic that used to handle the Will is gone. See docs/howto_mqtt.md for the design rationale.
+#define MQTT_LIVENESS_TOPIC_PREFIX     "admin/liveness/"
+#define MQTT_LIVENESS_TOPIC_PREFIX_LEN (sizeof(MQTT_LIVENESS_TOPIC_PREFIX) - 1)  // compile-time, excludes the trailing NUL — used by the dispatch strncmp / suffix-parse path.
+#define MQTT_LIVENESS_TOPIC_WILDCARD   "admin/liveness/+"                        // single-level wildcard — matches admin/liveness/<id> for any id, not deeper paths.
+
+// Liveness payload subtype — the leading word of an admin/liveness/<id> payload. Wire format: "<TYPE> <epochSeconds>" for BOOT/RECO/LIVE, just
+// "DEAD" (no timestamp) for the Will. Epoch seconds rather than a formatted timestamp so the staleness check on the receiver side is a single
+// integer subtract against time(nullptr). The four wire strings are exactly 4 chars each, which simplifies parsing.
+//
+// Strongly-typed enum (rather than 4 separate `#define ... "BOOT"` macros) so callers like mqttSendLiveness() take a typed argument instead of magic
+// ints (0=boot, 1=reco, 2=keep), and the dispatcher's parse step returns a typed value the receiver can switch on. The wire mapping is one-way:
+// each subtype has exactly one canonical 4-char string, set by mqttLivenessAsString() and recognised by parseMQTTLiveness().
+enum class MQTTLiveness : uint8_t {
+    BOOT,  // First publish after a fresh boot. Dispatches to ContactLiveness::LIVE on the receiver (peer is up).
+    RECO,  // Publish on every successful reconnect after the first. Same dispatch as BOOT.
+    LIVE,  // Periodic keepalive every MQTT_KEEPALIVE_INTERVAL_MS while connected. Same dispatch as BOOT.
+    DEAD,  // Will payload. Fired by the broker on detected disconnect. No timestamp. Dispatches to ContactLiveness::DEAD.
+};
+
+// Wire string for a subtype. Returns a pointer to a static string literal (lifetime = forever), safe to pass directly to PubSubClient::connect()'s
+// willMessage argument. Used by mqttSendLiveness() to assemble the payload and by mqttReconnectAttempt() to set the Will body.
+const char* mqttLivenessAsString(MQTTLiveness subtype);
+
+// Parse the leading 4-char TYPE word of an admin/liveness/<id> payload. Returns true and fills `outSubtype` on a clean match (the 4 chars match a
+// known type AND the next char is either '\0' or ' '), false otherwise. The trailing-char check avoids matching "DEADX" as DEAD.
+bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
+
 
 // ================================================================================
 // Timing / protocol constants
 // ================================================================================
 
-// Period between sending 2 "keepalive" messages on admin/live.
+// Period between sending 2 "keepalive" messages on admin/liveness/<id>. Doubles as the upper bound on "how stale can a retained admin/liveness/<id>
+// payload be" before the subscriber considers it a leftover (a peer that crashed, didn't fire its Will, and whose retained LIVE was never overwritten
+// by DEAD). The dispatcher in mqtt.ino enforces this: payload epoch older than `MQTT_KEEPALIVE_INTERVAL_MS/1000 + 5 s` → ignored.
 #define MQTT_KEEPALIVE_INTERVAL_MS 120'000
 
 // Reconnect cadence — exponential backoff with cap. First retry after BASE ms, then doubles every failed attempt until it saturates at MAX ms. The
@@ -102,7 +133,7 @@ extern unsigned int  g_mqttOutputMsgId;   // monotonic id appended to every outg
 extern bool          g_mqttWasConnected;  // edge-detection latch — true while connected, falls to false on the first loop iteration that sees the link down.
 extern unsigned long g_mqttLastReconnectTryTimestampMs;             // millis() of the last mqttReconnectAttempt() attempt — used to throttle retries.
 extern uint8_t       g_mqttReconnectAttempts;                       // failed attempts since the last successful (re)connect; drives mqttReconnectDelayMs().
-extern unsigned long g_mqttPreviousKeepAliveTimestampMs;            // millis() of the last admin/live keepalive publish.
+extern unsigned long g_mqttPreviousKeepAliveTimestampMs;            // millis() of the last admin/liveness/<id> keepalive publish.
 extern char          g_mqttOutgoingMsg[MSG_BUFFER_SIZE];            // scratch buffer used by mqttPushFormattedMessage() to assemble the payload + trailer.
 extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current unicast recipient topic — written by setRecipient(), read by routeMessage().
 
@@ -113,7 +144,7 @@ extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current 
 void          setupMQTT();
 bool          mqttReconnectAttempt();       // Attempts a TLS+MQTT (re)connect; returns true on success. Driven by the loop()-level reconnect gate.
 unsigned long mqttReconnectDelayMs();       // Current reconnect-throttle interval (exponential backoff capped at MQTT_CONNECT_RETRY_MAX_MS).
-void          mqttSendAlive(int liveType);  // Publish an admin/live keepalive. liveType: 0=boot, 1=reco, 2=keep.
-bool          mqttPushFormattedMessage(const char* topic,
-                                       const char* payload);  // Append the "### ts:… deviceId:… msgId:…" trailer and publish. Returns the PubSubClient publish() result.
+void          mqttSendLiveness(MQTTLiveness subtype);  // Publish a retained "<subtype> <epoch>" on admin/liveness/<id>. Accepts BOOT/RECO/LIVE (DEAD is reserved for the Will, see mqttReconnectAttempt()).
+// Append the "### ts:… deviceId:… msgId:…" trailer and publish. Returns the PubSubClient publish() result.
+bool          mqttPushFormattedMessage(const char* topic, const char* payload);
 void          onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);  // PubSubClient subscribe callback — dispatches by topic prefix.

@@ -2,7 +2,9 @@
 // contacts.ino — Dynamic remote-contact tracking (up to MAX_CONTACTS slots) driven by MQTT liveness pings.
 // ================================================================================
 //
-// Auto-discovered: any deviceId seen on `admin/live` claims a slot; `admin/dead` (Last Will) or an applicative timeout releases it. The two
+// Auto-discovered: any deviceId seen on `admin/liveness/<id>` with BOOT/RECO/LIVE claims a slot; DEAD (Last Will or explicit, same topic) or an
+// applicative timeout releases it. The single admin/liveness/+ subscription carries both "alive" and "dead" transitions — there is no separate
+// admin/dead topic anymore. The two
 // "friend present" LEDs and the contact silhouettes on the top status bar are derived from the active slot count — LED_FRIEND_1 lights when at
 // least one contact is online, LED_FRIEND_2 when at least two are, regardless of which physical contacts they are. The previous static
 // g_deviceIdFriend1/2 pair (one fixed friend per LED, declared in identifyDevice()) is gone.
@@ -64,12 +66,15 @@ inline const DeviceDataEntry* DeviceDataEntry::findById(byte deviceId) {
 // Dynamic peer table
 // ================================================================================
 
-struct ContactLiveness {
+// Slot interne de la table de contacts — une cellule de g_contacts. À ne pas confondre avec l'enum class ContactLiveness (transition LIVE/DEAD)
+// déclaré dans contacts.h : ce dernier porte la sémantique d'un évènement entrant, alors que cette struct mémorise simplement "où on en est" pour un
+// peer donné (qui il est, et quand on l'a vu vivant pour la dernière fois).
+struct ContactLastLiveData {
     byte          deviceId;    // DEVICE_ID_UNSET = slot libre, sinon ID du contact distant.
     unsigned long lastSeenMs;  // millis() de la dernière liveness reçue pour ce contact.
 };
 
-static ContactLiveness g_contacts[MAX_CONTACTS];
+static ContactLastLiveData g_contacts[MAX_CONTACTS];
 
 
 // Number of slots currently occupied. Read every ~500 ms by redrawStatusBar() in bars.ino to pick between 0/1/2-icon layouts on the top bar, and
@@ -104,12 +109,14 @@ static const char* pseudoOrPlaceholder(byte deviceId) {
 // Push a banner into the conversation buffer when a contact transitions online / offline. Uses the declared pseudo when available, otherwise falls
 // back to "device #<n>" so unknown peers still get a visible transition (just without their friendly name). Color = green on connect, red on
 // disconnect, matching CONVO_INFO_COLOR / CONVO_ERROR_COLOR used elsewhere for ready / lost-server banners. Called on transitions only (add via
-// admin/live, remove via admin/dead, remove via applicative timeout) — never on the periodic refresh of an already-known contact.
-static void announceContactTransition(byte deviceId, bool isLive) {
+// admin/liveness/<id> with BOOT/RECO/LIVE, remove via admin/liveness/<id> with DEAD, remove via applicative timeout) — never on the periodic refresh
+// of an already-known contact.
+static void announceContactTransition(byte deviceId, ContactLiveness liveness) {
     const DeviceDataEntry* entry = DeviceDataEntry::findById(deviceId);
-    String                         label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
-    label += isLive ? " connected" : " disconnected";
-    addConversationBlock("", label, isLive ? CONVO_INFO_COLOR : CONVO_ERROR_COLOR, CENTER);
+    String                 label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
+    const bool             alive = (liveness == ContactLiveness::LIVE);
+    label += alive ? " connected" : " disconnected";
+    addConversationBlock("", label, alive ? CONVO_INFO_COLOR : CONVO_ERROR_COLOR, CENTER);
 }
 
 
@@ -122,19 +129,20 @@ void contactsSetup() {
     }
 }
 
-// Called from onMqttIncomingMessage() (mqtt.ino) for every `admin/live` (isLive=true) or `admin/dead` (isLive=false) payload received. Filtering self
-// is critical because admin/live is retained: when we (re)subscribe after a MQTT reconnect, the broker replays our own last keepalive back at us, and
-// without the guard we would self-allocate a slot on every reconnect.
+// Called from onMqttIncomingMessage() (mqtt.ino) for every admin/liveness/<id> payload received, after the dispatcher has resolved the ContactLiveness
+// enum from the payload's TYPE word (BOOT/RECO/LIVE → LIVE, DEAD → DEAD) and filtered stale retains. Self-filtering against g_deviceData.deviceId
+// happens in the dispatcher (topic suffix == own id), so we don't need to re-check it here. mqtt.ino already drops obvious echoes before calling us.
 //
-// isLive=true: refresh an existing slot if we already know this id, otherwise allocate the first free slot. Table-full → log + ignore (per design
-// decision: a 6th contact is silently dropped until a timeout frees a slot, no LRU eviction).
+// ContactLiveness::LIVE: refresh an existing slot if we already know this id, otherwise allocate the first free slot. Table-full → log + ignore (per
+// design decision: a 6th contact is silently dropped until a timeout frees a slot, no LRU eviction).
 //
-// isLive=false: locate the slot and release it immediately, without waiting for CONTACT_TIMEOUT_MS. Last Will gives us a fast path on clean shutdowns.
+// ContactLiveness::DEAD: locate the slot and release it immediately, without waiting for CONTACT_TIMEOUT_MS. The retained DEAD (Will) gives us a fast
+// path on broker-detected disconnects, and an explicit DEAD publish would work the same way.
 //
-// Caveat: a peer that crashed without publishing admin/dead leaves its retained admin/live in place on the broker. At our next subscribe we'll get
-// that retained payload and treat the peer as alive — the CONTACT_TIMEOUT_MS window will eventually evict it (~125 s with MQTT_KEEPALIVE_INTERVAL_MS
-// = 120 s), so the UI corrects itself but lags by up to one timeout window after a startup-resume scenario.
-void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
+// Caveat: a peer that crashed without the broker firing its Will (rare — TCP-level keepalive should always trigger it eventually) leaves its retained
+// BOOT/RECO/LIVE in place with a stale epoch. mqtt.ino's staleness check filters those at subscribe time so they don't allocate a phantom slot here.
+// If somehow one slips through, the CONTACT_TIMEOUT_MS applicative timeout still evicts it within ~125 s.
+void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness) {
     if (remoteDeviceId == g_deviceData.deviceId) {
         return;
     }
@@ -154,7 +162,7 @@ void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
         }
     }
 
-    if (isLive) {
+    if (liveness == ContactLiveness::LIVE) {
         if (slotIdxIfKnown >= 0) {
             g_contacts[slotIdxIfKnown].lastSeenMs = now;
             return;  // déjà connu, juste un refresh : ni LED ni redraw ni bannière.
@@ -166,7 +174,7 @@ void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
         g_contacts[slotIdxIfFree].deviceId   = id;
         g_contacts[slotIdxIfFree].lastSeenMs = now;
         ESP_LOGI(TAG_MM, "CONTACT + id=%d (%s) slot=%d count=%d ts=%lu", remoteDeviceId, pseudoOrPlaceholder(id), slotIdxIfFree, contactGetActiveCount(), now);
-        announceContactTransition(id, true);
+        announceContactTransition(id, ContactLiveness::LIVE);
         contactsApplyState();
     } else {
         if (slotIdxIfKnown < 0) {
@@ -175,7 +183,7 @@ void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
         g_contacts[slotIdxIfKnown].deviceId   = DEVICE_ID_UNSET;
         g_contacts[slotIdxIfKnown].lastSeenMs = 0;
         ESP_LOGI(TAG_MM, "CONTACT -dead id=%d (%s) slot=%d count=%d", remoteDeviceId, pseudoOrPlaceholder(id), slotIdxIfKnown, contactGetActiveCount());
-        announceContactTransition(id, false);
+        announceContactTransition(id, ContactLiveness::DEAD);
         contactsApplyState();
     }
 }
@@ -208,7 +216,7 @@ void contactsTick() {
             g_contacts[i].deviceId   = DEVICE_ID_UNSET;
             g_contacts[i].lastSeenMs = 0;
             anyFreed                 = true;
-            announceContactTransition(expiredId, false);
+            announceContactTransition(expiredId, ContactLiveness::DEAD);
         }
     }
     if (anyFreed) {

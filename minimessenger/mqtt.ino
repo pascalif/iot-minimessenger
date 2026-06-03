@@ -18,6 +18,7 @@
 #include "mqtt.h"
 #include "mm_log.h"
 #include "symbols.h"
+#include "contacts.h"  // ContactLiveness enum for the onReceivedContactOnline() signature.
 #include <WiFiClientSecure.h>
 
 // WiFiClientSecure instance lives in minimessenger.ino (declared before mqtt.ino in the concatenation order, so the constructor below sees it). The
@@ -32,17 +33,19 @@ extern WiFiClientSecure g_wifiClient;
 // Forward-declared so the auto-prototype ordering does not bite us.
 extern void  ledSetState(int pin, int requiredState);
 extern void  routeMessage(const String& message, MessageSource source);
-extern void  onReceivedContactOnline(int remoteDeviceId, bool isLive);
+extern void  onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 extern char* getCurrentDateTime();
+
 
 // ================================================================================
 // Topic strings
 // ================================================================================
-const char* g_mqttOutgoingTopicLogs      = "admin/logs";
-const char* g_mqttOutgoingTopicLive      = "admin/live";
-const char* g_mqttOutgoingTopicWill      = "admin/dead";
 const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 //                                         "msg/unicast/12"
+// admin/liveness/<id> — built dynamically in mqttSendLiveness() / mqttReconnectAttempt() via MQTT_LIVENESS_TOPIC_PREFIX (declared in mqtt.h). Not a
+// single global because the topic varies per publisher; the dispatch / subscribe paths use MQTT_LIVENESS_TOPIC_PREFIX / MQTT_LIVENESS_TOPIC_WILDCARD
+// respectively. The Will targets this same per-device topic with payload MQTTLiveness::DEAD, retained=true — see mqttReconnectAttempt() below.
+
 
 // ================================================================================
 // Runtime globals
@@ -57,6 +60,37 @@ uint8_t       g_mqttReconnectAttempts            = 0;
 
 char g_mqttOutgoingMsg[MSG_BUFFER_SIZE];
 char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
+
+
+// ================================================================================
+// Liveness subtype wire mapping
+// ================================================================================
+
+const char* mqttLivenessAsString(MQTTLiveness subtype) {
+    switch (subtype) {
+        case MQTTLiveness::BOOT: return "BOOT";
+        case MQTTLiveness::RECO: return "RECO";
+        case MQTTLiveness::LIVE: return "LIVE";
+        case MQTTLiveness::DEAD: return "DEAD";
+    }
+    return "????";  // unreachable in practice — all enum values handled above. Placeholder kept so the compiler doesn't warn about missing return.
+}
+
+bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
+    if (payload == nullptr || strlen(payload) < 4) {
+        return false;
+    }
+    // Require a delimiter (or end-of-string) right after the 4-char word so "DEADBEEF" doesn't match DEAD.
+    const char tail = payload[4];
+    if (tail != '\0' && tail != ' ') {
+        return false;
+    }
+    if (memcmp(payload, "BOOT", 4) == 0) { outSubtype = MQTTLiveness::BOOT; return true; }
+    if (memcmp(payload, "RECO", 4) == 0) { outSubtype = MQTTLiveness::RECO; return true; }
+    if (memcmp(payload, "LIVE", 4) == 0) { outSubtype = MQTTLiveness::LIVE; return true; }
+    if (memcmp(payload, "DEAD", 4) == 0) { outSubtype = MQTTLiveness::DEAD; return true; }
+    return false;
+}
 
 
 // ================================================================================
@@ -113,42 +147,65 @@ bool mqttReconnectAttempt() {
         return false;
     }
 
+    // Pre-flight: refuse to connect until NTP has synced. Two reasons coupled here:
+    //   1. The admin/liveness/<id> payload embeds an epoch — connecting before SNTP completes would publish "BOOT 22" (boot-relative seconds returned
+    //      by time() prior to first NTP response) and pollute the broker's retained store with a meaningless timestamp that the staleness check
+    //      on every peer would then have to filter out.
+    //   2. TLS cert verification is currently bypassed by setInsecure() (g_mqttServerInfo.rootCA == nullptr), which is why the connect can succeed
+    //      with a 1970 clock today. If setCACert() is re-enabled later, the same gate covers the "device too old to validate the cert" failure path.
+    // Same threshold (1.7e9 ≈ Nov 2023) as setupNTP() uses to decide that the SNTP burst has succeeded.
+    const time_t nowEpoch = time(nullptr);
+    if (nowEpoch < 1'700'000'000L) {
+        ESP_LOGI(TAG_MQTT, "Postponing connect: NTP not synced yet (time=%ld). Retrying on the next reconnect gate.", (long)nowEpoch);
+        return false;
+    }
 
-    // Will message = decimal string of deviceId (e.g. "4"). Built on the stack right before connect() — PubSubClient copies willMessage into its own
-    // CONNECT packet buffer before returning, so the lifetime of willMsg only needs to span this call. Stack buffer over heap (no String alloc, no
-    // helper static): zero heap fragmentation on the MQTT reconnect path, which matters on a device that already lives close to the mbedtls TLS
-    // handshake heap budget. Worst case "999\0" (4 bytes) — see audit EDGE-001 for the exact-fit caveat.
-    char willMsg[4];
-    snprintf(willMsg, sizeof(willMsg), "%d", g_deviceData.deviceId);
+
+    // Will = "DEAD" retained on admin/liveness/<myId>. When the broker detects our disconnect, it publishes this Will payload AND retains it,
+    // overwriting whatever LIVE/BOOT/RECO retained we had pushed earlier. Any future subscriber to admin/liveness/+ then sees us as DEAD immediately.
+    // The retained DEAD is self-cleaned on our next successful reconnect (mqttSendLiveness() overwrites with BOOT/RECO). willTopic must live for the
+    // span of connect() only — PubSubClient copies both willTopic and willMessage into its CONNECT packet buffer before returning, so the stack
+    // buffer below is sufficient. Worst case "admin/liveness/999\0" = 19 bytes — well within MQTT_TOPIC_SIZE.
+    char willTopic[MQTT_TOPIC_SIZE];
+    snprintf(willTopic, MQTT_TOPIC_SIZE, MQTT_LIVENESS_TOPIC_PREFIX "%d", g_deviceData.deviceId);
 
     unsigned long t0              = millis();
     bool          isMQTTConnected = g_mqttClient.connect(g_deviceData.name(),
                                                 g_mqttServerInfo.user,
                                                 g_mqttServerInfo.password,
-                                                g_mqttOutgoingTopicWill,
+                                                willTopic,
                                                 MQTT_QOS_0,
-                                                MQTT_MSG_NOT_RETAINED,
-                                                willMsg,
+                                                MQTT_MSG_RETAINED,
+                                                mqttLivenessAsString(MQTTLiveness::DEAD),
                                                 MQTT_SESSION_VOLATILE);
     ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d", isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
 
     if (isMQTTConnected) {
         ESP_LOGI(TAG_MQTT, "isMQTTConnected, MQTT_MAX_PACKET_SIZE=%d", MQTT_MAX_PACKET_SIZE);
 
+        // Subscribes
+        // - a/ msg/broadcast
         g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
 
+        // - b/ msg/unicast/<me>
         String myUnicastTopic = String("msg/unicast/") + g_deviceData.deviceId;
         g_mqttClient.subscribe(myUnicastTopic.c_str(), MQTT_QOS_1);
-        g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
-        g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
+
+        // -c/ admin/liveness/+
+        // wildcard subscription so a fresh boot receives the retained liveness state of every peer in a single shot. Per-device
+        // topics avoid the retained-collision that a single shared admin/liveness would have (broker keeps one retained per topic, not one per
+        // publisher). Carries BOOT/RECO/LIVE/DEAD; the Will lives on this same topic family, so a single subscribe covers both "alive" and "dead" events
+        g_mqttClient.subscribe(MQTT_LIVENESS_TOPIC_WILDCARD, MQTT_QOS_0);
+
 
         g_mqttWasConnected      = true;
         g_mqttReconnectAttempts = 0;  // success — reset the backoff so a future outage starts at BASE_MS again instead of inheriting the previous wait.
         g_mqttConnectionId++;
         ledSetState(LED_STATUS, LED_STATE_ON);
 
-        // Send public liveness
-        mqttSendAlive((g_mqttConnectionId == 0 ? 0 : 1));
+        // Send public liveness. First successful connect since boot → BOOT; any subsequent reconnect → RECO. The keepalive ticks fired from the loop()
+        // gate use LIVE — see minimessenger.ino.
+        mqttSendLiveness(g_mqttConnectionId == 0 ? MQTTLiveness::BOOT : MQTTLiveness::RECO);
 
         // Push a refresh to the info screen if it's currently shown — the MQTT row flips from "NOT OK" to "OK" on this connect.
         refreshInfoScreenIfShown();
@@ -169,30 +226,42 @@ bool mqttReconnectAttempt() {
     }
 }
 
-// 0: boot, 1:reco, 2:keepalive
-void mqttSendAlive(int liveType) {
-    char payload[MSG_BUFFER_SIZE];
-    snprintf(payload,
-             MSG_BUFFER_SIZE,
-             "%d %s mac:%s ssid:%s ip:%s recoId:%d",
-             g_deviceData.deviceId,
-             (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
-             WiFi.macAddress().c_str(),
-             WiFi.SSID().c_str(),
-             WiFi.localIP().toString().c_str(),
-             g_mqttConnectionId);
-    mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload);
+// Publish to admin/liveness/<myId> in retained mode. Payload is the minimal "<TYPE> <epochSeconds>" form (no trailer, no mac/ssid/ip): the topic
+// suffix carries the deviceId, the subtype carries the transition flavour, and the epoch lets the receiver detect a stale retained leftover.
+// DEAD is never sent from here — it rides the Will mechanism set up in mqttReconnectAttempt() and only fires server-side when the broker detects
+// our disconnect. Passing DEAD here would be a programming error and is logged + dropped rather than published.
+void mqttSendLiveness(MQTTLiveness subtype) {
+    if (subtype == MQTTLiveness::DEAD) {
+        ESP_LOGW(TAG_MQTT, "mqttSendLiveness: DEAD is reserved for the Will, not a self-publish — skipping");
+        return;
+    }
+
+    char topic[MQTT_TOPIC_SIZE];
+    snprintf(topic, MQTT_TOPIC_SIZE, MQTT_LIVENESS_TOPIC_PREFIX "%d", g_deviceData.deviceId);
+
+    // "TYPE epochSeconds" — max length "RECO 9999999999\0" = 16 bytes. 32 is comfortable headroom.
+    char payload[32];
+    snprintf(payload, sizeof(payload), "%s %ld", mqttLivenessAsString(subtype), (long)time(nullptr));
+
+    bool ok = g_mqttClient.publish(topic, payload, MQTT_MSG_RETAINED);
+    if (ok) {
+        ESP_LOGI(TAG_MQTT, "Liveness published [%s] -> [%s]", topic, payload);
+    } else {
+        ESP_LOGE(TAG_MQTT, "Liveness publish FAILED for [%s] (state=%d size=%u) : [%s]", topic, g_mqttClient.state(), (unsigned)strlen(payload), payload);
+    }
 }
 
 
 // Returns true if the publish was accepted by PubSubClient (sent on the wire — no broker ACK at QoS 0 so this is best-effort). Callers that need
 // to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
-// safely ignore it — the next interval will retry.
+// safely ignore it — the next interval will retry. The `retained` flag is forwarded to the broker as-is: pass MQTT_MSG_RETAINED only for state
+// topics, MQTT_MSG_NOT_RETAINED for events (chat messages). See docs/howto_mqtt.md. Note: liveness publishes go through mqttSendLiveness() with a
+// dedicated minimal payload (no trailer), they don't call this function.
 bool mqttPushFormattedMessage(const char* topic, const char* payload) {
     snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgId);
 
     // Publishing. Only QoS 0 is possible at publish time with PubSubClient
-    bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
+    bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_NOT_RETAINED);
     if (ok) {
         ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgId, topic, g_mqttOutgoingMsg);
     } else {
@@ -216,9 +285,9 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
 }
 
 
-// Parses the leading positive integer in `str` (admin/dead is just the deviceId, admin/live is "<deviceId> boot mac:..." — both share the leading-int
-// shape) and returns true iff it is a valid deviceId in [1..254]. 0 and 255 are reserved (DEVICE_ID_UNSET). Anything malformed (empty, non-numeric,
-// out of range, or followed by an unexpected non-separator character) is rejected so a peer cannot spoof "device 0" via a crafted payload.
+// Parses the leading positive integer in `str` and returns true iff it is a valid deviceId in [1..254]. 0 and 255 are reserved (DEVICE_ID_UNSET).
+// Used to extract the id from the admin/liveness/<id> topic suffix (after the prefix). Anything malformed (empty, non-numeric, out of range, or
+// followed by an unexpected non-separator character) is rejected so a peer cannot spoof "device 0" via a crafted topic.
 static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
     if (str == nullptr) {
         return false;
@@ -231,7 +300,7 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
     if (val < 1 || val > 254) {
         return false;
     }
-    // Accept either end-of-string (admin/dead payload) or a whitespace separator before the rest of the alive payload.
+    // Accept either end-of-string (topic suffix "admin/liveness/<id>" parses to <id> + '\0') or a whitespace separator.
     const char trailing = *endptr;
     if (trailing != '\0' && trailing != ' ' && trailing != '\t' && trailing != '\r' && trailing != '\n') {
         return false;
@@ -241,8 +310,20 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
 }
 
 
-// PubSubClient subscribe callback — dispatches by topic. admin/live + admin/dead drive the friend-presence LEDs; msg/* topics route through the
-// shared routeMessage() funnel which handles screen wake / /cmd interception / display.
+// PubSubClient subscribe callback. Two families of topics:
+//   - admin/liveness/<id>     drives the friend-presence LEDs / contact silhouettes (BOOT/RECO/LIVE = alive, DEAD = offline).
+//   - msg/broadcast | msg/unicast/<me>     chat traffic, funneled through routeMessage() for wake-on-input + /cmd interception + display.
+//
+// Liveness payload contract (cf. docs/howto_mqtt.md):
+//   "DEAD"                                  → device is offline, no timestamp.
+//   "<BOOT|RECO|LIVE> <epochSeconds>"       → device is alive at the given wall-clock epoch.
+//
+// Self-filter is critical because the broker replays our own retained admin/liveness/<myId> back at us when we subscribe to the wildcard.
+//
+// Staleness check covers the "peer crashed without firing its Will" edge: its retained LIVE sits at the broker forever, with a frozen timestamp.
+// On subscribe we receive it, compare the embedded epoch against our local time(nullptr), and ignore it if older than the keepalive window + 5 s of
+// margin. The check is gated by "our own clock is plausibly synced" (time(nullptr) > 1.7e9 — same threshold setupNTP uses) — early-boot devices
+// without NTP yet can't compare, so they fall back to trusting the LIVE rather than locking out every peer.
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     String message;
     for (unsigned int i = 0; i < length; i++) {
@@ -252,20 +333,55 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
 
     ESP_LOGD(TAG_MQTT, "Incoming message [%s] -> [%s]", topic, message.c_str());
 
-    if (strcmp(topic, g_mqttOutgoingTopicLive) == 0) {
+    // admin/liveness/<id> — id from the topic suffix, payload from "TYPE [epoch]".
+    if (strncmp(topic, MQTT_LIVENESS_TOPIC_PREFIX, MQTT_LIVENESS_TOPIC_PREFIX_LEN) == 0) {
         int remoteDeviceId;
-        if (!parseLeadingDeviceId(message.c_str(), remoteDeviceId)) {
-            ESP_LOGW(TAG_MQTT, "Ignoring malformed admin/live payload: [%s]", message.c_str());
+        if (!parseLeadingDeviceId(topic + MQTT_LIVENESS_TOPIC_PREFIX_LEN, remoteDeviceId)) {
+            ESP_LOGW(TAG_MQTT, "Ignoring malformed admin/liveness topic: [%s]", topic);
             return;
         }
-        onReceivedContactOnline(remoteDeviceId, true);
-    } else if (strcmp(topic, g_mqttOutgoingTopicWill) == 0) {
-        int remoteDeviceId;
-        if (!parseLeadingDeviceId(message.c_str(), remoteDeviceId)) {
-            ESP_LOGW(TAG_MQTT, "Ignoring malformed admin/dead payload: [%s]", message.c_str());
+        // Self-filter: the broker mirrors our own retained back when we subscribe to the wildcard.
+        if (remoteDeviceId == g_deviceData.deviceId) {
+            ESP_LOGD(TAG_MQTT, "Ignoring own liveness echo on [%s]", topic);
             return;
         }
-        onReceivedContactOnline(remoteDeviceId, false);
+
+        const char* msgC = message.c_str();
+
+        // Parse the leading TYPE word. Rejects unknown / truncated payloads (e.g. somebody manually publishing "hello" on the topic).
+        MQTTLiveness subtype;
+        if (!parseMQTTLiveness(msgC, subtype)) {
+            ESP_LOGW(TAG_MQTT, "Liveness payload has unknown leading TYPE for device %d: [%s]", remoteDeviceId, msgC);
+            return;
+        }
+
+        // DEAD short-circuit — no timestamp to parse, mark offline immediately.
+        if (subtype == MQTTLiveness::DEAD) {
+            onReceivedContactOnline(remoteDeviceId, ContactLiveness::DEAD);
+            return;
+        }
+
+        // BOOT/RECO/LIVE: payload must be "<TYPE> <epoch>". The TYPE is exactly 4 chars (validated above), so the epoch field starts at offset 5.
+        const char* epochField = msgC + 5;
+        char*       endptr     = nullptr;
+        long        payloadEpoch = strtol(epochField, &endptr, 10);
+        if (endptr == epochField || payloadEpoch <= 0) {
+            ESP_LOGW(TAG_MQTT, "Liveness epoch not numeric for device %d: [%s]", remoteDeviceId, msgC);
+            return;
+        }
+
+        // Staleness check. Threshold = keepalive interval + 5 s margin, same window as contactsTick uses. Only enforced when our local clock looks
+        // synced — otherwise we don't have a baseline to compare against.
+        time_t nowEpoch = time(nullptr);
+        if (nowEpoch > 1'700'000'000L) {
+            long age = (long)nowEpoch - payloadEpoch;
+            if (age > (long)(MQTT_KEEPALIVE_INTERVAL_MS / 1000) + 5) {
+                ESP_LOGD(TAG_MQTT, "Ignoring stale liveness retain for device %d (age %lds, payload=[%s])", remoteDeviceId, age, msgC);
+                return;
+            }
+        }
+
+        onReceivedContactOnline(remoteDeviceId, ContactLiveness::LIVE);
     }
     // msg/unicast/<me> or msg/broadcast
     else if (topic[0] == 'm') {

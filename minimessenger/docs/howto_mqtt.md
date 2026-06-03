@@ -8,19 +8,31 @@
 
 ## TL;DR
 
-- **PubSubClient** (Library Manager 2.8) ne sait publier qu'en **QoS 0**
-  — peu importe le drapeau que tu mets. Il sait s'abonner en QoS 0 ou
-  QoS 1, **mais pas QoS 2**.
-- En MQTT, la QoS effective d'une délivrance vaut
-  **`min(publish_QoS, subscribe_QoS)`**. S'abonner en QoS 1 à un sujet
-  où l'autre côté publie en QoS 0 ne fait rien gagner.
-- Un message marqué **retained** est stocké côté broker pour ce topic et
-  re-livré à **tout** nouvel abonné, y compris ce même device après un
-  reboot. C'est pour ça que les messages de chat réapparaissent à chaque
-  démarrage — voir `mqttPushFormattedMessage()` dans `mqtt.ino` qui
-  passe actuellement `MQTT_MSG_RETAINED` pour **tous** les topics.
-- Le fix : ne retenir que ce dont la sémantique l'exige (`admin/live`),
-  pas les messages de conversation.
+- **PubSubClient** (Library Manager 2.8) ne sait publier qu'en **QoS 0**.
+  Subscribe en 0 ou 1, **jamais 2**.
+- QoS effective = **`min(publish_QoS, subscribe_QoS)`**. Monter en QoS
+  d'un seul côté ne sert à rien.
+- Un message **retained** est stocké côté broker pour **ce topic
+  exact** et re-livré à tout nouvel abonné. Clé de stockage = topic
+  (pas couple topic+publisher) — si N devices publient retained sur le
+  même topic, seul le dernier survit.
+- **Schéma actuel pour la présence des peers** : un seul topic family,
+  `admin/liveness/<deviceId>`, en retained. Couvre les quatre
+  transitions :
+  - `"BOOT <epoch>"`, `"RECO <epoch>"`, `"LIVE <epoch>"` → device
+    présent. `<epoch>` = `time(nullptr)` au moment du publish.
+  - `"DEAD"` (sans timestamp) → device absent. C'est aussi le payload
+    Will, envoyé par le broker quand il détecte une déco.
+- Chaque device s'abonne au wildcard `admin/liveness/+`. Au boot, il
+  reçoit en une fois un retained par peer — alive ou dead — avec le
+  bon `deviceId` lisible dans le suffixe du topic.
+- Le dispatcher ignore les retains LIVE/BOOT/RECO dont l'`epoch` est
+  plus vieux que `MQTT_KEEPALIVE_INTERVAL_MS + 5 s` : c'est typiquement
+  un peer qui a crashé sans déclencher son Will, et dont le retained
+  LIVE traîne, figé, sur le broker.
+- **Aucun retain sur le chat** (`msg/broadcast`, `msg/unicast/*`). Le
+  flag `retained` de `mqttPushFormattedMessage` reste explicite ; les
+  callers de chat passent `MQTT_MSG_NOT_RETAINED`.
 
 ## Où vit le code MQTT
 
@@ -92,10 +104,9 @@ QoS ≥ 1 **et** subscriber QoS ≥ 1, pour chaque message.
 Code actuel dans `mqtt.ino::mqttReconnectAttempt()` :
 
 ```cpp
-g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
-g_mqttClient.subscribe(myUnicastTopic.c_str(),       MQTT_QOS_1);
-g_mqttClient.subscribe(g_mqttOutgoingTopicLive,      MQTT_QOS_0);
-g_mqttClient.subscribe(g_mqttOutgoingTopicWill,      MQTT_QOS_0);
+g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);   // msg/broadcast
+g_mqttClient.subscribe(myUnicastTopic.c_str(),       MQTT_QOS_1);   // msg/unicast/<myId>
+g_mqttClient.subscribe(MQTT_LIVENESS_TOPIC_WILDCARD, MQTT_QOS_0);   // admin/liveness/+ — voir section "présence" plus bas
 ```
 
 Et côté publish (`mqttPushFormattedMessage`) → toujours QoS 0 (limite
@@ -126,131 +137,243 @@ constantes ici.
 
 ## Messages "retained" et rejouage au boot
 
-C'est probablement le comportement le plus surprenant de MQTT pour qui
-vient d'autres files de messages.
+Le mécanisme retain est puissant et piégeux : c'est lui qui rend
+possible la présence persistante des peers (`admin/liveness/<id>`),
+mais c'était aussi la source du bug "chaque reboot ré-affiche la
+dernière conversation". Cette section explique pourquoi, et le schéma
+de présence qui en résulte.
 
 ### Définition
 
-Un message publié avec le flag **retained = true** est **stocké côté
-broker** pour ce topic exact. Il y reste jusqu'à ce qu'un autre message
-retained écrase le précédent sur le même topic (ou qu'un publish d'un
-payload vide avec retained=true le supprime). Et **chaque** nouvel
-abonné à ce topic reçoit immédiatement ce dernier message retenu, en
-plus des messages futurs.
+Un message publié avec **retained = true** est stocké côté broker sous
+une clé = **le topic exact**. Un seul message retenu par topic. Une
+nouvelle publication retained sur ce topic écrase le précédent ; un
+publish retained avec payload vide le supprime. Chaque nouvel abonné à
+ce topic (ou matchant un wildcard couvrant ce topic) reçoit
+immédiatement le dernier retained, en plus des messages futurs.
 
 C'est conçu pour exposer un **état**, pas un **événement** :
 
-- ✅ Bon usage de retained : "device 4 est en ligne", "la température est
-  à 21 °C", "le mode est `night`". Un nouvel abonné a besoin de
-  connaître l'état actuel sans attendre la prochaine émission.
-- ❌ Mauvais usage de retained : "Bob a dit hello", "le bouton a été
-  pressé", n'importe quel **événement** qui n'a de sens qu'au moment
-  où il se produit.
+- ✅ Bon usage : "device 4 est en ligne", "la température est à 21 °C".
+- ❌ Mauvais usage : "Bob a dit hello", "le bouton a été pressé".
 
-### Pourquoi le projet rejoue les messages au boot
+### Piège n°1 — la clé de stockage est le topic, pas le publisher
 
-`mqttPushFormattedMessage()` dans `mqtt.ino` publie **tout** avec
-`MQTT_MSG_RETAINED = true` :
+Si plusieurs devices publient retained sur **le même topic**, ils se
+piétinent : le broker n'en garde qu'un, le dernier publisher gagne. Si
+on avait gardé un `admin/live` partagé entre 4 devices :
 
-```cpp
-bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
+```
+t=0  device 1 publish (retained) "1 keep ..."  → retained[admin/live] = "1 keep ..."
+t=1  device 2 publish (retained) "2 keep ..."  → retained[admin/live] = "2 keep ..." (1 écrasé)
+t=2  device 3 publish (retained) "3 keep ..."  → retained[admin/live] = "3 keep ..." (2 écrasé)
+t=3  device 4 publish (retained) "4 keep ..."  → retained[admin/live] = "4 keep ..." (3 écrasé)
 ```
 
-Résultat :
+Un nouveau device qui s'abonne ne reçoit **un seul** retained — celui
+du dernier publisher. Il n'apprend les autres qu'à leur prochain
+keepalive (jusqu'à 120 s d'attente).
 
-1. Bob envoie "salut" sur `msg/broadcast` — publié retained.
-2. Le broker mémorise ce "salut" comme dernier message retenu sur
-   `msg/broadcast`.
-3. Alice reboot. Au reconnect, elle re-souscrit à `msg/broadcast`. Le
-   broker la salue avec le "salut" mémorisé — qu'elle a déjà reçu et
-   affiché.
-4. Pareil sur `msg/unicast/<aliceId>` s'il y a un message ciblé.
-5. Conclusion : chaque boot, la dernière ligne de conversation
-   ressurgit. Sur de multiples reconnects (perte WiFi, /mqtt-drop, …)
-   c'est encore pire.
+**La parade** : un topic par publisher (`admin/liveness/<id>`) +
+souscription via wildcard (`admin/liveness/+`). Le broker garde alors
+un retained par topic distinct → une entrée par device. Le nouveau
+device en reçoit l'ensemble en une fois.
 
-### Le fix : retain par topic, pas par défaut
+### Piège n°2 — le dernier retained reste, indéfiniment
 
-La sémantique projet par projet :
+Si on retient un événement (un message de chat par exemple), le broker
+le garde jusqu'à ce qu'il soit explicitement remplacé ou effacé. Donc
+chaque nouveau subscriber, chaque reconnect, chaque reboot →
+re-livraison.
 
-| Topic                  | Devrait être retained ? | Pourquoi |
-|------------------------|-------------------------|----------|
-| `admin/live`           | ✅ **Oui**              | C'est un **état** "device X est en ligne". Un device qui boot a besoin de connaître les peers en ligne sans attendre 2 min de keepalive. |
-| `admin/dead` (Will)    | Géré par `connect()`    | Le retain de la Last Will est piloté par le 6ᵉ argument de `g_mqttClient.connect(...)` — déjà à `MQTT_MSG_NOT_RETAINED` dans `mqttReconnectAttempt()`. Ne pas retenir : un device "mort" n'est mort qu'au moment où le broker détecte la déco, pas indéfiniment. |
-| `msg/broadcast`        | ❌ **Non**              | Événement (un message de chat). Si Alice reboot 3 jours après le dernier "salut" de Bob, elle n'a pas à revoir "salut". |
-| `msg/unicast/<id>`     | ❌ **Non**              | Idem — événement, pas état. |
-| `admin/logs`           | ❌ **Non**              | Événement aussi, si on s'en sert un jour. |
+D'où la règle : **ne retenir que les états**. Dans le code, le drapeau
+`retained` de `mqttPushFormattedMessage` est explicite, choisi par le
+caller. La règle d'or :
 
-### Code minimal à changer
+| Topic                          | Retain   | Pourquoi |
+|--------------------------------|----------|----------|
+| `admin/liveness/<id>`          | ✅ true  | État (présence). Subscribé via wildcard pour panorama immédiat. |
+| `msg/broadcast`                | ❌ false | Évènement de chat. |
+| `msg/unicast/<id>`             | ❌ false | Évènement de chat. |
+| `admin/logs`                   | ❌ false | Évènement (si un jour utilisé). |
 
-`mqttPushFormattedMessage()` doit prendre le drapeau retain en
-paramètre, et les callers le fournissent selon la sémantique du topic
-qu'ils ciblent :
+## Présence des peers — schéma `admin/liveness/<id>`
 
-```cpp
-// Dans mqtt.h
-bool mqttPushFormattedMessage(const char* topic, const char* payload, bool retained);
+C'est l'usage central du retain dans ce projet. Une **seule** famille
+de topics pour porter alive ET dead, avec un payload structuré.
 
-// Dans mqtt.ino
-bool mqttPushFormattedMessage(const char* topic, const char* payload, bool retained) {
-    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE,
-             "%s ### ts:%s deviceId:%d msgId:%d",
-             payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgId);
-    bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, retained);
-    // … logs identiques
-}
+### Format du payload
 
-// Callers :
-//   mqttSendAlive()    →  mqttPushFormattedMessage(g_mqttOutgoingTopicLive, payload, MQTT_MSG_RETAINED);
-//   routeMessage()     →  mqttPushFormattedMessage(g_mqttOutoingRecipientTopic, message.c_str(), MQTT_MSG_NOT_RETAINED);
-//   broadcast variants →  MQTT_MSG_NOT_RETAINED
+```
+"BOOT <epochSeconds>"     ← première publication après un boot frais
+"RECO <epochSeconds>"     ← publication post-reconnexion (n-ième connect)
+"LIVE <epochSeconds>"     ← keepalive périodique tous les MQTT_KEEPALIVE_INTERVAL_MS
+"DEAD"                    ← Will tiré par le broker à la déconnexion. Pas d'epoch.
 ```
 
-### Purger les retains existants côté broker
+`<epochSeconds>` = `time(nullptr)` au moment du publish (entier
+décimal). Format choisi par opposition à un timestamp formaté
+(`YYYY-MM-DD HH:MM:SS`) parce que la comparaison côté receiver se
+résume à une soustraction d'entiers — pas de `strptime`, pas de parse
+complexe.
 
-Une fois le code corrigé, le broker garde **toujours** le dernier
-message retenu publié par l'ancien code. Pour les effacer, il faut
-publier un payload vide retained sur chaque topic concerné :
+Les 4 mots-clés sont portés par un `enum class` dans `mqtt.h`, et deux
+helpers font le pont avec leur forme wire :
+
+```cpp
+// mqtt.h
+enum class MQTTLiveness : uint8_t { BOOT, RECO, LIVE, DEAD };
+
+const char* mqttLivenessAsString(MQTTLiveness subtype);
+bool        parseMQTTLiveness(const char* payload,
+                                        MQTTLiveness& outSubtype);
+```
+
+Côté receiver, `parseMQTTLiveness` lit les 4 premiers
+caractères du payload, vérifie le délimiteur derrière (' ' ou '\0'
+pour éviter qu'un `"DEADBEEF"` matche `DEAD`), et retourne l'enum.
+Côté publisher (`mqttSendLiveness()` et le `willMessage` de `connect()`),
+`mqttLivenessAsString()` donne la string immuable à coller dans
+le payload.
+
+Le dispatcher dans `mqtt.ino` enchaîne ensuite avec la sémantique de
+plus haut niveau, l'enum **`ContactLiveness`** (LIVE / DEAD) défini
+dans `contacts.h` — `onReceivedContactOnline()` ne reçoit que cette
+forme binaire, BOOT/RECO/LIVE s'effondrent en `ContactLiveness::LIVE`.
+
+### Le Will porte un payload DEAD retenu sur le même topic
+
+C'est la pièce centrale qui permet à `admin/liveness/<id>` d'être le
+seul topic de présence : la Last Will Testament posée à `connect()` a
+pour cible `admin/liveness/<myId>`, payload `"DEAD"`, **retained =
+true**. Quand le broker détecte la déconnexion, il publie ce payload
+et le retient — il **écrase** le dernier LIVE/BOOT/RECO précédemment
+publié. Un futur subscriber au wildcard voit donc le DEAD à la place
+de l'ancien LIVE.
+
+Le tombstone se nettoie automatiquement à la prochaine reconnexion du
+device : son `mqttSendLiveness(0)` post-connect publie un `BOOT <epoch>`
+retenu, qui écrase le DEAD.
+
+```cpp
+// mqttReconnectAttempt() — extrait
+char willTopic[MQTT_TOPIC_SIZE];
+snprintf(willTopic, MQTT_TOPIC_SIZE, MQTT_LIVENESS_TOPIC_PREFIX "%d", g_deviceData.deviceId);
+
+g_mqttClient.connect(g_deviceData.name(),
+                     g_mqttServerInfo.user, g_mqttServerInfo.password,
+                     willTopic,
+                     MQTT_QOS_0,
+                     MQTT_MSG_RETAINED,                                          // ← retain du Will = true
+                     mqttLivenessAsString(MQTTLiveness::DEAD),   // "DEAD"
+                     MQTT_SESSION_VOLATILE);
+```
+
+### Dispatch côté receiver
+
+`onMqttIncomingMessage()` applique le contrat en 5 étapes :
+
+1. Le topic match `admin/liveness/<id>` → extraire `<id>` depuis le
+   suffixe (via `parseLeadingDeviceId`).
+2. Si `<id> == g_deviceData.deviceId` → ignorer (c'est notre propre
+   retained rejoué par le broker lors de la souscription au wildcard).
+3. Parser le 1er champ du payload via `parseMQTTLiveness()`.
+   Échec (TYPE inconnu ou tronqué) → log warn, ignorer.
+   - Si `MQTTLiveness::DEAD` →
+     `onReceivedContactOnline(id, ContactLiveness::DEAD)`, terminé.
+4. Sinon (BOOT/RECO/LIVE), lire le 2ᵉ champ comme `epochSeconds`. Si
+   absent ou non numérique → log warn, ignorer.
+5. **Staleness check** : si notre horloge locale est synchro
+   (`time(nullptr) > 1.7e9`) et que `now - payload.epoch > keepalive
+   + 5 s`, le retained est obsolète (peer crashé sans Will, retained
+   figé) → ignorer. Sinon →
+   `onReceivedContactOnline(id, ContactLiveness::LIVE)`.
+
+L'étape 5 est défensive : en théorie, un peer qui meurt déclenche son
+Will → le retained passe à DEAD → l'étape 3 le traite. Mais si le
+broker ne détecte jamais la déco (réseau silencieux, keepalive TCP
+qui traîne), le LIVE sur ce peer reste retenu pendant des heures avec
+un epoch figé. La staleness check évite qu'un nouveau device traite ce
+fossile comme un peer actif.
+
+### Pourquoi pas de horodatage dans le Will lui-même ?
+
+Le Will est figé au moment de `connect()` côté broker. Le device est
+mort par définition quand le Will est tiré — il ne peut pas
+"timestamp" l'événement à l'instant du décès. Un `ts:` baked dans le
+Will au moment du connect mentirait : il indiquerait l'heure de
+connexion, pas l'heure de mort.
+
+Plutôt que de mentir, on s'en passe : le payload `"DEAD"` est sec, et
+l'horodatage de mort se reconstruit côté observateur à partir de
+**deux sources** :
+
+1. Si l'observateur était déjà connecté quand le DEAD est arrivé : il
+   stampe l'événement avec sa propre `time(nullptr)` au moment de la
+   réception (précision = seconde).
+2. Si l'observateur arrive plus tard et lit le retained DEAD : il
+   peut au mieux dire "mort à un instant antérieur à maintenant".
+   Le dernier `LIVE <epoch>` qu'il avait éventuellement vu avant le
+   DEAD donne la borne inférieure. Précision ≈ ±
+   `MQTT_KEEPALIVE_INTERVAL_MS`.
+
+C'est le maximum accessible en MQTT 3.1.1. Mieux exigerait MQTT 5
+(broker-side timestamp via properties) — inatteignable avec
+PubSubClient.
+
+### Cycle de vie complet d'un peer (résumé)
+
+```
+Device 3 boot
+  ├─ setupWifi() → WiFi UP
+  ├─ wifiOnConnected() → setupNTP() bloque jusqu'à SNTP sync (max 15 s)
+  ├─ mqttReconnectAttempt() — gate "time(nullptr) >= 1.7e9" sinon return false
+  │   Tant que NTP pas synchro, MQTT ne se connecte PAS → aucun publish bidon.
+  ├─ connect() — Will armé sur admin/liveness/3 = "DEAD" retained
+  └─ mqttSendLiveness(BOOT) → publish "BOOT 1717459200" retained sur admin/liveness/3
+     [tombstone DEAD éventuel d'un précédent crash écrasé]
+
+Device 3 vie courante
+  └─ toutes les 120 s : mqttSendLiveness(LIVE) → publish "LIVE <now>" retained
+
+Device 3 perte réseau temporaire
+  ├─ broker détecte la déco → publie le Will : "DEAD" retained sur admin/liveness/3
+  └─ retained sur le broker est maintenant DEAD
+
+Device 3 revient
+  ├─ connect() — Will armé à nouveau (NTP déjà synchro depuis le 1er boot, gate passe direct)
+  └─ mqttSendLiveness(RECO) → publish "RECO <now>" retained
+     [DEAD écrasé par RECO, peers déjà connectés reçoivent le RECO]
+
+Device 3 crashe hard (power yank), broker ne détecte rien pendant longtemps
+  └─ retained reste "LIVE <epoch_d'il_y_a_des_heures>"
+     [staleness check côté nouveau subscriber : ignore]
+  ↓ broker finit par détecter (timeout TCP)
+  └─ Will tiré : retained passe à DEAD
+```
+
+Le pré-check NTP dans `mqttReconnectAttempt()` est la pièce qui garantit
+qu'aucun retained `BOOT <epoch>` ne part avec un epoch boot-relatif (du
+genre `BOOT 22` quand le device a démarré il y a 22 secondes et que SNTP
+n'a pas encore répondu). La gate utilise le même seuil que `setupNTP()`
+— `time(nullptr) >= 1'700'000'000` — donc le contrat est cohérent
+entre les deux fonctions : NTP synced ⇔ MQTT autorisé à publier.
+
+### Purger les retains historiques côté broker
+
+Si tu modifies la sémantique d'un topic ou que tu veux nettoyer après
+un test, le broker garde toujours le dernier retained reçu. Pour les
+effacer, publier un payload vide retained :
 
 ```bash
-# avec mosquitto_pub depuis n'importe quelle machine sur le réseau
-mosquitto_pub -h xxxxxx.s1.eu.hivemq.cloud -p 8883 \
-  --capath /etc/ssl/certs -u xxxxx -P xxxxxxx \
-  -t 'msg/broadcast' -r -n
-mosquitto_pub … -t 'msg/unicast/1' -r -n
-mosquitto_pub … -t 'msg/unicast/2' -r -n
-# … un par deviceId connu
+mosquitto_pub -h <cluster>.s1.eu.hivemq.cloud -p 8883 --capath /etc/ssl/certs -u <user> -P <pass> -t 'admin/liveness/3' -r -n
+mosquitto_pub … -t 'admin/live'    -r -n      # ancien topic d'avant le refactor
+mosquitto_pub … -t 'admin/live/3'  -r -n      # idem
+mosquitto_pub … -t 'admin/dead'    -r -n      # idem
 ```
 
-`-r` = retained, `-n` = null/empty message. Effet : "publish un message
-retained vide" → le broker supprime l'entrée retenue sur ce topic.
-
-Alternative : la console web HiveMQ Cloud expose un "Clear retained
-message" par topic.
-
-### Stratégies alternatives (si on tenait à garder retained=true)
-
-Pour mémoire — pas recommandées ici, mais utiles à connaître :
-
-1. **Tracking de `msgId` en NVS.** Chaque payload contient
-   `msgId:<n>` dans le trailer. Le receiver mémorise `(deviceId →
-   dernier msgId vu)` en NVS et ignore les payloads dont le `msgId`
-   est ≤ au dernier vu. Coût : une écriture NVS par message entrant.
-2. **Filtre par horodatage.** Le trailer contient `ts:YYYY-MM-DD
-   HH:MM:SS`. Au boot, on dropne tout message dont `ts` est antérieur
-   à une marge (ex : `now() - 30 s`). Coût : zéro stockage, mais
-   nécessite que NTP soit synchro **avant** que le callback MQTT ne
-   commence à délivrer — pas garanti dans l'ordre actuel
-   `setupWifi()` → MQTT → NTP.
-3. **Clean session = `false`.** Le broker conserve les messages QoS ≥ 1
-   manqués pendant que le client était déconnecté, et les rejoue **une
-   fois**, à la reconnexion suivante. Mais comme PubSubClient publie en
-   QoS 0, la queue est toujours vide → cette option ne change rien
-   tant qu'on reste sur cette lib.
-
-La fix par drapeau `retained` reste de loin la plus propre : c'est ce
-que MQTT a prévu pour distinguer état et événement, autant l'utiliser
-comme tel.
+`-r` retained, `-n` null/empty. Alternative : la console web HiveMQ
+Cloud expose un "Clear retained message" par topic.
 
 ## Clean session
 
