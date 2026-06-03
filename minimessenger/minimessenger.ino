@@ -50,9 +50,10 @@ Docs (/docs):
 // shared constants / extern declarations / function prototypes. Library Manager: "PubSubClient" (2.8).
 #include "mqtt.h"
 
-// Per-deployment data: WiFi compile-time defaults + per-device identity table (MAC → deviceId, pseudo, namePrefix, screen). Gitignored; copied from
-// personal-data.h.template. Used by identifyDevice() at boot and by onReceivedContactOnline() to surface peer pseudos in logs and banners.
-#include "personal-data.h"
+// DeviceDataEntry type + static find* method declarations + extern decl of the compiled table. The actual table (with per-deployment data) lives
+// in personal-data.h, materialised when wifi.ino — last in the Arduino concatenation — includes that file. Pulling contacts.h here is what gives
+// minimessenger.ino the struct definition it needs to declare `DeviceDataEntry g_deviceData` and to read its fields throughout the sketch.
+#include "contacts.h"
 
 // Provided by Arduino IDE (with ESP8266 board plugins ?)
 #include <WiFiClientSecure.h>
@@ -111,15 +112,6 @@ Docs (/docs):
 // ================================================================================
 // User configuration
 // ================================================================================
-
-// WiFi credentials are no longer kept here — see wifi.ino + personal-data.h (gitignored) + NVS for the new onboarding flow. WiFiMulti picks the
-// strongest known network at boot; if none respond, the WiFiManager captive portal opens automatically. See docs/howto_wifi.md.
-
-// MQTT Broker credentials. Kept here next to the other "Secrets" — the rest of the MQTT config (topics, timing, QoS flags) lives in mqtt.h/mqtt.ino.
-const char* mqtt_server   = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
-const int   mqtt_port     = 8883;                                                   // TLS Port
-const char* mqtt_user     = "xxxxx";                                                // Credential Username
-const char* mqtt_password = "xxxxxxx";                                             // Credential Password
 
 
 // POSIX timezone string for Paris (Europe/Paris). Decoded:
@@ -330,8 +322,6 @@ WiFiClientSecure g_wifiClient;
 
 
 // OLED Display
-DisplayType g_displayType = ST7789;
-
 Adafruit_GFX* g_disp = NULL;
 
 // Burn-in protection state
@@ -350,24 +340,16 @@ char g_inChar;
 byte g_inNextCharIndex = 0;
 #endif
 
-// Messaging
-// Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — any
-// real device gets a small positive ID assigned in identifyDevice().
+// Messaging — per-device identity
+// Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — only used by contacts.ino as the free-slot marker for the dynamic peer
+// table (`g_contacts[i].deviceId == DEVICE_ID_UNSET`). The local device's identity lives entirely in g_deviceData below.
 #define DEVICE_ID_UNSET 0xFF
-byte g_deviceIdMe = DEVICE_ID_UNSET;
-char g_deviceIdAsChars[4];
 
-// Sizes of the per-device identity buffers.
-// - `g_deviceName` holds `<namePrefix>_<003-padded-id>` (e.g. "D1M_001") — 3-letter prefix + '_' + 3-digit ID + '\0' fits in 10.
-// - `g_userPseudo` holds the friendly name from the compile-time table (e.g. "Alice", "Maïa") — capped at 11 chars + '\0'; Latin-1
-// accented bytes count as one each here since the table source is UTF-8 and any accented byte (e.g. "ï" = C3 AF) takes 2 bytes, so 12 covers names
-// up to ~5 accented characters or ~11 ASCII characters before snprintf truncates.
-// 12 + 10 not ok
-// ZZZ
-#define G_DEVICE_NAME_LEN 12 // 12 (+40) OK
-#define G_USER_PSEUDO_LEN 10 // 20 ok
-char g_deviceName[G_DEVICE_NAME_LEN];
-char g_userPseudo[G_USER_PSEUDO_LEN];
+// Unified per-device identity record — populated once by identifyDevice() at boot. Two paths: clone the matching row of COMPILED_DEVICE_DATA_ENTRIES
+// (known MAC), or synthesise an entry on the fly (unknown MAC: random ID, "JohnDoe" pseudo, "UNK" prefix, ST7789 screen). After identifyDevice()
+// returns this is the single source of truth — read directly via `g_deviceData.deviceId / pseudo / screen / namePrefix`, or via the formatted-name
+// method `g_deviceData.name()` (defined as a member of DeviceDataEntry in contacts.h).
+DeviceDataEntry g_deviceData;
 
 
 #define LED_STATE_NOT_CONFIGURED -1
@@ -377,7 +359,7 @@ char g_userPseudo[G_USER_PSEUDO_LEN];
 #define LED_STATE_BLINK_SLOW     3
 // LED arrays are indexed by raw GPIO pin number (ledSetState(pin, …) → g_ledRequiredState[pin] = …). The ESP32 exposes GPIOs up to 39, so the arrays
 // must be sized to cover that range — otherwise ledSetState(32, …) writes 32 bytes past a too-small array and corrupts adjacent BSS globals. The
-// previously-used value of 17 came from the D1 mini era (ESP8266, GPIO 0..16) and stealthily wrote on top of g_deviceName / g_userPseudo on ESP32,
+// previously-used value of 17 came from the D1 mini era (ESP8266, GPIO 0..16) and stealthily wrote on top of adjacent identity BSS globals on ESP32,
 // producing 0x02 (LED_STATE_BLINK_FAST as a byte → rendered as a smiley by the Adafruit GLCD font) at the offset matching LED_STATUS=GPIO32 minus
 // the array's actual length. 40 covers the full ESP32 GPIO range (0..39); bump to 48 if porting to ESP32-S2/S3/C3 with larger GPIO maps.
 #define LED_QTY                  40
@@ -401,7 +383,8 @@ size_t g_msgCursorIdx = 0;
 // modern C++ types in headers. List functions called from earlier in the file than their definition.
 // ================================================================================
 
-void setRecipient(int recipientDeviceId);
+void setUnicastRecipient(int recipientDeviceId);
+void setBroadcastRecipient();
 void showUpdatedInfoScreen();
 void refreshInfoScreenIfShown();
 void redrawStatusBar();
@@ -841,40 +824,33 @@ String getRealHardwareMAC() {
 
 
 void identifyDevice() {
-    String      mac          = getRealHardwareMAC();
-    const char* macCstr      = mac.c_str();
+    String mac = getRealHardwareMAC();
 
-    // ---------------------
-    // Default unicast recipient when the matching COMPILED_DEVICE_DATA_ENTRIES row has defaultRecipientId == 0 (i.e. no per-device override). Historical
-    // value preserved from the previous hardcoded cascade — Jolan was the only device with an override (2).
-    constexpr int DEFAULT_RECIPIENT_ID = 3;
-    int recipientId = DEFAULT_RECIPIENT_ID;
-
-    const CompiledDeviceDataEntry* entry = findCompiledDeviceByMac(macCstr);
+    const DeviceDataEntry* entry = DeviceDataEntry::findByMac(mac.c_str());
     if (entry != nullptr) {
-        g_deviceIdMe = entry->deviceId;
-
-         ESP_LOGE(TAG_MM, "BLABLA [%d]", g_deviceIdMe);
-
-        snprintf(g_deviceName, sizeof(g_deviceName), "%s_%03d", entry->namePrefix, g_deviceIdMe);
-        snprintf(g_userPseudo, sizeof(g_userPseudo), "%s", entry->pseudo);
-        g_displayType = entry->screen;
-        if (entry->defaultRecipientId != 0) {
-            recipientId = entry->defaultRecipientId;
-        }
+        // Known device: clone the compiled entry into the mutable global. The const char* members (mac, pseudo, namePrefix) keep pointing at the
+        // flash literals from personal-data.h, which is fine since those literals outlive the device boot.
+        g_deviceData = *entry;
     } else {
-        // Unknown MAC: prototype / new device not yet listed in personal-data.h. Random ID in [100..999] avoids colliding with the small declared IDs.
-        snprintf(g_userPseudo, sizeof(g_userPseudo), "%s", "JohnDoe");
-        g_deviceIdMe = random(100, 1000);
-        snprintf(g_deviceName, sizeof(g_deviceName), "UNK_%03d", g_deviceIdMe);
+        // Unknown MAC: prototype / new device not yet listed in personal-data.h. Synthesise an entry on the fly so the rest of the code keeps a
+        // single source of truth (g_deviceData). The dynamic MAC string is parked in a function-local static so its address stays valid for the
+        // device lifetime — pseudo and namePrefix point at string literals (persistent automatically).
+        static char s_dynamicMacBuf[18];
+        strncpy(s_dynamicMacBuf, mac.c_str(), sizeof(s_dynamicMacBuf) - 1);
+        s_dynamicMacBuf[sizeof(s_dynamicMacBuf) - 1] = '\0';
+
+        g_deviceData.mac        = s_dynamicMacBuf;
+        g_deviceData.deviceId   = (byte)random(100, 1000);  // [100..999] avoids colliding with the small IDs declared in COMPILED_DEVICE_DATA_ENTRIES.
+        g_deviceData.pseudo     = "JohnDoe";
+        g_deviceData.namePrefix = "UNK";
+        g_deviceData.screen     = ST7789;  // default — the only target with a working renderer today; OLEDSHIELD branch is still a stub.
     }
 
-    // Non formated g_deviceIdMe (pour Will topic)
-    snprintf(g_deviceIdAsChars, 4, "%d", g_deviceIdMe);
+    ESP_LOGI(TAG_MM, "Identified device: name=[%s] id=%d screenType=%d for [%s]",
+             g_deviceData.name(), g_deviceData.deviceId, (int)g_deviceData.screen, g_deviceData.pseudo);
 
-    ESP_LOGI(TAG_MM, "Identified device: name=[%s] id=%d screenType=%d for [%s]", g_deviceName, g_deviceIdMe, (int)g_displayType, g_userPseudo);
-
-    setRecipient(recipientId);
+    // La version courante du code n'envoie pas sur un topic specifique à un recipient avec setUnicastRecipient(recipientId)
+    setBroadcastRecipient();
 }
 
 
@@ -967,7 +943,7 @@ void setupLeds() {
 // exposes this, hence the raw sendCommand() calls.
 
 void hwScrollSetupArea() {
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
@@ -983,7 +959,7 @@ void hwScrollSetupArea() {
 // The absolute VSCSAD value sent to the controller must be in [TFA, TFA+VSA).
 void hwScrollTo(uint16_t scrollOffset) {
     g_scrollY = scrollOffset % SCROLL_AREA_H;
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
     Adafruit_ST7789* pDisp           = (Adafruit_ST7789*)g_disp;
@@ -1000,7 +976,7 @@ void hwScrollReset() {
     g_scrollY = 0;
     g_drawY   = 0;
     hwScrollTo(0);
-    if (g_displayType == DisplayType::ST7789) {
+    if (g_deviceData.screen == DisplayType::ST7789) {
         g_disp->fillScreen(ST77XX_BLACK);
     }
     // Force status bar to redraw next time it's polled (state cache is now stale).
@@ -1013,7 +989,7 @@ void hwScrollReset() {
 
 
 void setupDisplay() {
-    if (g_displayType == DisplayType::ST7789) {
+    if (g_deviceData.screen == DisplayType::ST7789) {
         Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
         pDisp->init(240, 320);
@@ -1050,7 +1026,7 @@ void setDisplayPowerState(DisplayPowerState nextState) {
 
     ESP_LOGI(TAG_MM, "setDisplayPowerState(%d -> %d)", (int)g_displayPowerState, (int)nextState);
 
-    if (g_displayType == DisplayType::ST7789) {
+    if (g_deviceData.screen == DisplayType::ST7789) {
         Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
         switch (nextState) {
@@ -1111,7 +1087,7 @@ void showSplashScreen() {
     // Show image buffer on the display hardware.
     // Since the buffer is intialized with an Adafruit splashscreen internally, this will display the splashscreen.
 
-    if (g_displayType == DisplayType::ST7789) {
+    if (g_deviceData.screen == DisplayType::ST7789) {
         Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
         g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
@@ -1159,7 +1135,7 @@ void showSplashScreen() {
 // affected by g_drawY / g_scrollY. Triggered by the "/clear" command. A subsequent addConversationBlock lands at the top of the scroll area
 // because g_drawY = 0, exactly like a fresh boot.
 void clearConversationHistory() {
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         ESP_LOGW(TAG_MM, "clearConversationHistory: DISPLAY_TYPE_NOT_CONFIGURED");
         return;
     }
@@ -1178,7 +1154,7 @@ void clearConversationHistory() {
 // re-utf8-conversion, no re-alignment compute, no ring rewrite. Everything
 // needed was captured at original send time.
 void redrawAllConversations() {
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         ESP_LOGW(TAG_MM, "redrawAllConversations: DISPLAY_TYPE_NOT_CONFIGURED");
         return;
     }
@@ -1247,7 +1223,7 @@ void redrawAllConversations() {
 // Defaults: pink CMD color + CONVO_CMD_FONT; both overridable.
 
 void printInfoLine(const String& left, const String& right, uint16_t color, const GFXfont* font) {
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
 
@@ -1477,7 +1453,12 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 // Messaging
 // ================================================================================
 
-void setRecipient(int recipientDeviceId) {
+void setBroadcastRecipient() {
+    snprintf(g_mqttOutgoingRecipientTopic, MQTT_TOPIC_SIZE, "msg/broadcast");
+    ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutgoingRecipientTopic);
+}
+
+void setUnicastRecipient(int recipientDeviceId) {
     snprintf(g_mqttOutgoingRecipientTopic, MQTT_TOPIC_SIZE, "msg/unicast/%d", recipientDeviceId);
     ESP_LOGI(TAG_MQTT, "Setting recipient topic to [%s]", g_mqttOutgoingRecipientTopic);
 }
@@ -1615,7 +1596,7 @@ void routeMessage(const String& message, MessageSource source) {
 // ================================================================================
 
 void goAndResetConversationScreen() {
-    if (g_displayType == DisplayType::ST7789) {
+    if (g_deviceData.screen == DisplayType::ST7789) {
         // hwScrollReset() wipes the entire framebuffer (status bar / footer
         // included). Right after, we mark conversation mode and repaint the
         // status bar + the empty input footer.
@@ -1687,7 +1668,7 @@ static int drawInfoRow(Adafruit_ST7789* pDisp, const char* header, const String&
 }
 
 void showUpdatedInfoScreen() {
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
         return;
     }
@@ -1722,9 +1703,12 @@ void showUpdatedInfoScreen() {
     int nextY = 0;
 
     // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
-    //nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe) + " " + g_userPseudo, colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "ID:", String(g_deviceIdMe) , colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "Name:", String(g_deviceName), colHeaders, colValues, nextY, lineHeight);
+    // Combined "ID: <id> <name>" row — replaces the previous separate "ID:" / "Name:" rows so the screen reclaims one row (~22 px) for the rest of
+    // the status info. snprintf into a stack buffer keeps the formatting explicit and avoids the 3-alloc String-concat chain.
+    char idAndNameBuf[20];  // worst case: "999 PROTO_999\0" = 14 bytes — 20 leaves slack for a longer namePrefix in the future.
+    snprintf(idAndNameBuf, sizeof(idAndNameBuf), "%d %s", g_deviceData.deviceId, g_deviceData.name());
+    nextY += drawInfoRow(pDisp, "ID:", idAndNameBuf, colHeaders, colValues, nextY, lineHeight);
+    nextY += drawInfoRow(pDisp, "Owner:", String(g_deviceData.pseudo), colHeaders, colValues, nextY, lineHeight);
     nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
 
     nextY += separatorHeight;
@@ -1859,14 +1843,8 @@ void setup() {
     // wifiTick() in loop() drives the actual association. The info screen polled every 2 s reflects each WifiState transition.
     setupWifi();
 
-    // MQTT (server + callback registration) and TLS root CA — independent of the WiFi link being up, safe at any point after setupWifi().
-    g_wifiClient.setCACert(g_hiveMQRootCA);
-    g_mqttClient.setServer(mqtt_server, mqtt_port);
-    g_mqttClient.setCallback(onMqttIncomingMessage);
-
-    //g_mqttWasConnected = true;
-    // Test blinking
-    //g_mqttLastReconnectTryTimestampMs = millis();
+    // MQTT (server + callback registration) and TLS verification mode — independent of the WiFi link being up, safe at any point after setupWifi().
+    setupMQTT();
 
     resetSerialBuffer();
 

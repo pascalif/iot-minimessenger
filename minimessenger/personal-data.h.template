@@ -1,96 +1,102 @@
 #pragma once
 
-#include <Arduino.h>
-#include "symbols.h"  // DisplayType
-
-
 // Personal / per-deployment data. Copy this file to "personal-data.h", fill in the entries below with your real networks and devices, and DO NOT
-// commit "personal-data.h" (it is in .gitignore). Both tables are used at boot only — WiFi defaults are loaded into WiFiMulti, and the device
-// identity tuple is looked up by MAC in identifyDevice() to set g_deviceIdMe, g_userPseudo, g_deviceName, g_displayType.
+// commit "personal-data.h" (it is in .gitignore).
+//
+// Both tables are used at boot only — WiFi defaults are loaded into WiFiMulti, and the device identity tuple is looked up by MAC in
+// identifyDevice() to populate g_deviceData (declared in minimessenger.ino, type defined in contacts.h).
 //
 // Workflow:
 //   1. cp personal-data.h.template personal-data.h
 //   2. Edit personal-data.h : fill COMPILED_WIFI_DEFAULTS and COMPILED_DEVICE_DATA_ENTRIES
 //   3. Flash
 //
-// A device whose MAC is not in COMPILED_DEVICE_DATA_ENTRIES falls back to a random ID + pseudo "JohnDoe" — useful when prototyping on a fresh ESP without
-// editing this file first. The device still boots and participates in MQTT messaging, but its peers will log it as "device #<n>" rather than under
-// a friendly name, and no "<pseudo> connecté" banner will be shown on the screen of peer devices when it joins.
+// A device whose MAC is not in COMPILED_DEVICE_DATA_ENTRIES falls back to a random ID + pseudo "JohnDoe" + namePrefix "UNK" + ST7789 screen
+// — useful when prototyping on a fresh ESP without editing this file first. The device still boots and participates in MQTT messaging, but its
+// peers will log it as "device #<n>" rather than under a friendly name, and no "<pseudo> connected" banner will be shown on peer devices when
+// it joins.
+//
+// Include order: this file is included from wifi.ino, AFTER both struct types are in scope (DeviceDataEntry comes via contacts.h pulled by
+// minimessenger.ino's include; CompiledWifiEntry is defined at the top of wifi.ino just above the include). Don't add #includes here — they
+// would either be redundant or, worse, cause a re-definition once personal-data.h is processed twice in a different include order.
+
+
+// === Per-device identity table ===
+// One row per physical device. Fields, in order:
+//   mac        : the device's WiFi MAC as an uppercase colon-separated string (e.g. "xx:xx:xx:xx:xx:xx"). What `esp_read_mac(ESP_MAC_WIFI_STA)`
+//                returns once WIFI_STA mode is up.
+//   deviceId   : small integer ID (1..254), used in MQTT topics (msg/unicast/<id>), admin/live keepalive payloads, and the trailer of every
+//                outgoing chat message. Unique per row.
+//   pseudo     : human-readable name shown in logs / banners / info-screen ("Alice", "Bob", …). Latin-1 only (no smart punctuation, no em-dash)
+//                — see the display charset memo.
+//   namePrefix : 3..5-letter prefix combined with deviceId as "<prefix>_NNN" (e.g. "D1M_001", "E32_004"). Used as MQTT client_id, WiFi hostname,
+//                and the "ID:" row on /status.
+//   screen     : DisplayType — ST7789 (320×240 TFT) or OLEDSHIELD (SSD1306). The latter branch is a stub today; everything renders ST7789.
+
+const DeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[] = {
+    // { "AA:BB:CC:DD:EE:01", 1, "Alice", "D1M", ST7789     },
+    // { "AA:BB:CC:DD:EE:02", 2, "Bob",   "D1M", ST7789     },
+    // { "AA:BB:CC:DD:EE:03", 3, "Carol", "D1M", OLEDSHIELD },
+    // { "AA:BB:CC:DD:EE:04", 4, "Dave",  "E32", ST7789     },
+};
 
 
 // === WiFi compile-time defaults ===
+// Up to MAX_WIFI_NETWORKS (5, defined in wifi.ino). Empty list is fine — boot will open the captive portal. SSID dedup: if the same SSID is also
+// in NVS, the NVS entry wins (its password may be fresher).
 
-// Up to MAX_WIFI_NETWORKS (5, defined in wifi.ino). Empty list is fine — boot will open the captive portal.
-// SSID dedup: if the same SSID is also in NVS, the NVS entry wins (its password may be fresher).
-
-struct CompiledWifiEntry {
-    const char* ssid;
-    const char* pwd;
-};
-
-static const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[] = {
+const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[] = {
     // { "MyHomeWiFi",     "homepassword" },
     // { "MyPhoneHotspot", "hotspotpass"  },
     // { "OfficeWiFi",     "officepass"   },
 };
 
-static const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / sizeof(COMPILED_WIFI_DEFAULTS[0]);
 
+// === MQTT broker ===
+// Paste your broker's TLS root CA between the markers below. For HiveMQ Cloud the chain ends at ISRG Root X1 (Let's Encrypt) — fetch the PEM from
+// "Cluster Details → Trust the broker" in the HiveMQ console. For a local broker without a CA-signed cert you can leave the placeholder PEM here and
+// set rootCA = nullptr in g_mqttServerInfo below — setup() will then call setInsecure() so TLS still negotiates but mbedtls accepts whatever cert the
+// broker presents. Calling NEITHER setCACert nor setInsecure leaves WiFiClientSecure strict-no-CA and the handshake fails systematically, so prefer
+// one of the two well-defined modes.
+// Root CA used to validate the HiveMQ Cloud broker certificate during the TLS handshake. ISRG Root X1 (Let's Encrypt) — HiveMQ Cloud's serverside cert
+// chains up to it. Source: https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514. Set g_mqttServerInfo.rootCA = nullptr below to
+// disable verification (then setup() calls setInsecure() instead of setCACert()).
+static const char HIVEMQ_ROOT_CA[] = "-----BEGIN CERTIFICATE-----\n"
+                                     "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
+                                     "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
+                                     "cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n"
+                                     "WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\n"
+                                     "ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\n"
+                                     "MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\n"
+                                     "h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n"
+                                     "0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\n"
+                                     "A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\n"
+                                     "T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\n"
+                                     "B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\n"
+                                     "B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\n"
+                                     "KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\n"
+                                     "OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\n"
+                                     "jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\n"
+                                     "qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\n"
+                                     "rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\n"
+                                     "HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\n"
+                                     "hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\n"
+                                     "ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n"
+                                     "3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\n"
+                                     "NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\n"
+                                     "ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\n"
+                                     "TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\n"
+                                     "jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\n"
+                                     "oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n"
+                                     "4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\n"
+                                     "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
+                                     "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
+                                     "-----END CERTIFICATE-----\n";
 
-// === Per-device identity table ===
-
-// One row per physical device in the deployment. The MAC is the key — identifyDevice() walks this table at boot and applies the matching row.
-// Fields:
-//   mac                 : the device's WiFi MAC address as an uppercase colon-separated string (e.g. "xx:xx:xx:xx:xx:xx"). What ESP-IDF
-//                         esp_read_mac(ESP_MAC_WIFI_STA) returns once WIFI_STA mode is up.
-//   deviceId            : small integer ID (1..254), used in MQTT topics (msg/unicast/<id>) and in admin/live keepalive payloads. Unique per row.
-//   pseudo              : human-readable name shown in logs / banners ("Alice", "Bob", …). Latin-1 only (no smart punctuation, no em-dash) — see
-//                         the display charset memo.
-//   namePrefix          : 3-letter prefix for g_deviceName ("D1M" for D1 mini, "E32" for ESP32). Combined with deviceId as e.g. "D1M_002".
-//   screen              : DisplayType — ST7789 (320×240 TFT) or OLEDSHIELD (SSD1306). The latter is partially implemented.
-//   defaultRecipientId  : default unicast recipient for outgoing messages. 0 = use the global default (3). Any other value overrides on this device.
-
-struct CompiledDeviceDataEntry {
-    const char* mac;
-    byte        deviceId;
-    const char* pseudo;
-    const char* namePrefix;
-    DisplayType screen;
-    byte        defaultRecipientId;
+const MQTTServerInfo g_mqttServerInfo = {
+    "your-cluster.s1.eu.hivemq.cloud",  // server  — full DNS name of your broker (HiveMQ Cloud, Mosquitto host, ...)
+    8883,                                // port    — 8883 = MQTT over TLS (we always go through WiFiClientSecure)
+    "your-username",                     // user
+    "your-password",                     // password
+    HIVEMQ_ROOT_CA,                      // rootCA  — `nullptr` to skip setCACert() and fall back to setInsecure()
 };
-
-static const CompiledDeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[] = {
-    // { "AA:BB:CC:DD:EE:01", 1, "Alice", "D1M", ST7789,     0 },
-    // { "AA:BB:CC:DD:EE:02", 2, "Bob",   "D1M", ST7789,     0 },
-    // { "AA:BB:CC:DD:EE:03", 3, "Carol", "D1M", OLEDSHIELD, 2 },
-    // { "AA:BB:CC:DD:EE:04", 4, "Dave",  "E32", ST7789,     0 },
-};
-
-static const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_ENTRIES) / sizeof(COMPILED_DEVICE_DATA_ENTRIES[0]);
-
-
-// === Accessors ===
-
-// Both lookups are O(N) but N is bounded (<= a handful of devices) so this is negligible.
-
-// Find the entry matching the given MAC (case-sensitive — keep MACs uppercase in the table). Returns nullptr if no row matches.
-static inline const CompiledDeviceDataEntry* findCompiledDeviceByMac(const char* mac) {
-    for (size_t i = 0; i < COMPILED_DEVICE_DATA_ENTRIES_COUNT; i++) {
-        if (strcmp(COMPILED_DEVICE_DATA_ENTRIES[i].mac, mac) == 0) {
-            return &COMPILED_DEVICE_DATA_ENTRIES[i];
-        }
-    }
-    return nullptr;
-}
-
-// Find the entry matching the given deviceId. Returns nullptr if no row matches (e.g. liveness from a peer not declared in this table — typically a
-// JohnDoe device with a random ID). Used by the contact-tracking code to log a pseudo alongside the deviceId and to surface "<pseudo> connecté"
-// banners in the conversation.
-static inline const CompiledDeviceDataEntry* findCompiledDeviceByDeviceId(byte deviceId) {
-    for (size_t i = 0; i < COMPILED_DEVICE_DATA_ENTRIES_COUNT; i++) {
-        if (COMPILED_DEVICE_DATA_ENTRIES[i].deviceId == deviceId) {
-            return &COMPILED_DEVICE_DATA_ENTRIES[i];
-        }
-    }
-    return nullptr;
-}

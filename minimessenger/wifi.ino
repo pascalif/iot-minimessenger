@@ -29,8 +29,11 @@
 #include <Preferences.h>
 #include <WiFiManager.h>
 #include "wifi_state.h"
-#include "personal-data.h"
 #include "mm_log.h"
+
+// COMPILED_WIFI_DEFAULTS lives in personal-data.h, materialised by contacts.ino's include of that file earlier in the concatenation. By the time this
+// TU reaches wifi.ino the array is fully defined, so sizeof is computable here.
+const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / sizeof(COMPILED_WIFI_DEFAULTS[0]);
 
 // ================================================================================
 // Constants
@@ -118,8 +121,10 @@ void setupWifi() {
     // driver's NVS from the previous boot and runs a single, very long association attempt (we observed ~11 s until ASSOC_EXPIRE on a marginal RSSI).
     // That attempt happens *before* WiFiMulti gets a chance to run, and during it the state machine sits idle in TRYING_KNOWN. To skip that whole
     // detour and let WiFiMulti drive from the start (it scans first, picks the best RSSI from our list, retries every 1 s) we wipe the driver-cached
-    // credentials with disconnect(true, true): first true = also stop the WiFi radio if it's already trying, second true = erase the persisted
-    // SSID/pwd so auto-reconnect has nothing to chew on. Then a short settle delay and a clean WIFI_STA mode flip. Net effect: ~10 s shaved off cold
+    // credentials with disconnect(true, true):
+    // - first true = also stop the WiFi radio if it's already trying,
+    // - second true = erase the persisted SSID/pwd so auto-reconnect has nothing to chew on.
+    // Then a short settle delay and a clean WIFI_STA mode flip. Net effect: ~10 s shaved off cold
     // boot when the AP is marginal — no impact when the AP is healthy (assoc completes in <1 s either way).
     //
     // We INIT the driver (WiFi.mode(WIFI_STA)) BEFORE calling disconnect — otherwise disconnect() fails with ESP_ERR_WIFI_NOT_INIT (observed when
@@ -131,7 +136,7 @@ void setupWifi() {
     WiFi.disconnect(true, true);
     delay(50);
     WiFi.mode(WIFI_STA);
-    WiFi.setHostname(g_deviceName);
+    WiFi.setHostname(g_deviceData.name());
 
     // Populate WiFiMulti with every known network: NVS entries first (priority on duplicate SSID), then compile-time defaults from personal-data.h
     // as a permanent safety net. /wifi clean only wipes NVS, so the device can always come back up on a compiled default without a reflash.

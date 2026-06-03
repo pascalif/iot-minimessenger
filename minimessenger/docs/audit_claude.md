@@ -2,14 +2,14 @@
 
 <!-- pac-audit-arduino: machine-readable header — do not hand-edit -->
 <!--
-last_run: 2026-06-02T17:30:00Z
-files_scanned: 16
+last_run: 2026-06-02T18:30:00Z
+files_scanned: 17
 counters: { BUG: 5, LOGIC: 8, EDGE: 1, MEM: 7, PERF: 8, SEC: 9, OBS: 3, DUP: 5, LANG: 2, COMMENT: 2, HW: 5 }
 -->
 
-**Last run:** 2026-06-02 17:30 UTC
+**Last run:** 2026-06-02 18:30 UTC
 **Project root:** `/home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger`
-**Files scanned:** 16 (`minimessenger.ino`, `wifi.ino`, `mqtt.ino`, `commands.ino`, `contacts.ino`, `bars.ino`, `strings.ino`, `mm_blekb.cpp`, `mm_blekb.h`, `mm_log.h`, `mqtt.h`, `wifi_state.h`, `display.h`, `hid_keys.h`, `symbols.h`, `personal-data.h`)
+**Files scanned:** 17 (`minimessenger.ino`, `wifi.ino`, `mqtt.ino`, `commands.ino`, `contacts.ino`, `bars.ino`, `strings.ino`, `mm_blekb.cpp`, `mm_blekb.h`, `mm_log.h`, `mqtt.h`, `wifi_state.h`, `contacts.h`, `display.h`, `hid_keys.h`, `symbols.h`, `personal-data.h`)
 
 ## Summary
 
@@ -43,6 +43,39 @@ The counters in the header are the high-water mark for ID allocation. Retired ID
 
 Ordered by severity, then category, then ID.
 
+### HIGH
+
+#### BUG-005 — LED state arrays indexed by raw GPIO pin number; size 17 < highest pin (33) corrupted BSS on every call
+
+- **File:** `minimessenger.ino:378-381` (array sizing), `907-925` (`ledSetState` / `ledCommuteBlinkState`), `161-163` (`LED_STATUS=GPIO32`, `LED_FRIEND_1=GPIO33`, `LED_FRIEND_2=GPIO25`)
+- **Category:** BUG
+- **First seen:** 2026-06-02
+
+`g_ledRequiredState[LED_QTY]`, `g_ledBlinkStateIsHigh[LED_QTY]`, and `g_ledBlinkLastTimestampMs[LED_QTY]` were sized at `LED_QTY = 17` (inherited from the D1 mini era when GPIO topped out at 16). `ledSetState(pin, state)` indexes those arrays by **raw GPIO pin number** — i.e. 32 / 33 / 25 on the ESP32 build — so every LED state change wrote 8 to 16 bytes (and `g_ledBlinkLastTimestampMs` 60+ bytes) past the end of the arrays, straight into adjacent BSS globals. The corruption was very visible on `/status`: `LED_STATE_BLINK_FAST = 2` written via `g_ledRequiredState[32] = 2` landed inside the (then-existing) `g_deviceName` buffer, and since byte `0x02` is the second smiley glyph of the Adafruit default GLCD 5×7 font, the "Name:" row rendered as `E32_0` followed by a smiley face (truncated there by the `0x00` produced one byte later by `ledSetState(LED_FRIEND_1=33, LED_STATE_OFF=0)` acting as a parasitic null terminator). Bumping `G_USER_PSEUDO_LEN` (10 → 11 → 40) shifted the corruption to a different offset — making the bug appear to depend on identity-buffer sizing and obscuring the real cause for a while.
+
+The original victims (`g_deviceName`, `g_userPseudo`, and friends) have since been merged into a single `g_deviceData` record (with a `name()` member returning a static-buffer-backed formatted string), so the exact "E32_0 + smiley" symptom can't recur in the same form. The latent risk class is unchanged though: the OOB writes still land on *some* BSS global depending on link order — function pointers, MQTT state, the contact table, font tables consulted via PROGMEM-resident wrappers, etc. — and the manifestations would be wildly different (silent malfunction, hard fault, random crash) on the next refactor that reshuffles BSS layout.
+
+**Immediate fix already applied (this run):** `LED_QTY` bumped from 17 to 40 to cover the full ESP32 GPIO range (0..39), with an inline comment documenting the rationale so a future port to the D1 mini does not try to "save bytes" by lowering it. Bumping the size makes the arrays large enough that the indices used today fit cleanly; it does not change the indexing scheme.
+
+**Proper recommendation (still open):** stop indexing by raw pin number. Define an enum of logical slots and a small pin lookup table so the state arrays only need three entries and the slot/pin distinction is type-enforced:
+```cpp
+enum LedSlot { LED_SLOT_STATUS, LED_SLOT_FRIEND_1, LED_SLOT_FRIEND_2, LED_SLOT_QTY };
+static const uint8_t g_ledPin[LED_SLOT_QTY] = { GPIO_NUM_32, GPIO_NUM_33, GPIO_NUM_25 };
+byte g_ledRequiredState[LED_SLOT_QTY];  // 3 bytes instead of 40
+// ledSetState(LedSlot slot, int state) → g_ledRequiredState[slot] = state; digitalWrite(g_ledPin[slot], …);
+```
+Removes the OOB class of bug permanently and the fragility around "what's the highest pin we use today?".
+
+```cpp
+161: #define LED_STATUS   GPIO_NUM_32   // pin 32 → would be OOB in a [17]-sized array
+162: #define LED_FRIEND_1 GPIO_NUM_33
+163: #define LED_FRIEND_2 GPIO_NUM_25
+...
+378: #define LED_QTY                  40   // post-fix; was 17, which corrupted BSS on every ledSetState call
+379: byte          g_ledRequiredState[LED_QTY];
+909:     g_ledRequiredState[pin] = requiredState;   // indexed by raw pin number → relies on LED_QTY ≥ max_pin + 1
+```
+
 ### MEDIUM
 
 #### LOGIC-004 — `getTextBounds()` called with `int16_t[]` slots reinterpret-cast to `uint16_t*`
@@ -71,7 +104,7 @@ The trailer `### ts:<...> deviceId:<n> msgId:<n>` is plain text. Any client with
 **Recommendation:** HMAC-SHA256 trailer keyed off a per-device secret, with `msgId` mixed into the MAC input for replay defence; reject messages whose MAC does not verify. Alternative: HiveMQ ACLs that bind each `deviceId` to its own MQTT user and a server-side topic check.
 
 ```cpp
-174: snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
+174: snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgId);
 ```
 
 #### HW-001 — Backlight hardwired to 3.3 V; static UI shown for hours risks ST7789 ghosting
@@ -94,20 +127,21 @@ The wiring note at line 4 confirms this physical limitation ("pas de pin pour TF
 
 ### LOW
 
-#### EDGE-001 — `g_deviceIdAsChars[4]` is exact-fit for `"999\0"`; one digit away from truncation
+#### EDGE-001 — MQTT Will-message stack buffer `[4]` is exact-fit for `"999\0"`; one digit away from truncation
 
-- **File:** `minimessenger.ino:358, 862`
+- **File:** `mqtt.ino` inside `mqttReconnectAttempt()` (the inlined `char willMsg[4]; snprintf(willMsg, sizeof(willMsg), "%d", g_deviceData.deviceId);` immediately before `g_mqttClient.connect(…, willMsg, MQTT_SESSION_VOLATILE)`)
 - **Category:** EDGE
 - **First seen:** 2026-06-02
 
-`char g_deviceIdAsChars[4]` plus `snprintf(g_deviceIdAsChars, 4, "%d", g_deviceIdMe)`. Today `g_deviceIdMe` is a `byte` (max 255) or a fallback `random(100, 1000)` (max 999) — three digits plus the null terminator fits exactly. Any future widening of the device-ID range silently truncates. The hardcoded `4` in the `snprintf` call duplicates the magic and decouples the bound from the buffer declaration: if the buffer is bumped to 5 nobody will think to update the call site.
+The Will payload is built on the stack right before `connect()`: `char willMsg[4]; snprintf(willMsg, sizeof(willMsg), "%d", g_deviceData.deviceId);`. Today `deviceId` is a `byte` (max 255) or a fallback `random(100, 1000)` (max 999) — three digits plus the null terminator fits exactly. The `sizeof()` argument is correct, so any future widening of the device-ID range silently truncates instead of overflowing. Blast radius is contained to a 4-byte stack slot in one function — no BSS collateral, no heap, no helper static. Was previously hosted by `getDeviceIdAsChars()` (a helper with the same internal buffer); the helper was removed and inlined for zero-fragmentation-on-reconnect.
 
-**Recommendation:** `char g_deviceIdAsChars[5];` and `snprintf(g_deviceIdAsChars, sizeof(g_deviceIdAsChars), "%d", g_deviceIdMe);` (drop the magic `4`).
+**Recommendation:** bump `willMsg[4]` to `willMsg[5]` (`"9999\0"` worst case) the day deviceId could exceed 999. Until then, the present sizing is well-bounded. If the same string is needed at a second site, hoist a helper that takes a caller-provided buffer (so the call site keeps controlling the storage class — stack vs. static) rather than reintroducing a hidden-static one.
 
 ```cpp
-358: char g_deviceIdAsChars[4];
-...
-862: snprintf(g_deviceIdAsChars, 4, "%d", g_deviceIdMe);
+// mqtt.ino, inside mqttReconnectAttempt()
+char willMsg[4];
+snprintf(willMsg, sizeof(willMsg), "%d", g_deviceData.deviceId);
+g_mqttClient.connect(g_deviceData.name(), …, willMsg, MQTT_SESSION_VOLATILE);
 ```
 
 #### LOGIC-005 — `printValueWrapped` walks `value[i]` with bounds tied to a derived `upperBound`
@@ -218,8 +252,8 @@ or, even simpler, two `snprintf` branches keyed on `entry != nullptr` so the `%d
 
 ```cpp
 72: static void announceContactTransition(byte deviceId, bool isLive) {
-73:     const CompiledDeviceDataEntry* entry = findCompiledDeviceByDeviceId(deviceId);
-74:     String                         label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
+73:     const DeviceDataEntry* entry = DeviceDataEntry::findById(deviceId);
+74:     String                 label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
 75:     label += isLive ? " connected" : " disconnected";
 76:     addConversationBlock("", label, isLive ? CONVO_INFO_COLOR : CONVO_ERROR_COLOR, CENTER);
 77: }
@@ -361,21 +395,21 @@ The retained payload published every 120 s embeds `ssid:<SSID> ip:<IP>`. Anyone 
 156:     char payload[MSG_BUFFER_SIZE];
 157:     snprintf(payload, MSG_BUFFER_SIZE,
 158:              "%d %s mac:%s ssid:%s ip:%s recoId:%d",
-159:              g_deviceIdMe, ...);
+159:              g_deviceData.deviceId, ...);
 ```
 
 #### SEC-007 — `random(100, 1000)` after `analogRead`-seeded RNG for the unknown-MAC fallback ID
 
-- **File:** `minimessenger.ino:867` (call), `1840` (`randomSeed(analogRead(A0))`)
+- **File:** `minimessenger.ino:866` (call in `identifyDevice`'s else branch), `~1840` (`randomSeed(analogRead(A0))` in `setup()`)
 - **Category:** SEC
 - **First seen:** 2026-05-03
 
-Used only for an unknown-MAC fallback device ID — a UI label, not a security token. Recording so this never silently graduates into an auth path. ESP32 has a hardware RNG (`esp_random()`) that is strictly better for free, even if not needed here.
+Used only for an unknown-MAC fallback device ID — a UI label, not a security token. The call now writes into `g_deviceData.deviceId` (the synthesized-entry path of `identifyDevice`), but the underlying RNG path is unchanged from the legacy version. Recording so this never silently graduates into an auth path. ESP32 has a hardware RNG (`esp_random()`) that is strictly better for free, even if not needed here.
 
 **Recommendation:** swap to `esp_random() % 900 + 100` and add a `// not for security` comment. Removes the analog-pin seed entirely.
 
 ```cpp
-867:  g_deviceIdMe = random(100, 1000);
+866:  g_deviceData.deviceId = (byte)random(100, 1000);
 1840: randomSeed(analogRead(A0));
 ```
 
@@ -407,19 +441,19 @@ Pinned at 2.8; the known limitations (16-bit packet length, no QoS 2, fragile re
 27: #include <PubSubClient.h>
 ```
 
-#### DUP-001 — `if (g_displayType == DisplayType::ST7789) { ... } else { ESP_LOGW("DISPLAY_TYPE_NOT_CONFIGURED") }` repeated in 10+ functions
+#### DUP-001 — `if (g_deviceData.screen == DisplayType::ST7789) { ... } else { ESP_LOGW("DISPLAY_TYPE_NOT_CONFIGURED") }` repeated in 11 functions
 
-- **File:** `minimessenger.ino:1015, 1052, 1113, 1161, 1180, 1249, 1617, 1689` and `bars.ino:107, 165`
+- **File:** `minimessenger.ino:969, 985, 1002, 1015, 1052, 1113, 1161, 1180, 1249, 1622, 1694` and `bars.ino:107, 165`
 - **Category:** DUP
 - **First seen:** 2026-05-03
 
-Same skeleton as before, spread across `minimessenger.ino` (display functions) and `bars.ino` (status-bar / footer functions): branch on `g_displayType`, log "DISPLAY_TYPE_NOT_CONFIGURED" in the else arm. Adding a real OLEDSHIELD implementation later means touching every site. With the bars-split refactor, the duplication has grown — currently ~10 sites.
+Same skeleton as before, spread across `minimessenger.ino` (display + scroll + info functions) and `bars.ino` (status-bar / footer functions): branch on `g_deviceData.screen`, log "DISPLAY_TYPE_NOT_CONFIGURED" in the else arm (or early-return). Adding a real OLEDSHIELD implementation later means touching every site. After the unified-identity refactor the variable name is now `g_deviceData.screen` (was `g_displayType`); the duplication itself is unchanged.
 
-**Recommendation:** an `inline bool ensureST7789(const char* fn)` helper that does `if (g_displayType != DisplayType::ST7789) { ESP_LOGW(TAG_MM, "%s: DISPLAY_TYPE_NOT_CONFIGURED", fn); return false; } return true;` removes the boilerplate at every call site. Even cheaper: a macro `#define REQUIRE_ST7789() do { if (g_displayType != DisplayType::ST7789) { ESP_LOGW(TAG_MM, "%s: DISPLAY_TYPE_NOT_CONFIGURED", __func__); return; } } while(0)` and a `_RET(x)` variant for non-void returns.
+**Recommendation:** an `inline bool ensureST7789(const char* fn)` helper that does `if (g_deviceData.screen != DisplayType::ST7789) { ESP_LOGW(TAG_MM, "%s: DISPLAY_TYPE_NOT_CONFIGURED", fn); return false; } return true;` removes the boilerplate at every call site. Even cheaper: a macro `#define REQUIRE_ST7789() do { if (g_deviceData.screen != DisplayType::ST7789) { ESP_LOGW(TAG_MM, "%s: DISPLAY_TYPE_NOT_CONFIGURED", __func__); return; } } while(0)` and a `_RET(x)` variant for non-void returns.
 
 ```cpp
-1015: if (g_displayType == DisplayType::ST7789) { ... }
-1180: if (g_displayType != DisplayType::ST7789) {
+1015: if (g_deviceData.screen == DisplayType::ST7789) { ... }
+1180: if (g_deviceData.screen != DisplayType::ST7789) {
 1181:     ESP_LOGW(TAG_MM, "redrawAllConversations: DISPLAY_TYPE_NOT_CONFIGURED");
 1182:     return;
 1183: }

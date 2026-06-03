@@ -1,5 +1,17 @@
 #pragma once
 
+// Compile-time WiFi credentials row. Used by wifi.ino's `wifiLoadNVSAndCompiledIntoMulti` and materialised as the COMPILED_WIFI_DEFAULTS table in
+// personal-data.h. Hosted in this shared header so the table definition (which lives in personal-data.h, included from contacts.ino in the
+// concatenation order) sees a complete element type when it is processed.
+struct CompiledWifiEntry {
+    const char* ssid;
+    const char* pwd;
+};
+
+extern const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[];
+extern const size_t            COMPILED_WIFI_DEFAULTS_COUNT;
+
+
 // Connection state machine driven by wifi.ino. Read by minimessenger.ino (status screen rendering) and mutated by wifi.ino (wifiTick).
 // Kept in its own tiny header so both translation units see the same complete enum definition without dragging in the WiFiManager / WiFiMulti
 // headers from wifi.ino into the main .ino.

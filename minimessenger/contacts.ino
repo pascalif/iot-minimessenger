@@ -8,7 +8,7 @@
 // g_deviceIdFriend1/2 pair (one fixed friend per LED, declared in identifyDevice()) is gone.
 //
 // Concatenation order: this file lands after minimessenger.ino, bars.ino and commands.ino, before mqtt.ino. We therefore see all the layout /
-// LED constants and globals defined in minimessenger.ino (DEVICE_ID_UNSET, LED_FRIEND_1, LED_STATE_ON, g_deviceIdMe, g_statusBarDirty) and the
+// LED constants and globals defined in minimessenger.ino (DEVICE_ID_UNSET, LED_FRIEND_1, LED_STATE_ON, g_deviceData, g_statusBarDirty) and the
 // ledSetState() prototype is auto-emitted by the Arduino builder. The only #include we need is mqtt.h for MQTT_KEEPALIVE_INTERVAL_MS — it lets
 // us keep our timeout derived from the keepalive cadence in a single place rather than duplicating the number here.
 //
@@ -17,7 +17,12 @@
 
 #include "mqtt.h"
 #include "mm_log.h"         // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
-#include "personal-data.h"  // findCompiledDeviceByDeviceId — résolution pseudo / namePrefix / screen du contact distant pour les logs et les bannières.
+#include "contacts.h"       // DeviceDataEntry + DeviceDataEntry::findByMac / ::findById — résolution pseudo / namePrefix / screen du contact distant.
+#include "personal-data.h"  // matérialise les tableaux COMPILED_DEVICE_DATA_ENTRIES + COMPILED_WIFI_DEFAULTS — DeviceDataEntry (contacts.h) et
+                            // CompiledWifiEntry (wifi_state.h) sont déjà en scope via les includes de minimessenger.ino concatenés en tête de TU.
+
+// Device-table count derived ici — premier point de la TU où le tableau a sa pleine définition. wifi.ino se contente de définir le count wifi.
+const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_ENTRIES) / sizeof(COMPILED_DEVICE_DATA_ENTRIES[0]);
 
 
 #define MAX_CONTACTS 5
@@ -28,12 +33,43 @@
 #define CONTACT_TIMEOUT_MS (MQTT_KEEPALIVE_INTERVAL_MS + 5000)
 
 
-struct ContactSlot {
+// ================================================================================
+// DeviceDataEntry — static find* method bodies
+// ================================================================================
+//
+// Out-of-class inline definitions for the find methods declared in contacts.h. Bodies live here so the iteration logic sits next to the rest of
+// the contact-table code; the struct itself stays in contacts.h because minimessenger.ino (concatenated first) needs the type in scope to declare
+// `DeviceDataEntry g_deviceData` and to read its fields.
+
+inline const DeviceDataEntry* DeviceDataEntry::findByMac(const char* mac) {
+    for (size_t i = 0; i < COMPILED_DEVICE_DATA_ENTRIES_COUNT; i++) {
+        if (strcmp(COMPILED_DEVICE_DATA_ENTRIES[i].mac, mac) == 0) {
+            return &COMPILED_DEVICE_DATA_ENTRIES[i];
+        }
+    }
+    return nullptr;
+}
+
+inline const DeviceDataEntry* DeviceDataEntry::findById(byte deviceId) {
+    for (size_t i = 0; i < COMPILED_DEVICE_DATA_ENTRIES_COUNT; i++) {
+        if (COMPILED_DEVICE_DATA_ENTRIES[i].deviceId == deviceId) {
+            return &COMPILED_DEVICE_DATA_ENTRIES[i];
+        }
+    }
+    return nullptr;
+}
+
+
+// ================================================================================
+// Dynamic peer table
+// ================================================================================
+
+struct ContactLiveness {
     byte          deviceId;    // DEVICE_ID_UNSET = slot libre, sinon ID du contact distant.
     unsigned long lastSeenMs;  // millis() de la dernière liveness reçue pour ce contact.
 };
 
-static ContactSlot g_contacts[MAX_CONTACTS];
+static ContactLiveness g_contacts[MAX_CONTACTS];
 
 
 // Number of slots currently occupied. Read every ~500 ms by redrawStatusBar() in bars.ino to pick between 0/1/2-icon layouts on the top bar, and
@@ -61,7 +97,7 @@ static void contactsApplyState() {
 // Pseudo for logging — never null. Returns the pseudo from personal-data.h if the deviceId is declared there, else a literal "?" so format strings stay
 // well-formed (snprintf with "%s" on nullptr is undefined behavior on some toolchains).
 static const char* pseudoOrPlaceholder(byte deviceId) {
-    const CompiledDeviceDataEntry* entry = findCompiledDeviceByDeviceId(deviceId);
+    const DeviceDataEntry* entry = DeviceDataEntry::findById(deviceId);
     return (entry != nullptr) ? entry->pseudo : "?";
 }
 
@@ -70,7 +106,7 @@ static const char* pseudoOrPlaceholder(byte deviceId) {
 // disconnect, matching CONVO_INFO_COLOR / CONVO_ERROR_COLOR used elsewhere for ready / lost-server banners. Called on transitions only (add via
 // admin/live, remove via admin/dead, remove via applicative timeout) — never on the periodic refresh of an already-known contact.
 static void announceContactTransition(byte deviceId, bool isLive) {
-    const CompiledDeviceDataEntry* entry = findCompiledDeviceByDeviceId(deviceId);
+    const DeviceDataEntry* entry = DeviceDataEntry::findById(deviceId);
     String                         label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
     label += isLive ? " connected" : " disconnected";
     addConversationBlock("", label, isLive ? CONVO_INFO_COLOR : CONVO_ERROR_COLOR, CENTER);
@@ -99,7 +135,7 @@ void contactsSetup() {
 // that retained payload and treat the peer as alive — the CONTACT_TIMEOUT_MS window will eventually evict it (~125 s with MQTT_KEEPALIVE_INTERVAL_MS
 // = 120 s), so the UI corrects itself but lags by up to one timeout window after a startup-resume scenario.
 void onReceivedContactOnline(int remoteDeviceId, bool isLive) {
-    if (remoteDeviceId == g_deviceIdMe) {
+    if (remoteDeviceId == g_deviceData.deviceId) {
         return;
     }
 

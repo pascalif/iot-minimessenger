@@ -22,34 +22,13 @@ ce qui n'est pas comme le commentaire
 Quelle est la bonne version. Complete mon commentaire dans le code avec des rc qui sont possibles et utiles (pas toute la liste) et leur fichier source.
 
 
-=====
-TODO quest defaultRecipientId
-
-puis remplacer tout
-g_deviceIdMe = entry->deviceId;
-snprintf(g_userPseudo, sizeof(g_userPseudo), "%s", entry->pseudo);
-snprintf(g_deviceName, sizeof(g_deviceName), "%s_%03d", entry->namePrefix, g_deviceIdMe);
-g_displayType = entry->screen;
-
-
-==
-creds
-// MQTT Broker credentials. Kept here next to the other "Secrets" — the rest of the MQTT config (topics, timing, QoS flags) lives in mqtt.h/mqtt.ino.
-const char* mqtt_server   = "xxxxxx.s1.eu.hivemq.cloud";  // MQTT Broker's URL
-const int   mqtt_port     = 8883;                                                   // TLS Port
-const char* mqtt_user     = "xxxxx";                                                // Credential Username
-const char* mqtt_password = "xxxxxxx";                                             // Credential Password
 
 
 ================
-pq multiwifi si long à se connecter au boot ? c'était presque instantanné avant
+pq multiwifi est si long à se connecter au boot ? c'était presque instantanné avant
 ================
 
-Nom de l'emetteur
-
-
-====
-bug constantes 40
+Afficher Nom de l'emetteur
 
 =============
 
@@ -63,7 +42,6 @@ Si tu chasses une instabilité actuelle, je regarderais d'abord :
 3. Active CONFIG_HEAP_POISONING_COMPREHENSIVE (menuconfig / sdkconfig) pour détecter les use-after-free.
 
 
-
 ================
 
 Point sur les QoS
@@ -72,6 +50,10 @@ Point sur les QoS
 
 Extraire fichiers de constantes
 
+
+================
+
+exclure les msgs broadcast venant de moi
 
 ================
 

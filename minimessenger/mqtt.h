@@ -1,19 +1,13 @@
 #pragma once
 
 /*
-https://console.hivemq.cloud/clusters/8f76c91610f343c2b6795974c58861c7/web-client
+Console HiveMQ : https://console.hivemq.cloud/clusters — l'identifiant du cluster est dans personal-data.h (g_mqttServerInfo.server).
 
-Notifier qu'un device est LIVE:
-admin/live
-1 keep
+Tester manuellement depuis le web-client du broker :
 
-Notifier qu'un device n'est plus connecté au broker MQTT:
-admin/dead
-1
-
-Envoyer un message à tous (pas d'identification possible de l'émetteur avec cette version)
-msg/broadcast
-hello
+  - Notifier qu'un device est LIVE :        topic admin/live           payload "1 keep"
+  - Notifier qu'un device n'est plus là :   topic admin/dead           payload "1"
+  - Envoyer un message à tous :             topic msg/broadcast        payload "hello"
 */
 
 
@@ -76,9 +70,32 @@ extern const char* g_mqttIncomingTopicBroadcast;  // msg/broadcast — subscribe
 #define MQTT_TOPIC_SIZE 30
 
 // ================================================================================
+// Per-deployment broker description — defined ONCE in personal-data.h (gitignored)
+// ================================================================================
+//
+// Groups the 4 broker credentials + the TLS root CA that used to be 5 separate top-level globals scattered between minimessenger.ino and mqtt.ino.
+// Putting them in personal-data.h keeps the gitignored surface area minimal: a fresh repo clone has no broker baked in, and a contributor only ever
+// edits one file to point at their own broker.
+//
+// The rootCA field is intentionally nullable. When non-null, setup() calls g_wifiClient.setCACert(rootCA) and mbedtls verifies the broker's cert
+// chain against it. When null, setup() falls back to g_wifiClient.setInsecure() — TLS still negotiates, but mbedtls accepts whatever cert the broker
+// presents. Calling NEITHER would leave WiFiClientSecure in its strict-no-CA default and the handshake would systematically fail with
+// MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, which is why the null-branch is wired explicitly to setInsecure() rather than just skipping setCACert().
+// The "no verification" mode is for testing against a local broker (Mosquitto on the LAN, dev cluster) that doesn't expose a CA-signed cert.
+struct MQTTServerInfo {
+    const char* server;
+    int         port;
+    const char* user;
+    const char* password;
+    const char* rootCA;
+};
+
+extern const MQTTServerInfo g_mqttServerInfo;
+
+
+// ================================================================================
 // Runtime globals defined in mqtt.ino
 // ================================================================================
-extern const char*   g_hiveMQRootCA;      // HiveMQ Cloud root CA (ISRG Root X1). Wired into g_wifiClient.setCACert() in setup().
 extern PubSubClient  g_mqttClient;        // PubSubClient bound to the WiFiClientSecure declared in minimessenger.ino.
 extern int           g_mqttConnectionId;  // monotonically incremented on each successful (re)connect. -1 before the first.
 extern unsigned int  g_mqttOutputMsgId;   // monotonic id appended to every outgoing payload (### msgId:<n>).
@@ -93,6 +110,7 @@ extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current 
 // ================================================================================
 // Functions defined in mqtt.ino, callable from minimessenger.ino
 // ================================================================================
+void          setupMQTT();
 bool          mqttReconnectAttempt();       // Attempts a TLS+MQTT (re)connect; returns true on success. Driven by the loop()-level reconnect gate.
 unsigned long mqttReconnectDelayMs();       // Current reconnect-throttle interval (exponential backoff capped at MQTT_CONNECT_RETRY_MAX_MS).
 void          mqttSendAlive(int liveType);  // Publish an admin/live keepalive. liveType: 0=boot, 1=reco, 2=keep.

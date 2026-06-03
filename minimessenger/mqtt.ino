@@ -7,30 +7,26 @@
 // .ino focused on orchestration (status bar, loop reconnect gate, setRecipient, etc.), push the cross-cutting MQTT plumbing into its own file.
 //
 // Stays in minimessenger.ino on purpose:
-//   - mqtt_server / mqtt_port / mqtt_user / mqtt_password — broker credentials, kept near the rest of the sensitive config (see CLAUDE.md "Secrets").
 //   - the loop()-level reconnect gate and the status-bar / info-screen indicators — those are display/orchestration concerns, not MQTT plumbing.
 //   - setRecipient(), onMQTTReconnected() — conversation logic and display transitions, not MQTT internals.
+//   - the setupMqtt() call sequence (setCACert / setInsecure / setServer / setCallback) — lives in setup() right after setupWifi() so the
+//     boot sequence stays linear and readable in one place.
+//
+// Broker credentials (server, port, user, password) + TLS root CA are no longer here either — they're grouped in g_mqttServerInfo (declared in
+// mqtt.h, defined in personal-data.h). The connect() call below reads them through that struct.
 
 #include "mqtt.h"
 #include "mm_log.h"
 #include "symbols.h"
 #include <WiFiClientSecure.h>
 
-// Broker credentials defined in minimessenger.ino — declared here so the connect() call below resolves them. Kept in the main .ino because they
-// belong with the "Secrets" block per CLAUDE.md.
-extern const char* mqtt_server;
-extern const int   mqtt_port;
-extern const char* mqtt_user;
-extern const char* mqtt_password;
-
 // WiFiClientSecure instance lives in minimessenger.ino (declared before mqtt.ino in the concatenation order, so the constructor below sees it). The
 // extern here is purely for clarity / so this file reads standalone.
 extern WiFiClientSecure g_wifiClient;
 
-// Identity strings used by mqttReconnectAttempt (client id / will message) and mqttSendAlive — declared in minimessenger.ino, see identifyDevice().
-extern char g_deviceName[];
-extern char g_deviceIdAsChars[];
-extern byte g_deviceIdMe;
+// Device identity (g_deviceData, with `g_deviceData.name()` for the formatted "namePrefix_NNN" string) is defined in minimessenger.ino /
+// personal-data.h. The .ino files are concatenated into a single TU by the Arduino IDE, so no extern declaration is needed here. See
+// identifyDevice() for the init path.
 
 // LED + display helpers called from this file (LED on after a successful connect, message routing for incoming chat messages, contact liveness LEDs).
 // Forward-declared so the auto-prototype ordering does not bite us.
@@ -67,6 +63,20 @@ char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
 // MQTT — connect / publish / receive
 // ================================================================================
 
+void setupMQTT() {
+    // The verification mode is driven by g_mqttServerInfo.rootCA: non-null → strict verification against that CA, null → setInsecure() so mbedtls still
+    // negotiates TLS but accepts whatever cert the broker presents. Calling NEITHER would leave WiFiClientSecure in its strict-no-CA default state
+    // and the handshake would systematically fail with MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, so the null branch is wired explicitly to setInsecure().
+    if (g_mqttServerInfo.rootCA != nullptr) {
+        g_wifiClient.setCACert(g_mqttServerInfo.rootCA);
+    } else {
+        g_wifiClient.setInsecure();
+        ESP_LOGW(TAG_MQTT, "No root CA configured (g_mqttServerInfo.rootCA == nullptr) — falling back to setInsecure() (no server-cert verification)");
+    }
+    g_mqttClient.setServer(g_mqttServerInfo.server, g_mqttServerInfo.port);
+    g_mqttClient.setCallback(onMqttIncomingMessage);
+}
+
 // Current wait interval between two reconnect attempts. Exponential backoff: BASE * 2^attempts, capped at MAX. Cap k early so the shift never
 // overflows unsigned long (2^32 = 4 GB ms — we hit MAX_MS long before that, but a defensive cap keeps the math obvious).
 unsigned long mqttReconnectDelayMs() {
@@ -85,7 +95,6 @@ bool mqttReconnectAttempt() {
     // Heap dispo (largest block) observé :
     //   - Bluedroid : ~24 KB → insuffisant, rc=-2
     //   - NimBLE    : ~60-70 KB attendus → handshake OK
-    /*
     const uint32_t largestBlock = ESP.getMaxAllocHeap();
     ESP_LOGI(TAG_MQTT, "Attempting connection... required=%u largest_free_block=%u heap_free=%u", MQTT_TLS_MIN_FREE_HEAP_B, largestBlock, ESP.getFreeHeap());
 
@@ -93,7 +102,6 @@ bool mqttReconnectAttempt() {
     // through the connect() call anyway burns ~40 KB and ends up with rc=-2 — better to surface the condition immediately so the user sees something
     // changed, and so the retry loop doesn't keep producing identical opaque failures every interval. Failure counter still bumps so the next
     // attempt waits with the exponential backoff.
-
     if (largestBlock < (uint32_t)MQTT_TLS_MIN_FREE_HEAP_B) {
         ESP_LOGE(TAG_MQTT, "Insufficient heap for TLS handshake: largest block=%u < threshold=%u — skipping connect", largestBlock, MQTT_TLS_MIN_FREE_HEAP_B);
         if (g_inConversationMode) {
@@ -104,16 +112,23 @@ bool mqttReconnectAttempt() {
         refreshInfoScreenIfShown();
         return false;
     }
-    */
+
+
+    // Will message = decimal string of deviceId (e.g. "4"). Built on the stack right before connect() — PubSubClient copies willMessage into its own
+    // CONNECT packet buffer before returning, so the lifetime of willMsg only needs to span this call. Stack buffer over heap (no String alloc, no
+    // helper static): zero heap fragmentation on the MQTT reconnect path, which matters on a device that already lives close to the mbedtls TLS
+    // handshake heap budget. Worst case "999\0" (4 bytes) — see audit EDGE-001 for the exact-fit caveat.
+    char willMsg[4];
+    snprintf(willMsg, sizeof(willMsg), "%d", g_deviceData.deviceId);
 
     unsigned long t0              = millis();
-    bool          isMQTTConnected = g_mqttClient.connect(g_deviceName,
-                                                mqtt_user,
-                                                mqtt_password,
+    bool          isMQTTConnected = g_mqttClient.connect(g_deviceData.name(),
+                                                g_mqttServerInfo.user,
+                                                g_mqttServerInfo.password,
                                                 g_mqttOutgoingTopicWill,
                                                 MQTT_QOS_0,
                                                 MQTT_MSG_NOT_RETAINED,
-                                                g_deviceIdAsChars,
+                                                willMsg,
                                                 MQTT_SESSION_VOLATILE);
     ESP_LOGI(TAG_MQTT, "connect() returned %d after %lums, rc=%d", isMQTTConnected ? 1 : 0, millis() - t0, g_mqttClient.state());
 
@@ -122,7 +137,7 @@ bool mqttReconnectAttempt() {
 
         g_mqttClient.subscribe(g_mqttIncomingTopicBroadcast, MQTT_QOS_1);
 
-        String myUnicastTopic = String("msg/unicast/") + g_deviceIdMe;
+        String myUnicastTopic = String("msg/unicast/") + g_deviceData.deviceId;
         g_mqttClient.subscribe(myUnicastTopic.c_str(), MQTT_QOS_1);
         g_mqttClient.subscribe(g_mqttOutgoingTopicLive, MQTT_QOS_0);
         g_mqttClient.subscribe(g_mqttOutgoingTopicWill, MQTT_QOS_0);
@@ -160,7 +175,7 @@ void mqttSendAlive(int liveType) {
     snprintf(payload,
              MSG_BUFFER_SIZE,
              "%d %s mac:%s ssid:%s ip:%s recoId:%d",
-             g_deviceIdMe,
+             g_deviceData.deviceId,
              (liveType == 0 ? "boot" : (liveType == 1 ? "reco" : "keep")),
              WiFi.macAddress().c_str(),
              WiFi.SSID().c_str(),
@@ -174,7 +189,7 @@ void mqttSendAlive(int liveType) {
 // to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
 // safely ignore it — the next interval will retry.
 bool mqttPushFormattedMessage(const char* topic, const char* payload) {
-    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceIdMe, g_mqttOutputMsgId);
+    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s ### ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgId);
 
     // Publishing. Only QoS 0 is possible at publish time with PubSubClient
     bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_RETAINED);
@@ -264,40 +279,5 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
 }
 
 
-// ================================================================================
-// TLS root CA — used by g_wifiClient.setCACert() in setup() to validate the HiveMQ broker certificate during the TLS handshake.
-// ================================================================================
-
-// Root CA used to validate the HiveMQ Cloud broker certificate. This is the ISRG Root X1 (Let's Encrypt) certificate — HiveMQ Cloud's serverside cert
-// chains up to it. Source: https://community.hivemq.com/t/frequently-asked-questions-hivemq-cloud/514
-const char* g_hiveMQRootCA = "-----BEGIN CERTIFICATE-----\n"
-                             "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
-                             "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n"
-                             "cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n"
-                             "WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\n"
-                             "ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\n"
-                             "MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\n"
-                             "h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n"
-                             "0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\n"
-                             "A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\n"
-                             "T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\n"
-                             "B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\n"
-                             "B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\n"
-                             "KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\n"
-                             "OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\n"
-                             "jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\n"
-                             "qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\n"
-                             "rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\n"
-                             "HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\n"
-                             "hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\n"
-                             "ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n"
-                             "3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\n"
-                             "NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\n"
-                             "ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\n"
-                             "TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\n"
-                             "jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\n"
-                             "oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n"
-                             "4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\n"
-                             "mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\n"
-                             "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n"
-                             "-----END CERTIFICATE-----\n";
+// TLS root CA has moved out of this file — it now lives in personal-data.h as the HIVEMQ_ROOT_CA static array, referenced by g_mqttServerInfo.rootCA.
+// setup() in minimessenger.ino reads it via that struct and wires it into g_wifiClient.setCACert() (or falls back to setInsecure() if rootCA is null).

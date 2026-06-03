@@ -104,7 +104,7 @@ static void drawPersonAt(int cx, bool filled, uint16_t color) {
 // Read current connection states and repaint the bar if any of them changed since the last draw (or if forced by g_statusBarDirty). No-op when
 // a fullscreen mode (splash, info) is showing — would otherwise paint icons over their content.
 void redrawStatusBar() {
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
 
@@ -162,7 +162,7 @@ void redrawInputFooter() {
     if (!g_inConversationMode) {
         return;
     }
-    if (g_displayType != DisplayType::ST7789) {
+    if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
 
