@@ -41,10 +41,16 @@ Docs (/docs):
 // For the /dbg chip command: silicon model / revision / features (esp_chip_info, esp_get_idf_version, esp_reset_reason). See docs/howto_efuse.md.
 #include <esp_chip_info.h>
 #include <esp_system.h>
+// esp_coex_preference_set(): tells the ESP-IDF coexistence scheduler which radio (WiFi or BT/BLE) gets priority when both contend for the 2.4 GHz
+// front-end. Default on arduino-esp32 is ESP_COEX_PREFER_BALANCE which gives BLE roughly the same slots as WiFi; when our BLE keyboard reconnects
+// at boot (scan + auth + 3× subscribe in ~2 s), that balance is enough to starve the first WiFi association and cause ASSOC_EXPIRE. We flip to
+// ESP_COEX_PREFER_WIFI in setup() so the scheduler favours WiFi management frames during the critical assoc window. Header is part of esp_coex
+// component, ships with the arduino-esp32 board package — no extra library needed.
+#include <esp_coexist.h>
 
 // WiFi state machine + onboarding (NVS / WiFiMulti / WiFiManager) lives in wifi.ino. This header pulls in the shared enum and the function
 // prototypes that minimessenger.ino calls (setupWifi, wifiTick, wifiGetState, drawPortalInstructions, /wifi-* command helpers).
-#include "wifi_state.h"
+#include "wifi.h"
 
 // MQTT plumbing (topics, globals, reconnect, publish, incoming dispatch, TLS root CA) lives in mqtt.ino. This header pulls in PubSubClient and the
 // shared constants / extern declarations / function prototypes. Library Manager: "PubSubClient" (2.8).
@@ -1561,6 +1567,8 @@ void dumpMemInfo() {
 }
 
 void routeMessage(const String& message, MessageSource source) {
+    //ESP_LOGI(TAG_MM, "routing msg [%s]", message.c_str());
+
     // Step 1 — always wake the screen. We ignore noteUserActivity()'s "was sleeping"
     // return value: unlike a stray keypress (which is swallowed on wake to avoid
     // typing accidental characters), a command-or-message must actually run on wake-up too.
@@ -1810,7 +1818,6 @@ void setupFontTests() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    delay(1000);
 
     // Si rien n'apparait après cette ligne: ArduinoIDE: Tools >> Core Debug Level : Verbose ; puis reflash
     Serial.println("Setup logging...");
@@ -1836,12 +1843,32 @@ void setup() {
     showSplashScreen();
     showUpdatedInfoScreen();
 
-    // Connect to BT
-    setupKeyboard();
+    // Coex preference: WiFi over BT/BLE for the 2.4 GHz radio scheduler. Must be set BEFORE either WiFi.begin()-equivalents (i.e. before setupWifi
+    // kicks the state machine) and before the BLE stack starts scanning. Defaults to BALANCE which lets the BLE keyboard's reconnect storm starve
+    // WiFi assoc — see the rationale block on WIFI_BOOT_EXCLUSIVE_GRACE_MS in wifi.ino. Calling esp_coex_preference_set returns ESP_OK on success
+    // and ESP_ERR_INVALID_ARG only for an out-of-range enum; we don't check the return because there's nothing sensible to do on failure here.
+    esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
 
-    // WiFi: full bringup — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (TRYING_KNOWN or PORTAL). Non-blocking;
-    // wifiTick() in loop() drives the actual association. The info screen polled every 2 s reflects each WifiState transition.
+    // WiFi FIRST — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (TRYING_KNOWN or PORTAL). Non-blocking;
+    // wifiTick() drives the actual association. We then pump wifiTick() in a tight loop for up to WIFI_BOOT_EXCLUSIVE_GRACE_MS so the first assoc
+    // attempt completes with WiFi having exclusive radio access (no BLE keyboard scan/connect running in parallel). See the constant's comment in
+    // wifi.ino for the full rationale and tuning advice. The loop exits early as soon as WiFi.status() == WL_CONNECTED.
     setupWifi();
+    {
+        unsigned long t0 = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_BOOT_EXCLUSIVE_GRACE_MS) {
+            wifiTick(millis());
+            delay(50);  // short yield — keeps the loop from hammering wifiTick() at CPU speed and gives the WiFi task room to run.
+        }
+        ESP_LOGI(TAG_MM,
+                 "setup(): WiFi grace window elapsed after %lums (status=%d)",
+                 millis() - t0,
+                 (int)WiFi.status());
+    }
+
+    // BLE keyboard NOW that WiFi had its exclusive boot window. If WiFi is already CONNECTED here the keyboard's BLE storm has zero impact on it;
+    // if WiFi is still trying, BLE will share the radio from now on under the ESP_COEX_PREFER_WIFI preference set above.
+    setupKeyboard();
 
     // MQTT (server + callback registration) and TLS verification mode — independent of the WiFi link being up, safe at any point after setupWifi().
     setupMQTT();

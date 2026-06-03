@@ -4,10 +4,10 @@
 //
 // All WiFi-related code lives here. The Arduino IDE concatenates this file with minimessenger.ino into a single translation unit (the main .ino
 // comes first because it shares the sketch folder name, then files in alphabetical order), so globals declared below are visible from
-// minimessenger.ino without extern. The shared enum WifiState and the function prototypes that minimessenger.ino calls are in wifi_state.h
+// minimessenger.ino without extern. The shared enum WifiState and the function prototypes that minimessenger.ino calls are in wifi.h
 // (included by both .ino files) so the main file doesn't need to know about WiFiMulti / WiFiManager / Preferences.
 //
-// State machine (see wifi_state.h for the enum):
+// State machine (see wifi.h for the enum):
 //   BOOTING → TRYING_KNOWN          when setupWifi() finishes loading NVS into WiFiMulti
 //   TRYING_KNOWN → CONNECTED        when WiFiMulti.run() returns WL_CONNECTED
 //   TRYING_KNOWN → PORTAL           after WIFI_TRYING_KNOWN_TIMEOUT_MS with no success
@@ -28,7 +28,7 @@
 #include <WiFiMulti.h>
 #include <Preferences.h>
 #include <WiFiManager.h>
-#include "wifi_state.h"
+#include "wifi.h"
 #include "mm_log.h"
 
 // COMPILED_WIFI_DEFAULTS lives in personal-data.h, materialised by contacts.ino's include of that file earlier in the concatenation. By the time this
@@ -49,6 +49,9 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 #define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: portal auto-closes and the state machine reverts to TRYING_KNOWN for one more pass.
 #define WIFI_LOST_RETRY_INTERVAL_MS  5'000      // how often we call WiFiMulti.run() inside the LOST state.
 #define WIFI_LOST_TO_PORTAL_MS       60'000     // if the connection has been LOST for more than this, drop into PORTAL (router probably gone).
+
+// WIFI_BOOT_EXCLUSIVE_GRACE_MS is declared in wifi.h (not here) because it's used by setup() in minimessenger.ino too, and the Arduino IDE
+// concatenates minimessenger.ino BEFORE wifi.ino — so a #define here is not visible from there.
 
 #define WIFI_PORTAL_AP_SSID "minimsg-cfg"  // generic on purpose so the user knows what SSID to look for in the phone's WiFi list.
 // WPA2 password for the captive portal AP. Set to a real string (8+ chars) rather than "" (open AP) because:
@@ -133,9 +136,9 @@ void setupWifi() {
     // idempotent if the driver is already up — costs nothing on the happy path.
     WiFi.mode(WIFI_STA);
     delay(50);
-    WiFi.disconnect(true, true);
-    delay(50);
-    WiFi.mode(WIFI_STA);
+    //WiFi.disconnect(true, true);
+    //delay(50);
+    //WiFi.mode(WIFI_STA);
     WiFi.setHostname(g_deviceData.name());
 
     // Populate WiFiMulti with every known network: NVS entries first (priority on duplicate SSID), then compile-time defaults from personal-data.h

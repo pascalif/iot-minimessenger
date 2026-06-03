@@ -23,7 +23,19 @@ enum class WifiState {
     LOST           // Was CONNECTED, now disconnected. WiFiMulti.run() called periodically; falls back to PORTAL after WIFI_LOST_TO_PORTAL_MS.
 };
 
-// Adafruit_ST7789 forward declaration so we can take a pointer in the portal renderer's signature without pulling Adafruit_GFX into wifi_state.h.
+// Window during which setup() pumps wifiTick() before launching the BLE keyboard. On ESP32 the WiFi and BLE radios share the 2.4 GHz front-end via
+// time-slicing, and the BLE keyboard's reconnect storm (scan + connect + auth + 3× subscribe = ~2 s of intense radio activity right after boot) was
+// starving the first WiFi association attempt — the 802.11 management frames missed enough ACK windows for the AP to give up, and the driver then
+// waited ~11 s in ASSOC_EXPIRE before WiFiMulti could retry. By blocking setupKeyboard() until either WiFi.status() == WL_CONNECTED or this timeout
+// elapses, the radio is exclusively WiFi during the critical first assoc window. Tradeoff: in the worst case (AP unreachable) the BLE keyboard is
+// delayed by this whole duration before it even starts scanning — bump it if your AP is healthy and you want a generous safety margin, shrink it if
+// BLE keyboard responsiveness at cold boot matters more than WiFi speed. Range that makes practical sense: 1'000 .. 10'000.
+//
+// Defined in this header (not in wifi.ino) because the Arduino IDE concatenates minimessenger.ino BEFORE wifi.ino (sketch-name file comes first), so
+// a #define inside wifi.ino is not yet visible when setup() in minimessenger.ino is compiled.
+#define WIFI_BOOT_EXCLUSIVE_GRACE_MS 5'000
+
+// Adafruit_ST7789 forward declaration so we can take a pointer in the portal renderer's signature without pulling Adafruit_GFX into wifi.h.
 class Adafruit_ST7789;
 
 // === Functions defined in wifi.ino, callable from minimessenger.ino ===

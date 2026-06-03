@@ -13,13 +13,13 @@
 // us keep our timeout derived from the keepalive cadence in a single place rather than duplicating the number here.
 //
 // Exposed to other files purely via the accessor contactGetActiveCount() (read by bars.ino) and the entry point onReceivedContactOnline()
-// (called by mqtt.ino's incoming-message dispatcher via auto-prototype). No contacts.h — same "light case" pattern as wifi_state.h.
+// (called by mqtt.ino's incoming-message dispatcher via auto-prototype). No contacts.h — same "light case" pattern as wifi.h.
 
 #include "mqtt.h"
 #include "mm_log.h"         // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
 #include "contacts.h"       // DeviceDataEntry + DeviceDataEntry::findByMac / ::findById — résolution pseudo / namePrefix / screen du contact distant.
 #include "personal-data.h"  // matérialise les tableaux COMPILED_DEVICE_DATA_ENTRIES + COMPILED_WIFI_DEFAULTS — DeviceDataEntry (contacts.h) et
-                            // CompiledWifiEntry (wifi_state.h) sont déjà en scope via les includes de minimessenger.ino concatenés en tête de TU.
+                            // CompiledWifiEntry (wifi.h) sont déjà en scope via les includes de minimessenger.ino concatenés en tête de TU.
 
 // Device-table count derived ici — premier point de la TU où le tableau a sa pleine définition. wifi.ino se contente de définir le count wifi.
 const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_ENTRIES) / sizeof(COMPILED_DEVICE_DATA_ENTRIES[0]);

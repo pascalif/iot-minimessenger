@@ -14,7 +14,7 @@ Tester manuellement depuis le web-client du broker :
 // MQTT layer — constants and prototypes shared between mqtt.ino (definitions, MQTT functions, broker plumbing) and minimessenger.ino (which still
 // drives the reconnect loop, status bar, info screen and setRecipient/setCallback wiring). The IDE concatenates the .ino files alphabetically after
 // the main sketch, so mqtt.ino's definitions land AFTER minimessenger.ino in the single translation unit — this header is what lets minimessenger.ino
-// see the MQTT globals/constants without the compiler tripping on "use before declaration". Same pattern as wifi_state.h vs wifi.ino.
+// see the MQTT globals/constants without the compiler tripping on "use before declaration". Same pattern as wifi.h vs wifi.ino.
 
 // PubSubClient (Library Manager: "PubSubClient" 2.8). Brought in here so anyone including mqtt.h gets the type of g_mqttClient — no separate include
 // needed in minimessenger.ino.

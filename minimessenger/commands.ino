@@ -11,10 +11,10 @@
 //
 // Arduino IDE concatenates this file with the main .ino into a single translation unit (in alphabetical order after the sketch-named file).
 // commands.ino therefore sees all of minimessenger.ino above it and can call addConversationBlock, dumpChipInfo, etc. without forward decls.
-// Symbols defined in wifi.ino (concatenated later) are reached via the forward declarations in wifi_state.h, which we include below.
+// Symbols defined in wifi.ino (concatenated later) are reached via the forward declarations in wifi.h, which we include below.
 
 #include <Arduino.h>
-#include "wifi_state.h"
+#include "wifi.h"
 #include "mm_log.h"
 #include "mqtt.h"  // /mqtt-drop calls g_mqttClient.disconnect(); the symbol is defined in mqtt.ino which is concatenated AFTER commands.ino.
 
