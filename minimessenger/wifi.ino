@@ -39,34 +39,23 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 // Constants
 // ================================================================================
 
-#define MAX_WIFI_NETWORKS                                                                                                                                      \
-    5  // hard cap of slot count in NVS. Bumping requires no migration since slots                                                                             \
-        // are key-indexed.
+#define MAX_WIFI_NETWORKS                   5      // hard cap of slot count in NVS. Bumping requires no migration since slots  are key-indexed.
 #define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000  // how often we call WiFiMulti.run() inside the TRYING_KNOWN state.
+
 // After this much time in TRYING_KNOWN with no success, fall through to the captive portal. Set to 45 s (not 15) because a single failed association
 // on a marginal AP burns ~11-13 s before ASSOC_EXPIRE fires; with 15 s we only got one attempt in before bailing, and the second attempt would often
 // have worked. 45 s lets WiFiMulti retry 3-4 times before giving up. Tradeoff: if the known AP is truly gone the user waits 45 s before the portal
 // appears instead of 15 s — acceptable because "known AP transiently unreachable" is more common than "known AP definitely gone".
 #define WIFI_TRYING_KNOWN_TIMEOUT_MS 45'000
-#define WIFI_PORTAL_TIMEOUT_MS                                                                                                                                 \
-    300'000UL                              // 5 min: portal auto-closes and the state machine reverts to                                                       \
-                                           // TRYING_KNOWN for one more pass.
-#define WIFI_LOST_RETRY_INTERVAL_MS 5'000  // how often we call WiFiMulti.run() inside the LOST state.
-#define WIFI_LOST_TO_PORTAL_MS                                                                                                                                 \
-    60'000  // if the connection has been LOST for more than this, drop into PORTAL                                                                            \
-            // (router probably gone).
+#define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: portal auto-closes and the state machine reverts to  TRYING_KNOWN for one more pass.
+#define WIFI_LOST_RETRY_INTERVAL_MS  5'000      // how often we call WiFiMulti.run() inside the LOST state.
+#define WIFI_LOST_TO_PORTAL_MS       60'000     // if the connection has been LOST for more than this, drop into PORTAL (router probably gone).
 
 // WIFI_BOOT_EXCLUSIVE_GRACE_MS is declared in wifi.h (not here) because it's used by setup() in minimessenger.ino too, and the Arduino IDE
 // concatenates minimessenger.ino BEFORE wifi.ino — so a #define here is not visible from there.
 
-#define WIFI_PORTAL_AP_SSID                                                                                                                                    \
-    "minimsg-cfg"  // generic on purpose so the user knows what SSID to look for in                                                                            \
-                   // the phone's WiFi list.
-// WPA2 password for the captive portal AP. Set to a real string (8+ chars) rather than "" (open AP) because:
-//   - arduino-esp32 3.x defaults pmf_cfg.capable=true on AP, which some Android 12+ phones refuse silently when paired with WIFI_AUTH_OPEN.
-//   - Android also restricts auto-connect on open networks for privacy (no pop-up, just silent refuse).
-//   - 8 chars is the WPA2 minimum (esp_wifi rejects shorter as "passphrase too short").
-// Pick something memorable; users only see this once during onboarding.
+#define WIFI_PORTAL_AP_SSID "minimsg-cfg"  // generic on purpose so the user knows what SSID to look for in  the phone's WiFi list.
+// WPA2 password for the captive portal AP.  8 chars is the WPA2 minimum (esp_wifi rejects shorter as "passphrase too short").
 #define WIFI_PORTAL_AP_PASS "11110000"
 
 #define WIFI_PREFS_NAMESPACE "wifi"
@@ -111,7 +100,7 @@ static void wifiStopPortal();
 static void wifiOnPortalSave();
 static void wifiOnConnected();
 
-// setupNTP() lives in minimessenger.ino — declared here so wifiOnConnected() can call it.
+// setupNTP() lives in time.ino — declared here so wifiOnConnected() can call it without relying on auto-prototypes across .ino files.
 void setupNTP();
 
 // ================================================================================
@@ -304,7 +293,7 @@ static void wifiTransitionTo(WifiState newState) {
 
     case WifiState::LOST:
         if (g_wifiWasConnected) {
-            printVersatileConversationError("WiFi lost - Retrying...");
+            printGeneralError("WiFi lost - Retrying...");
         }
         g_wifiWasConnected = false;  // re-arm so the next CONNECTED prints a banner.
         break;

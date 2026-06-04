@@ -117,13 +117,6 @@ Docs (/docs):
 // User configuration
 // ================================================================================
 
-// POSIX timezone string for Paris (Europe/Paris). Decoded:
-//   CET-1     standard time name = CET, POSIX offset -1 → human UTC+1
-//   CEST      daylight time name = CEST (implicit offset = CET + 1h = UTC+2)
-//   M3.5.0    DST starts: Month 3 (March), week 5 (= last), day 0 (Sunday) → last Sunday of March
-//   M10.5.0/3 DST ends:   last Sunday of October at 03:00 local
-// With this in configTzTime(), the libc handles DST automatically; tm.tm_isdst tells us which side we are on.
-#define TZ_PARIS "CET-1CEST,M3.5.0,M10.5.0/3"
 
 // ================================================================================
 // Configurable behaviour
@@ -169,9 +162,9 @@ Docs (/docs):
 // STT7789v pins, vue de dessus : GND, VCC, SCL, SDA, RST, DC, CS
 // - TFT_SCL : D18 = GPIO18 "SCK" by default
 // - TFT_SDA : D23 = GPIO23 "MOSI" by default
-#define TFT_RST                                                                                                                                                \
-    GPIO_NUM_NC            // not wired — the ST7789 has an internal Power-On Reset, see                                                                       \
-                           // ../docs/info_tft_rst.md
+#define TFT_RST                                                                                                                                                    \
+    GPIO_NUM_NC  // not wired — the ST7789 has an internal Power-On Reset, see                                                                       \         \ \ \
+                 // ../docs/info_tft_rst.md
 #define TFT_DC GPIO_NUM_2  // Data/Command select
 
 // Chip select — MUST be wired to a real GPIO on this module. Empirically tested: tying the TFT's CS pin to GND on the breadboard side and setting
@@ -236,10 +229,9 @@ uint16_t g_drawY   = 0;
 #define ICON_WIFI_X 12
 #define ICON_MQTT_X 32
 // BT sits 50 px right of MQTT's right edge: ICON_MQTT_X + ICON_RADIUS + 50 + ICON_RADIUS = 32 + 6 + 50 + 6 = 94.
-#define ICON_BT_X   94
-#define ICON_CAPS_X 114
-#define ICON_CONTACT_X                                                                                                                                         \
-    (FB_WIDTH - 12)  // 228 — used when 0 or 1 contact is online (single silhouette on the historical anchor).
+#define ICON_BT_X      94
+#define ICON_CAPS_X    114
+#define ICON_CONTACT_X (FB_WIDTH - 12)  // 228 — used when 0 or 1 contact is online (single silhouette on the historical anchor).
 
 // When 2+ contacts are online, two silhouettes are drawn straddling ICON_CONTACT_X. Body width = 11 px and head r = 3 px, so a ±9 px split leaves
 // ~7 px d'air entre les deux silhouettes : assez pour rester lisibles en mode plein, sans déborder du framebuffer 240 px de large (X_RIGHT atteint au
@@ -292,13 +284,8 @@ int      g_lineHead  = 0;
 int      g_lineCount = 0;
 
 
-// When two messages from the SAME author land within this many seconds, suppress the second one's timestamp to declutter the conversation view.
-// "Same author" is determined by senderDeviceId (see g_lastMsgSenderId, declared lower with DEVICE_ID_UNSET in scope): a sender change bypasses the
-// clustering window and always shows the timestamp, so the conversation visually breathes between speakers even if their messages arrive
-// back-to-back. The "last visible timestamp" tracking continues until either (a) a message arrives outside the window OR (b) a different sender
-// shows up, at which point the timestamp is shown again.
-#define CONVO_TS_HIDE_THRESHOLD_S 10
-time_t g_lastShownTsEpoch = 0;
+// CONVO_TS_HIDE_THRESHOLD_S + g_lastShownTsEpoch — conversation-clustering state — live in display.ino, next to addConversationBlockImpl which is
+// their sole consumer. g_lastMsgSenderId stays here because it's the per-device identity counterpart (paired with DEVICE_ID_UNSET above).
 
 // WiFi
 WiFiClientSecure g_wifiClient;
@@ -326,9 +313,10 @@ byte g_inNextCharIndex = 0;
 // table (`g_contacts[i].deviceId == DEVICE_ID_UNSET`). The local device's identity lives entirely in g_deviceData below.
 #define DEVICE_ID_UNSET 0xFF
 
-// deviceId of the author whose message last drove the ts-clustering tracker (see g_lastShownTsEpoch / CONVO_TS_HIDE_THRESHOLD_S above). Initialised
-// to DEVICE_ID_UNSET so the very first real message always shows its ts (any valid sender id ∈ [1..254] differs from UNSET → bypass triggers).
-// Updated inside addConversationBlock for every call with a non-empty ts; system messages (Ready / Lost server) pass ts="" and don't touch this.
+// deviceId of the author whose message last drove the ts-clustering tracker (see g_lastShownTsEpoch / CONVO_TS_HIDE_THRESHOLD_S in display.ino).
+// Initialised to DEVICE_ID_UNSET so the very first real message always shows its ts (any valid sender id ∈ [1..254] differs from UNSET → bypass
+// triggers). Updated inside addConversationBlockImpl for every call with a non-empty ts; system messages (Ready / Lost server) pass ts="" and
+// don't touch this.
 byte g_lastMsgSenderId = DEVICE_ID_UNSET;
 
 // Unified per-device identity record — populated once by identifyDevice() at boot. Two paths: clone the matching row of COMPILED_DEVICE_DATA_ENTRIES
@@ -391,17 +379,23 @@ int  contactGetActiveCount();
 // display.ino
 void showSplashScreen();
 void redrawAllConversations();
-void printVersatileConversationError(const String& message);
-void printVersatileConversationInfo(const String& message);
+void printGeneralError(const String& message);
+void printGeneralInfo(const String& message);
 void printCmdInfo(const String& message);
 void printCmdInfo(const String& left, const String& right);
 void printCmdError(const String& message);
 void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId);
 void addConversationMeOKBlock(String ts, const String& message);
-void addConversationMeErrorBlock(String ts, const String& message) ;
+void addConversationMeErrorBlock(String ts, const String& message);
 
 // String utilities — defined in strings.ino.
 size_t utf8ToLatin1(char* s);
+
+// time.ino — concatenated after this file, after strings.ino but before wifi.ino.
+void        setupNTP();
+char*       getCurrentDateTime();
+char*       getCurrentTime();
+const char* getTimezoneLabel();
 
 // Command layer — defined in commands.ino. routeMessage() (this file) calls processPayloadAsCommand() to interpret /cmd payloads; the rest is
 // internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
@@ -457,73 +451,6 @@ char* trim(char* str) {
     return str;
 }
 
-// ================================================================================
-// Time
-// ================================================================================
-void setupNTP() {
-    ESP_LOGI(TAG_MM, "Init NTP...");
-    // configTzTime (vs configTime with a fixed offset) installs a POSIX TZ rule that auto-switches between CET and CEST. localtime_r will then
-    // populate tm.tm_isdst correctly twice a year without us touching anything.
-    configTzTime(TZ_PARIS, "europe.pool.ntp.org", "pool.ntp.org");
-
-    // Block until SNTP returns a plausible epoch (after 2023-11) so the first
-    // TLS handshake doesn't run with a 1970 clock and reject the broker cert.
-    time_t now   = 0;
-    int    tries = 0;
-    while ((now = time(nullptr)) < 1700000000 && tries++ < 30) {
-        delay(500);
-    }
-    ESP_LOGI(TAG_MM, "NTP synced after %d tries, epoch=%ld", tries, (long)now);
-
-    // Push a refresh to the info screen if it's shown — the TIME row label is computed from the local TZ which is only valid post-NTP.
-    refreshInfoScreenIfShown();
-}
-
-char* getCurrentDateTime() {
-    // Function-local static buffer, .bss-resident, zero heap.
-    // Size: "YYYY-MM-DD|HH:MM:SS" = 19 chars + NUL = 20 bytes.
-    static char gs_buf[20];
-
-    time_t    epochTime = time(nullptr);
-    struct tm timeInfo;
-    localtime_r(&epochTime, &timeInfo);
-
-    snprintf(gs_buf,
-             sizeof(gs_buf),
-             "%04d-%02d-%02d|%02d:%02d:%02d",
-             timeInfo.tm_year + 1900,
-             timeInfo.tm_mon + 1,
-             timeInfo.tm_mday,
-             timeInfo.tm_hour,
-             timeInfo.tm_min,
-             timeInfo.tm_sec);
-
-    return gs_buf;
-}
-
-char* getCurrentTime() {
-    // Function-local static buffer.
-    // Size: "HH:MM:SS" = 8 chars + NUL = 9.
-    static char gs_buf[9];
-
-    time_t    epochTime = time(nullptr);
-    struct tm timeInfo;
-    localtime_r(&epochTime, &timeInfo);
-
-    snprintf(gs_buf, sizeof(gs_buf), "%02d:%02d:%02d", timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
-
-    return gs_buf;
-}
-
-// Returns "Paris (UTC+1)" in winter (CET) or "Paris (UTC+2)" in summer (CEST). Relies on the POSIX TZ rule installed by setupNTP() via
-// configTzTime(TZ_PARIS, ...): the libc populates tm.tm_isdst correctly and we just translate it to the human label.
-const char* getTimezoneLabel() {
-    time_t    epochTime = time(nullptr);
-    struct tm timeInfo;
-    localtime_r(&epochTime, &timeInfo);
-    // tm_isdst > 0 → DST in effect (CEST, UTC+2). 0 → standard (CET, UTC+1). < 0 → unknown (would happen if TZ isn't set; we still default to UTC+1).
-    return (timeInfo.tm_isdst > 0) ? "Paris (UTC+2)" : "Paris (UTC+1)";
-}
 
 // ============================================================================
 // Keystrokes
@@ -871,11 +798,9 @@ void identifyDevice() {
 // ================================================================================
 // WIFI
 // ================================================================================
-//
-// The connection state machine and the NVS-backed network list live in wifi.ino (concatenated into the same translation unit by the Arduino IDE).
-// setupWifi() is defined there and handles the whole WiFi bringup in one call: driver mode + hostname + NVS seed/load + WiFiManager config +
-// state machine kick. The TLS root CA wiring stays below in setup() since it's an MQTT concern, not a WiFi one. wifiTick() in loop() drives the
-// async association and reconnection.
+
+// The connection state machine and the NVS-backed network list live in wifi.ino.
+
 
 // ================================================================================
 // BLUETOOTH KEYBOARD
@@ -1087,9 +1012,6 @@ void updateDisplayPowerState() {
     }
 }
 
-// Splash + status info-screen + conversation block + /help two-column printers live in display.ino. minimessenger.ino keeps only the lower-level
-// display orchestration (setupDisplay, dim/off state machine, HW scroll primitives, clearConversationHistory, screen-mode transitions).
-
 // Drop the in-memory conversation history and wipe the scroll area. After this call the ring buffer is empty, the HW scroll register is back
 // at zero, and the panel's scroll zone is solid black. Status bar and footer are untouched — they live outside the VSCRDEF window and aren't
 // affected by g_drawY / g_scrollY. Triggered by the "/clear" command. A subsequent addConversationXXXBlock lands at the top of the scroll area
@@ -1131,7 +1053,7 @@ void onMQTTReconnected() {
     if (!g_inConversationMode) {
         goAndResetConversationScreen();
     }
-    printVersatileConversationInfo("Ready !");
+    printGeneralInfo("Ready !");
 }
 
 // ----------------------------------------------------------------------------
@@ -1346,7 +1268,7 @@ void loop() {
             // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
             // edge logic and the status bar indicator stay accurate.
             if (WiFi.status() == WL_CONNECTED) {
-                printVersatileConversationError("Lost server - Retrying...");
+                printGeneralError("Lost server - Retrying...");
             }
         }
 

@@ -36,9 +36,9 @@ extern const char* g_mqttIncomingTopicBroadcast;  // msg/broadcast — subscribe
 // admin/liveness/+ get one retained per peer in a single shot (a shared topic would only retain the last publisher). The DEAD payload doubles as
 // the MQTT Last Will, set in connect() with retained=true so the broker-detected disconnect leaves a tombstone visible to future subscribers. The
 // admin/dead topic that used to handle the Will is gone. See ../docs/howto_mqtt.md for the design rationale.
-#define MQTT_LIVENESS_TOPIC_PREFIX "admin/liveness/"
-#define MQTT_LIVENESS_TOPIC_PREFIX_LEN  (sizeof(MQTT_LIVENESS_TOPIC_PREFIX) - 1)
-#define MQTT_LIVENESS_TOPIC_WILDCARD "admin/liveness/+"  // single-level wildcard — matches admin/liveness/<id> for  any id, not deeper paths.
+#define MQTT_LIVENESS_TOPIC_PREFIX     "admin/liveness/"
+#define MQTT_LIVENESS_TOPIC_PREFIX_LEN (sizeof(MQTT_LIVENESS_TOPIC_PREFIX) - 1)
+#define MQTT_LIVENESS_TOPIC_WILDCARD   "admin/liveness/+"  // single-level wildcard — matches admin/liveness/<id> for  any id, not deeper paths.
 
 // Liveness payload subtype — the leading word of an admin/liveness/<id> payload. Wire format: "<TYPE> <epochSeconds>" for BOOT/RECO/LIVE, just
 // "DEAD" (no timestamp) for the Will. Epoch seconds rather than a formatted timestamp so the staleness check on the receiver side is a single

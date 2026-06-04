@@ -6,8 +6,9 @@
 // scroll area, and the two-column /help listings. Arduino IDE concatenates this file with minimessenger.ino into a single translation unit
 // (alphabetical order after the sketch-named file), so all the layout constants in minimessenger.ino (FB_WIDTH, FB_HEIGHT, SCROLL_AREA_*,
 // CONVO_*, INFO_LINE_RIGHT_COL_X, BOX_*, …), all the globals (g_disp, g_deviceData, g_drawY, g_scrollY, g_lineHead, g_lineCount, lines[],
-// g_inConversationMode, g_lastShownTsEpoch, g_lastMsgSenderId, g_mqttClient, g_kb, …), and the HW-scroll primitives (hwScrollSetupArea(),
-// hwScrollTo(), hwScrollReset()) are visible here without forward decls.
+// g_inConversationMode, g_lastMsgSenderId, g_mqttClient, g_kb, …), and the HW-scroll primitives (hwScrollSetupArea(), hwScrollTo(), hwScrollReset())
+// are visible here without forward decls. The ts-clustering state (CONVO_TS_HIDE_THRESHOLD_S + g_lastShownTsEpoch) is owned by this file — see the
+// Constants block below.
 //
 // Bar drawing (top status bar + bottom input footer) is in bars.ino, not here. Portal-mode instructions (drawPortalInstructions, called from
 // showUpdatedInfoScreen below) live in wifi.ino since they're WiFi-state-specific.
@@ -34,6 +35,14 @@
 
 // Hot pink (RGB565 ≈ #FF69B4). Used by command-output listings (help / cmd echoes) to make them visually distinct from regular messages and from info/error notices.
 #define CONVO_CMD_COLOR 0xFB56
+
+// When two messages from the SAME author land within this many seconds, suppress the second one's timestamp to declutter the conversation view.
+// "Same author" is determined by senderDeviceId (see g_lastMsgSenderId in minimessenger.ino): a sender change bypasses the clustering window and
+// always shows the timestamp, so the conversation visually breathes between speakers even if their messages arrive back-to-back. The "last visible
+// timestamp" tracking continues until either (a) a message arrives outside the window OR (b) a different sender shows up, at which point the
+// timestamp is shown again.
+#define CONVO_TS_HIDE_THRESHOLD_S 10
+time_t g_lastShownTsEpoch = 0;
 
 
 // ================================================================================
@@ -77,14 +86,14 @@ void showSplashScreen() {
 }
 
 // Replay every entry of the ring buffer through the same HW-scroll draw
-// algorithm as addConversationBlock. After this:
+// algorithm as addConversationBlockImpl. After this:
 //   - status bar and footer are untouched (protected by VSCRDEF — we only
 //     fillRect the scroll area, never fillScreen)
 //   - the latest block ends up at the bottom of the scroll area with older
 //     blocks stacked above (or scrolled off the top if cumulated height
 //     exceeds SCROLL_AREA_H) — visually identical to live message arrival
 //   - g_drawY / g_scrollY are left in the "next slot" position so a new
-//     addConversationBlock right after lands naturally below the last block
+//     addConversationBlockImpl right after lands naturally below the last block
 //
 // Triggered by the `cmd redraw` command (see processPayloadAsCommand).
 // We draw directly from the stored TextLine fields — no re-bound, no
@@ -107,7 +116,7 @@ void redrawAllConversations() {
         const TextLine& line = lines[(g_lineHead + k) % MAX_LINES];
         uint16_t        H    = line.tsHeightWithBottomMargin + line.msgHeightWithBottomMargin;
 
-        // Wrap avoidance, mirroring addConversationBlock: if the block would
+        // Wrap avoidance, mirroring addConversationBlockImpl: if the block would
         // cross the scroll-area top boundary, skip the remaining tail and
         // restart at scroll-offset 0, bumping the scroll register to swallow
         // the skipped pixels.
@@ -148,12 +157,12 @@ void redrawAllConversations() {
 // HW-scroll primitives (g_drawY / g_scrollY / hwScrollTo) make successive calls accumulate visually like any other conversation content, and
 // hwScrollReset() drops the lot during a screen switch.
 
-void printLineLowLevel(const String& left, const String& right, uint16_t color, const GFXfont* font = &CONVO_CMD_FONT) {
+void printLineLowLevelImpl(const String& left, const String& right, uint16_t color, const GFXfont* font = &CONVO_CMD_FONT) {
     if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
 
-    // UTF-8 → Latin-1: bundled FreeSans*_latin1 fonts cap at 0xFF. Mirrors what addConversationBlock does to its message before drawing.
+    // UTF-8 → Latin-1: bundled FreeSans*_latin1 fonts cap at 0xFF. Mirrors what addConversationBlockImpl does to its message before drawing.
     char leftBuf[CONVO_MSG_MAX_LEN];
     strncpy(leftBuf, left.c_str(), sizeof(leftBuf) - 1);
     leftBuf[sizeof(leftBuf) - 1] = '\0';
@@ -191,7 +200,7 @@ void printLineLowLevel(const String& left, const String& right, uint16_t color, 
 
     const uint16_t lineH = bh + CONVO_HELP_MARGIN_BOTTOM;
 
-    // Wrap avoidance, mirrors addConversationBlock: if the line would overflow the scroll area bottom, paint the leftover tail black and
+    // Wrap avoidance, mirrors addConversationBlockImpl: if the line would overflow the scroll area bottom, paint the leftover tail black and
     // restart at offset 0, bumping the scroll register to swallow the skipped pixels.
     if (g_drawY + lineH > SCROLL_AREA_H) {
         uint16_t skipped = SCROLL_AREA_H - g_drawY;
@@ -217,40 +226,10 @@ void printLineLowLevel(const String& left, const String& right, uint16_t color, 
     hwScrollTo(g_scrollY);
 }
 
-void printCmdInfo(const String& message) {
-    printLineLowLevel(message, String(), CONVO_CMD_COLOR);
-}
-void printCmdInfo(const String& left, const String& right) {
-    printLineLowLevel(left, right, CONVO_CMD_COLOR);
-}
-
-void printCmdError(const String& message) {
-    printLineLowLevel(message, String(), CONVO_ERROR_COLOR);
-}
-
-void printVersatileConversationInfo(const String& message) {
-    addConversationBlock(String(), message, CONVO_INFO_COLOR, CENTER);
-}
-
-void printVersatileConversationError(const String& message) {
-    addConversationBlock(String(), message, CONVO_ERROR_COLOR, CENTER);
-}
-
-void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId) {
-            addConversationBlock(ts, message, CONVO_OTHERS_COLOR, LEFT, senderDeviceId);
-}
-
-void addConversationMeOKBlock(String ts, const String& message) {
-            addConversationBlock(ts, message, CONVO_MYSELF_COLOR, RIGHT, g_deviceData.deviceId);
-}
-
-void addConversationMeErrorBlock(String ts, const String& message) {
-            addConversationBlock(ts, "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT, g_deviceData.deviceId);
-}
 
 // `ts` stays by value because it's mutated locally (cleared on cluster-suppress, prefixed with the sender's pseudo); `msg` is read-only — just
 // copied into msgBuf via strncpy — so const-ref to avoid the per-call heap alloc the by-value copy would trigger on ESP32's String.
-void addConversationBlock(String ts, const String& msg, uint16_t msgColor, Align align, byte senderDeviceId) {
+void addConversationBlockImpl(String ts, const String& msg, uint16_t msgColor, Align align, byte senderDeviceId = DEVICE_ID_UNSET) {
     char msgBuf[CONVO_MSG_MAX_LEN];
     strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
     msgBuf[sizeof(msgBuf) - 1] = '\0';
@@ -556,4 +535,38 @@ void showUpdatedInfoScreen() {
     snprintf(heapStr, sizeof(heapStr), "%u/%u", (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getFreeHeap());
     nextY += drawInfoRow(pDisp, "HEAP:", String(heapStr), colHeaders, colValues, nextY, lineHeight);
     nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
+}
+
+
+void printCmdInfo(const String& message) {
+    printLineLowLevelImpl(message, String(), CONVO_CMD_COLOR);
+}
+void printCmdInfo(const String& left, const String& right) {
+    printLineLowLevelImpl(left, right, CONVO_CMD_COLOR);
+}
+
+void printCmdError(const String& message) {
+    printLineLowLevelImpl(message, String(), CONVO_ERROR_COLOR);
+}
+
+
+void printGeneralInfo(const String& message) {
+    addConversationBlockImpl(String(), message, CONVO_INFO_COLOR, CENTER);
+}
+
+void printGeneralError(const String& message) {
+    addConversationBlockImpl(String(), message, CONVO_ERROR_COLOR, CENTER);
+}
+
+
+void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId) {
+    addConversationBlockImpl(ts, message, CONVO_OTHERS_COLOR, LEFT, senderDeviceId);
+}
+
+void addConversationMeOKBlock(String ts, const String& message) {
+    addConversationBlockImpl(ts, message, CONVO_MYSELF_COLOR, RIGHT, g_deviceData.deviceId);
+}
+
+void addConversationMeErrorBlock(String ts, const String& message) {
+    addConversationBlockImpl(ts, "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT, g_deviceData.deviceId);
 }

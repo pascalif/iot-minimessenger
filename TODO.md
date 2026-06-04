@@ -35,6 +35,11 @@ Si tu chasses une instabilité actuelle, je regarderais d'abord :
 2. Active esp_log_set_level("*", ESP_LOG_VERBOSE) un moment et regarde le dernier log avant l'événement.
 3. Active CONFIG_HEAP_POISONING_COMPREHENSIVE (menuconfig / sdkconfig) pour détecter les use-after-free.
 
+
+    return g_kb.setup(false,  // clear bonds — flip to true once if a stale bond is
+
+
+
 ================
 
 Extraire fichiers de constantes

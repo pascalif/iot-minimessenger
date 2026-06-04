@@ -114,9 +114,9 @@ static void announceContactTransition(byte deviceId, ContactLiveness liveness) {
     label += alive ? " connected" : " disconnected";
 
     if (alive) {
-        printVersatileConversationInfo(label);
+        printGeneralInfo(label);
     } else {
-        printVersatileConversationError(label);
+        printGeneralError(label);
     }
 }
 

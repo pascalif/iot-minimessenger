@@ -34,6 +34,8 @@ extern WiFiClientSecure g_wifiClient;
 extern void  ledSetState(int pin, int requiredState);
 extern void  routeMessage(const String& message, MessageSource source, byte senderDeviceId);
 extern void  onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
+// getCurrentDateTime() lives in time.ino, concatenated after mqtt.ino — explicit extern so the trailer-build call below resolves without relying on
+// auto-prototypes across .ino files.
 extern char* getCurrentDateTime();
 
 // ================================================================================
@@ -480,7 +482,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         // We use it for two things:
         //   1. Self-filter: when WE publish on msg/broadcast, the broker echoes our payload back to us through the same subscription. The trailer
         //      identifies the echo and we drop it silently (no double-display).
-        //   2. Identify the author for the UI pseudo prefix — passed through to routeMessage and ultimately to addConversationBlock.
+        //   2. Identify the author for the UI pseudo prefix — passed through to routeMessage and ultimately to addConversationBlockImpl.
         // Messages from a web-MQTT console / mosquitto_pub have no trailer; they fall through with senderId=0 and are displayed as "ext".
         byte senderId = extractSenderAndStripTrailer(message);
 
