@@ -11,16 +11,20 @@ struct CompiledWifiEntry {
 extern const CompiledWifiEntry COMPILED_WIFI_DEFAULTS[];
 extern const size_t            COMPILED_WIFI_DEFAULTS_COUNT;
 
-
 // Connection state machine driven by wifi.ino. Read by minimessenger.ino (status screen rendering) and mutated by wifi.ino (wifiTick).
 // Kept in its own tiny header so both translation units see the same complete enum definition without dragging in the WiFiManager / WiFiMulti
 // headers from wifi.ino into the main .ino.
 enum class WifiState {
     BOOTING,       // setup() not finished — NVS not read yet, WiFiMulti not populated.
-    TRYING_KNOWN,  // WiFiMulti is iterating over the known networks (NVS + compiled defaults). Retries every WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS.
-    PORTAL,        // No known network reachable; WiFiManager captive portal is open at AP "minimessenger-config" → http://192.168.4.1.
-    CONNECTED,     // STA associated. NTP and MQTT can run. UI may transition to conversation mode once MQTT is also up.
-    LOST           // Was CONNECTED, now disconnected. WiFiMulti.run() called periodically; falls back to PORTAL after WIFI_LOST_TO_PORTAL_MS.
+    TRYING_KNOWN,  // WiFiMulti is iterating over the known networks (NVS +
+                   // compiled defaults). Retries every
+                   // WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS.
+    PORTAL,        // No known network reachable; WiFiManager captive portal is open at
+                   // AP "minimessenger-config" → http://192.168.4.1.
+    CONNECTED,     // STA associated. NTP and MQTT can run. UI may transition to
+                   // conversation mode once MQTT is also up.
+    LOST           // Was CONNECTED, now disconnected. WiFiMulti.run() called periodically;
+                   // falls back to PORTAL after WIFI_LOST_TO_PORTAL_MS.
 };
 
 // Window during which setup() pumps wifiTick() before launching the BLE keyboard. On ESP32 the WiFi and BLE radios share the 2.4 GHz front-end via

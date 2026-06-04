@@ -4,20 +4,11 @@
 //
 // This file owns everything related to the "/cmd" surface area: the CMD_*/GROUP_* constants, the top-level dispatcher processPayloadAsCommand,
 // the per-group sub-dispatchers (/wifi *, /mqtt *, /bt *, /dbg *), and the help printers (global + one partial per group).
-//
-// It does NOT own the funnel — routeMessage() in minimessenger.ino is the single insertion point for any payload arriving over MQTT, Serial or
-// the BLE keyboard, and it calls processPayloadAsCommand() as one of its steps. See the header comment in minimessenger.ino around routeMessage
-// for the funnel's three-step contract (wake screen → interpret as command → otherwise route to display + MQTT).
-//
-// Arduino IDE concatenates this file with the main .ino into a single translation unit (in alphabetical order after the sketch-named file).
-// commands.ino therefore sees all of minimessenger.ino above it and can call addConversationBlock, printInfoLine, etc. without forward decls.
-// Symbols defined later (display.ino / wifi.ino) are reached via explicit forward declarations: addConversationBlock / printInfoLine* /
-// redrawAllConversations / showUpdatedInfoScreen are declared in minimessenger.ino's forward-decl block, and wifi.ino exports its API via wifi.h.
 
-#include <Arduino.h>
-#include "wifi.h"
 #include "mm_log.h"
 #include "mqtt.h"  // /mqtt drop calls g_mqttClient.disconnect(); the symbol is defined in mqtt.ino which is concatenated AFTER commands.ino.
+#include "wifi.h"
+#include <Arduino.h>
 
 // ----------------------------------------------------------------------------
 // Local commands + message funnel
@@ -58,7 +49,7 @@ const char* const CMD_WIFI_FORGET = "/wifi forget";  // payload: "/wifi forget <
 const char* const CMD_WIFI_PORTAL = "/wifi portal";
 // /wifi pub — publishes the device's NVS-stored WiFi credentials (SSID|PWD per line) back to the sender via msg/unicast/<senderId>. Only valid when
 // invoked from MQTT with a parseable senderDeviceId in the trailer; ignored (warning log) from serial or BLE keyboard since there is no return path.
-const char* const CMD_WIFI_PUB    = "/wifi pub";
+const char* const CMD_WIFI_PUB = "/wifi pub";
 
 // Debug / diagnostic subcommands. Visual recovery (redraw) and diagnostic dumps (chip, mem).
 const char* const CMD_DBG_CHIP   = "/dbg chip";
@@ -71,7 +62,6 @@ const char* const CMD_MQTT_DROP = "/mqtt drop";
 // BLE subcommands.
 const char* const CMD_BT_CLEAN = "/bt clean";
 
-
 // === Help printers ============================================================
 // Each one lists the entries left-aligned in pink so it stands out from normal traffic. The global /help only shows orphan commands and the
 // group prefixes ("/wifi *", "/dbg *"); subcommands are listed only by their group's partial help. This keeps the global view short as new
@@ -79,47 +69,46 @@ const char* const CMD_BT_CLEAN = "/bt clean";
 
 void printHelpGlobal() {
     ESP_LOGI(TAG_MM, "Listing global commands");
-    printInfoLine("Commands:");
-    printInfoLine("/help", "list cmds");
-    printInfoLine("/status", "info screen");
-    printInfoLine("/clear", "wipe history");
-    printInfoLine("/wifi *", "WiFi mgmt");
-    printInfoLine("/mqtt *", "MQTT mgmt");
-    printInfoLine("/bt *", "BLE mgmt");
-    printInfoLine("/dbg *", "diagnostics");
+    printCmdInfo("Commands:");
+    printCmdInfo("/help", "list cmds");
+    printCmdInfo("/status", "info screen");
+    printCmdInfo("/clear", "wipe history");
+    printCmdInfo("/wifi *", "WiFi mgmt");
+    printCmdInfo("/mqtt *", "MQTT mgmt");
+    printCmdInfo("/bt *", "BLE mgmt");
+    printCmdInfo("/dbg *", "diagnostics");
 }
 
 void printHelpWifi() {
     ESP_LOGI(TAG_MM, "Listing /wifi subcommands");
-    printInfoLine("/wifi subcmds:");
-    printInfoLine("- drop", "drop link");
-    printInfoLine("- clean", "wipe NVS");
-    printInfoLine("- list", "known nets");
-    printInfoLine("- forget", "<ssid>");
-    printInfoLine("- portal", "open portal");
-    printInfoLine("- pub", "publish");
+    printCmdInfo("/wifi subcmds:");
+    printCmdInfo("- drop", "drop link");
+    printCmdInfo("- clean", "wipe NVS");
+    printCmdInfo("- list", "known nets");
+    printCmdInfo("- forget", "<ssid>");
+    printCmdInfo("- portal", "open portal");
+    printCmdInfo("- pub", "publish");
 }
 
 void printHelpMqtt() {
     ESP_LOGI(TAG_MM, "Listing /mqtt subcommands");
-    printInfoLine("/mqtt subcmds:");
-    printInfoLine("- drop", "drop MQTT");
+    printCmdInfo("/mqtt subcmds:");
+    printCmdInfo("- drop", "drop MQTT");
 }
 
 void printHelpBt() {
     ESP_LOGI(TAG_MM, "Listing /bt subcommands");
-    printInfoLine("/bt subcmds:");
-    printInfoLine("- clean", "clear bonds");
+    printCmdInfo("/bt subcmds:");
+    printCmdInfo("- clean", "clear bonds");
 }
 
 void printHelpDbg() {
     ESP_LOGI(TAG_MM, "Listing /dbg subcommands");
-    printInfoLine("/dbg subcmds:");
-    printInfoLine("- chip", "chip + MACs");
-    printInfoLine("- mem", "heap + stack");
-    printInfoLine("- redraw", "full repaint");
+    printCmdInfo("/dbg subcmds:");
+    printCmdInfo("- chip", "chip + MACs");
+    printCmdInfo("- mem", "heap + stack");
+    printCmdInfo("- redraw", "full repaint");
 }
-
 
 // === Command implementations ==================================================
 
@@ -137,8 +126,8 @@ static void cmdWifiPublishNetworksToMQTTPeer(byte recipientDeviceId) {
     // Payload budget: MSG_BUFFER_SIZE (500) is also the size of g_mqttOutgoingMsg, into which mqttPushFormattedMessage will copy `payload` AND append
     // the "### ts:… deviceId:… msgId:…" trailer (~60 chars worst case). We reserve 64 chars of headroom so the trailer fits without truncation.
     char         payload[MSG_BUFFER_SIZE];
-    const size_t budget = MSG_BUFFER_SIZE - 64;
-    size_t       used   = 0;
+    const size_t budget  = MSG_BUFFER_SIZE - 64;
+    size_t       used    = 0;
     int          written = snprintf(payload, sizeof(payload), "wifi pub:");
     if (written > 0) {
         used = (size_t)written;
@@ -153,19 +142,17 @@ static void cmdWifiPublishNetworksToMQTTPeer(byte recipientDeviceId) {
 
     bool ok = mqttPushFormattedMessage(unicastTopic, payload);
     if (ok) {
-        ESP_LOGI(TAG_MM,
-                 "Published %d WiFi entries to [%s]%s",
-                 published,
-                 unicastTopic,
-                 saturated ? " (buffer saturated, list truncated)" : "");
+        ESP_LOGI(TAG_MM, "Published %d WiFi entries to [%s]%s", published, unicastTopic, saturated ? " (buffer saturated, list truncated)" : "");
     } else {
         ESP_LOGW(TAG_MM, "Failed to publish WiFi entries to [%s]", unicastTopic);
     }
     if (saturated) {
-        ESP_LOGW(TAG_MM, "Payload buffer saturated — some NVS WiFi entries were omitted from the [%s] publication", unicastTopic);
+        ESP_LOGW(TAG_MM,
+                 "Payload buffer saturated — some NVS WiFi entries were omitted "
+                 "from the [%s] publication",
+                 unicastTopic);
     }
 }
-
 
 // /dbg chip — diagnostic dump of silicon identity (chip model, revision, cores, features, package, MACs, flash, IDF version, reset reason). Sent
 // both to the serial log (multi-line, with structured fields) and to the conversation in compact form so the info is visible on the device too.
@@ -201,11 +188,10 @@ static void cmdDumpChipInfo() {
     // Echo a compact summary into the conversation so it's visible on-device too.
     char line[64];
     snprintf(line, sizeof(line), "model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
-    printInfoLine(line);
+    printCmdInfo(line);
     snprintf(line, sizeof(line), "flash=%uKB reset=%d", ESP.getFlashChipSize() / 1024, (int)esp_reset_reason());
-    printInfoLine(line);
+    printCmdInfo(line);
 }
-
 
 // /dbg mem — diagnostic dump of heap state. "free" is the sum of all free bytes; "largest" is the biggest single contiguous run (the one mbedtls /
 // TLS / SPI buffers need). "min ever" is the historical low-water mark — a value that keeps dropping over time is the classic signature of a leak.
@@ -222,11 +208,11 @@ static void cmdDumpMemInfo() {
     ESP_LOGI(TAG_MM, "Heap fragmentation: %u%% (= 1 - largest/free)", freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
     // All byte-counts shown in KB on the device screen (integer division — values < 1 KB display as "0 KB", which is itself a useful red-flag signal
     // for the stack low-watermark). The serial log above keeps the raw byte counts for precise diagnostics.
-    printInfoLine("heap:");
-    printInfoLine("- free", String(freeHeap / 1024) + " KB");
-    printInfoLine("- max block", String(largest / 1024) + " KB");
-    printInfoLine("- min ever", String(minEverFree / 1024) + " KB");
-    printInfoLine("- frag", String(freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0) + " %");
+    printCmdInfo("heap:");
+    printCmdInfo("- free", String(freeHeap / 1024) + " KB");
+    printCmdInfo("- max block", String(largest / 1024) + " KB");
+    printCmdInfo("- min ever", String(minEverFree / 1024) + " KB");
+    printCmdInfo("- frag", String(freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0) + " %");
 
     // PSRAM is only present on certain ESP32 variants (e.g. WROVER). On chips without PSRAM these calls return 0.
     if (ESP.getPsramSize() > 0) {
@@ -240,15 +226,14 @@ static void cmdDumpMemInfo() {
     UBaseType_t stackHWMWords = uxTaskGetStackHighWaterMark(NULL);
     uint32_t    stackHWMBytes = (uint32_t)stackHWMWords * 4;
     ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)stackHWMBytes);
-    printInfoLine("stack:");
-    printInfoLine("- min ever", String(stackHWMBytes / 1024) + " KB");
+    printCmdInfo("stack:");
+    printCmdInfo("- min ever", String(stackHWMBytes / 1024) + " KB");
 
     ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
-    printInfoLine("sketch:");
-    printInfoLine("- size", String(ESP.getSketchSize() / 1024) + " KB");
-    printInfoLine("- free", String(ESP.getFreeSketchSpace() / 1024) + " KB");
+    printCmdInfo("sketch:");
+    printCmdInfo("- size", String(ESP.getSketchSize() / 1024) + " KB");
+    printCmdInfo("- free", String(ESP.getFreeSketchSpace() / 1024) + " KB");
 }
-
 
 // === Dispatchers ==============================================================
 
@@ -281,13 +266,13 @@ bool processPayloadAsCommand(const String& message, MessageSource source, byte s
         return processWifiSubcommand(message, source, senderDeviceId);
     }
     if (message == GROUP_MQTT || message.startsWith(String(GROUP_MQTT) + " ")) {
-        return processMqttSubcommand(message, source, senderDeviceId);
+        return processMqttSubcommand(message);
     }
     if (message == GROUP_BT || message.startsWith(String(GROUP_BT) + " ")) {
-        return processBtSubcommand(message, source, senderDeviceId);
+        return processBtSubcommand(message);
     }
     if (message == GROUP_DBG || message.startsWith(String(GROUP_DBG) + " ")) {
-        return processDbgSubcommand(message, source, senderDeviceId);
+        return processDbgSubcommand(message);
     }
     return false;
 }
@@ -307,7 +292,7 @@ bool processWifiSubcommand(const String& message, MessageSource source, byte sen
         // come up on a known network without reflashing. The current STA connection survives this call — only future boots are affected.
         ESP_LOGI(TAG_MM, "Command [%s] — clearing NVS WiFi list", CMD_WIFI_CLEAN);
         wifiClearNvs();
-        printInfoLine("NVS WiFi cleared - reboot to re-seed");
+        printCmdInfo("NVS WiFi cleared - reboot to re-seed");
         return true;
     }
     if (message == CMD_WIFI_LIST) {
@@ -320,11 +305,11 @@ bool processWifiSubcommand(const String& message, MessageSource source, byte sen
         ssid.trim();
         ESP_LOGI(TAG_MM, "Command [%s] — forgetting SSID [%s]", CMD_WIFI_FORGET, ssid.c_str());
         if (ssid.length() == 0) {
-            printInfoLine("Usage: /wifi forget <ssid>", CONVO_ERROR_COLOR);
+            printCmdError("Usage: /wifi forget <ssid>");
         } else if (wifiForgetFromNvs(ssid.c_str())) {
-            printInfoLine(String("Forgot: ") + ssid);
+            printCmdInfo(String("Forgot: ") + ssid);
         } else {
-            printInfoLine(String("Not found: ") + ssid, CONVO_ERROR_COLOR);
+            printCmdError(String("Not found: ") + ssid);
         }
         return true;
     }
@@ -353,14 +338,12 @@ bool processWifiSubcommand(const String& message, MessageSource source, byte sen
     }
     // Unknown subcommand — show what's available so the user can correct.
     ESP_LOGW(TAG_MM, "Unknown /wifi subcommand: [%s]", message.c_str());
-    printInfoLine("Unknown /wifi cmd", CONVO_ERROR_COLOR);
+    printCmdError("Unknown /wifi cmd");
     printHelpWifi();
     return true;
 }
 
-bool processMqttSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
-    (void)source;            // unused for now — kept in the signature for symmetry with /wifi pub
-    (void)senderDeviceId;    // unused for now — kept in the signature for symmetry with /wifi pub
+bool processMqttSubcommand(const String& message) {
     if (message == GROUP_MQTT) {
         printHelpMqtt();
         return true;
@@ -371,14 +354,12 @@ bool processMqttSubcommand(const String& message, MessageSource source, byte sen
         return true;
     }
     ESP_LOGW(TAG_MM, "Unknown /mqtt subcommand: [%s]", message.c_str());
-    printInfoLine("Unknown /mqtt cmd", CONVO_ERROR_COLOR);
+    printCmdError("Unknown /mqtt cmd");
     printHelpMqtt();
     return true;
 }
 
-bool processBtSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
-    (void)source;            // unused for now — kept in the signature for symmetry with /wifi pub
-    (void)senderDeviceId;    // unused for now — kept in the signature for symmetry with /wifi pub
+bool processBtSubcommand(const String& message) {
     if (message == GROUP_BT) {
         printHelpBt();
         return true;
@@ -388,18 +369,16 @@ bool processBtSubcommand(const String& message, MessageSource source, byte sende
         // log under TAG_BTKB for traceability.
         ESP_LOGI(TAG_MM, "Command [%s] — clearing all BLE bonds", CMD_BT_CLEAN);
         g_kb.clearAllExistingBonds();
-        printInfoLine("NVS BT bonds cleared");
+        printCmdInfo("NVS BT bonds cleared");
         return true;
     }
     ESP_LOGW(TAG_MM, "Unknown /bt subcommand: [%s]", message.c_str());
-    printInfoLine("Unknown /bt cmd", CONVO_ERROR_COLOR);
+    printCmdError("Unknown /bt cmd");
     printHelpBt();
     return true;
 }
 
-bool processDbgSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
-    (void)source;            // unused for now — kept in the signature for symmetry with /wifi pub
-    (void)senderDeviceId;    // unused for now — kept in the signature for symmetry with /wifi pub
+bool processDbgSubcommand(const String& message) {
     if (message == GROUP_DBG) {
         printHelpDbg();
         return true;
@@ -422,7 +401,7 @@ bool processDbgSubcommand(const String& message, MessageSource source, byte send
         return true;
     }
     ESP_LOGW(TAG_MM, "Unknown /dbg subcommand: [%s]", message.c_str());
-    printInfoLine("Unknown /dbg cmd", CONVO_ERROR_COLOR);
+    printCmdError("Unknown /dbg cmd");
     printHelpDbg();
     return true;
 }

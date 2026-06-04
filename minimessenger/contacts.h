@@ -1,8 +1,7 @@
 #pragma once
 
-#include <Arduino.h>
 #include "symbols.h"  // DisplayType
-
+#include <Arduino.h>
 
 // === Per-device identity record ===
 //
@@ -29,7 +28,8 @@ struct DeviceDataEntry {
     // device's g_deviceData.name() (boot log, MQTT client_id, WiFi hostname, info-screen "ID:" row); peers read entry->pseudo directly, never
     // name(), so the shared-buffer caveat is harmless.
     const char* name() const {
-        static char buf[12];  // <namePrefix=3..5>_<id=3> + '\0' — large enough for "PROTO_999\0"
+        static char buf[12];  // <namePrefix=3..5>_<id=3> + '\0' — large enough for
+                              // "PROTO_999\0"
         snprintf(buf, sizeof(buf), "%s_%03d", namePrefix, deviceId);
         return buf;
     }
@@ -40,11 +40,9 @@ struct DeviceDataEntry {
     static const DeviceDataEntry* findById(byte deviceId);
 };
 
-
 // Materialised by personal-data.h, included from wifi.ino.
 extern const DeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[];
 extern const size_t          COMPILED_DEVICE_DATA_ENTRIES_COUNT;
-
 
 // === Contact liveness transition ===
 //

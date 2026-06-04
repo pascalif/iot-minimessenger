@@ -9,7 +9,6 @@
 
 #include <Arduino.h>
 
-
 // Convert in-place from UTF-8 to Latin-1 (ISO-8859-1). Two-byte UTF-8 sequences `0xC2 0xXX` (control / Latin-1 supplement) and `0xC3 0xXX`
 // (most accented letters) collapse to a single Latin-1 byte. Codepoints outside U+0000..U+00FF are replaced with '?'. Returns the new length.
 size_t utf8ToLatin1(char* s) {

@@ -33,8 +33,10 @@
  * KEY_ERR_OVF in all slots to indicate this condition.
  */
 
-#define KEY_NONE    0x00  // No key pressed
-#define KEY_ERR_OVF 0x01  //  Keyboard Error Roll Over - used for all slots if too many keys are pressed ("Phantom key")
+#define KEY_NONE 0x00  // No key pressed
+#define KEY_ERR_OVF                                                                                                                                            \
+    0x01  //  Keyboard Error Roll Over - used for all slots if too many keys are                                                                               \
+          //  pressed ("Phantom key")
 // 0x02 //  Keyboard POST Fail
 // 0x03 //  Keyboard Error Undefined
 #define KEY_A 0x04  // Keyboard a and A
@@ -283,7 +285,6 @@
 #define KEY_MEDIA_COFFEE       0xf9
 #define KEY_MEDIA_REFRESH      0xfa
 #define KEY_MEDIA_CALC         0xfb
-
 
 // Pour mistral
 #define KEY_LEFT_BRACE  0x2f  // Keyboard [ and {

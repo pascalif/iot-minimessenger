@@ -17,15 +17,14 @@
 // Exposed to other files purely via the accessor contactGetActiveCount() (read by bars.ino) and the entry point onReceivedContactOnline()
 // (called by mqtt.ino's incoming-message dispatcher via auto-prototype). No contacts.h — same "light case" pattern as wifi.h.
 
+#include "contacts.h"  // DeviceDataEntry + DeviceDataEntry::findByMac / ::findById — résolution pseudo / namePrefix / screen du contact distant.
+#include "mm_log.h"    // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
 #include "mqtt.h"
-#include "mm_log.h"         // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
-#include "contacts.h"       // DeviceDataEntry + DeviceDataEntry::findByMac / ::findById — résolution pseudo / namePrefix / screen du contact distant.
 #include "personal-data.h"  // matérialise les tableaux COMPILED_DEVICE_DATA_ENTRIES + COMPILED_WIFI_DEFAULTS — DeviceDataEntry (contacts.h) et
-                            // CompiledWifiEntry (wifi.h) sont déjà en scope via les includes de minimessenger.ino concatenés en tête de TU.
+// CompiledWifiEntry (wifi.h) sont déjà en scope via les includes de minimessenger.ino concatenés en tête de TU.
 
 // Device-table count derived ici — premier point de la TU où le tableau a sa pleine définition. wifi.ino se contente de définir le count wifi.
 const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_ENTRIES) / sizeof(COMPILED_DEVICE_DATA_ENTRIES[0]);
-
 
 #define MAX_CONTACTS 5
 
@@ -33,7 +32,6 @@ const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_EN
 // (network jitter + a bit of slack for the emitter's own scheduling). Tunable independently of MQTT's TCP keepalive — this one is purely about
 // presence display, not transport health.
 #define CONTACT_TIMEOUT_MS (MQTT_KEEPALIVE_INTERVAL_MS + 5000)
-
 
 // ================================================================================
 // DeviceDataEntry — static find* method bodies
@@ -61,7 +59,6 @@ inline const DeviceDataEntry* DeviceDataEntry::findById(byte deviceId) {
     return nullptr;
 }
 
-
 // ================================================================================
 // Dynamic peer table
 // ================================================================================
@@ -75,7 +72,6 @@ struct ContactLastLiveData {
 };
 
 static ContactLastLiveData g_contacts[MAX_CONTACTS];
-
 
 // Number of slots currently occupied. Read every ~500 ms by redrawStatusBar() in bars.ino to pick between 0/1/2-icon layouts on the top bar, and
 // also used internally by contactsApplyState() / the +/-/timeout log lines to surface the post-change count.
@@ -118,13 +114,11 @@ static void announceContactTransition(byte deviceId, ContactLiveness liveness) {
     label += alive ? " connected" : " disconnected";
 
     if (alive) {
-    printVersatileConversationInfo(label);
-    }
-    else {
-    printVersatileConversationError(label);
+        printVersatileConversationInfo(label);
+    } else {
+        printVersatileConversationError(label);
     }
 }
-
 
 // Reset the whole table to "empty" at boot. Called once from setup(). We can't rely on zero-init giving us DEVICE_ID_UNSET (which is 0xFF, not 0), so
 // the explicit pass is mandatory.

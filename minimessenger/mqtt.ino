@@ -15,10 +15,10 @@
 // Broker credentials (server, port, user, password) + TLS root CA are no longer here either — they're grouped in g_mqttServerInfo (declared in
 // mqtt.h, defined in personal-data.h). The connect() call below reads them through that struct.
 
-#include "mqtt.h"
-#include "mm_log.h"
-#include "symbols.h"
 #include "contacts.h"  // ContactLiveness enum for the onReceivedContactOnline() signature.
+#include "mm_log.h"
+#include "mqtt.h"
+#include "symbols.h"
 #include <WiFiClientSecure.h>
 
 // WiFiClientSecure instance lives in minimessenger.ino (declared before mqtt.ino in the concatenation order, so the constructor below sees it). The
@@ -36,7 +36,6 @@ extern void  routeMessage(const String& message, MessageSource source, byte send
 extern void  onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 extern char* getCurrentDateTime();
 
-
 // ================================================================================
 // Topic strings
 // ================================================================================
@@ -46,11 +45,11 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // single global because the topic varies per publisher; the dispatch / subscribe paths use MQTT_LIVENESS_TOPIC_PREFIX / MQTT_LIVENESS_TOPIC_WILDCARD
 // respectively. The Will targets this same per-device topic with payload MQTTLiveness::DEAD, retained=true — see mqttReconnectAttempt() below.
 
-
 // ================================================================================
 // Runtime globals
 // ================================================================================
-PubSubClient  g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
+PubSubClient g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is
+                                          // needed for HiveMQ connection
 int           g_mqttConnectionId                 = -1;
 unsigned int  g_mqttOutputMsgNextId              = 0;
 bool          g_mqttWasConnected                 = false;
@@ -62,7 +61,6 @@ uint8_t       g_mqttReconnectAttempts            = 0;
 char g_mqttOutgoingMsg[MSG_BUFFER_SIZE];
 
 char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
-
 
 // ================================================================================
 // Liveness subtype wire mapping
@@ -79,7 +77,9 @@ const char* mqttLivenessAsString(MQTTLiveness subtype) {
     case MQTTLiveness::DEAD:
         return "DEAD";
     }
-    return "????";  // unreachable in practice — all enum values handled above. Placeholder kept so the compiler doesn't warn about missing return.
+    return "????";  // unreachable in practice — all enum values handled above.
+                    // Placeholder kept so the compiler doesn't warn about missing
+                    // return.
 }
 
 bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
@@ -110,7 +110,6 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
     return false;
 }
 
-
 // ================================================================================
 // MQTT — connect / publish / receive
 // ================================================================================
@@ -123,7 +122,9 @@ void setupMQTT() {
         g_wifiClient.setCACert(g_mqttServerInfo.rootCA);
     } else {
         g_wifiClient.setInsecure();
-        ESP_LOGW(TAG_MQTT, "No root CA configured (g_mqttServerInfo.rootCA == nullptr) — falling back to setInsecure() (no server-cert verification)");
+        ESP_LOGW(TAG_MQTT,
+                 "No root CA configured (g_mqttServerInfo.rootCA == nullptr) — "
+                 "falling back to setInsecure() (no server-cert verification)");
     }
     g_mqttClient.setServer(g_mqttServerInfo.server, g_mqttServerInfo.port);
     g_mqttClient.setCallback(onMqttIncomingMessage);
@@ -155,11 +156,15 @@ bool mqttReconnectAttempt() {
     // changed, and so the retry loop doesn't keep producing identical opaque failures every interval. Failure counter still bumps so the next
     // attempt waits with the exponential backoff.
     if (largestBlock < (uint32_t)MQTT_TLS_MIN_FREE_HEAP_B) {
-        ESP_LOGE(TAG_MQTT, "Insufficient heap for TLS handshake: largest block=%u < threshold=%u — skipping connect", largestBlock, MQTT_TLS_MIN_FREE_HEAP_B);
+        ESP_LOGE(TAG_MQTT,
+                 "Insufficient heap for TLS handshake: largest block=%u < "
+                 "threshold=%u — skipping connect",
+                 largestBlock,
+                 MQTT_TLS_MIN_FREE_HEAP_B);
         if (g_inConversationMode) {
             char banner[64];
             snprintf(banner, sizeof(banner), "Low heap %u B - MQTT skipped", (unsigned)largestBlock);
-            printInfoLine(banner, CONVO_ERROR_COLOR);
+            printCmdError(banner);
         }
         refreshInfoScreenIfShown();
         return false;
@@ -174,10 +179,12 @@ bool mqttReconnectAttempt() {
     // Same threshold (1.7e9 ≈ Nov 2023) as setupNTP() uses to decide that the SNTP burst has succeeded.
     const time_t nowEpoch = time(nullptr);
     if (nowEpoch < 1'700'000'000L) {
-        ESP_LOGI(TAG_MQTT, "Postponing connect: NTP not synced yet (time=%ld). Retrying on the next reconnect gate.", (long)nowEpoch);
+        ESP_LOGI(TAG_MQTT,
+                 "Postponing connect: NTP not synced yet (time=%ld). Retrying on "
+                 "the next reconnect gate.",
+                 (long)nowEpoch);
         return false;
     }
-
 
     // Will = "DEAD" retained on admin/liveness/<myId>. When the broker detects our disconnect, it publishes this Will payload AND retains it,
     // overwriting whatever LIVE/BOOT/RECO retained we had pushed earlier. Any future subscriber to admin/liveness/+ then sees us as DEAD immediately.
@@ -215,9 +222,9 @@ bool mqttReconnectAttempt() {
         // publisher). Carries BOOT/RECO/LIVE/DEAD; the Will lives on this same topic family, so a single subscribe covers both "alive" and "dead" events
         g_mqttClient.subscribe(MQTT_LIVENESS_TOPIC_WILDCARD, MQTT_QOS_0);
 
-
         g_mqttWasConnected      = true;
-        g_mqttReconnectAttempts = 0;  // success — reset the backoff so a future outage starts at BASE_MS again instead of inheriting the previous wait.
+        g_mqttReconnectAttempts = 0;  // success — reset the backoff so a future outage starts at BASE_MS
+                                      // again instead of inheriting the previous wait.
         g_mqttConnectionId++;
         ledSetState(LED_STATUS, LED_STATE_ON);
 
@@ -230,8 +237,27 @@ bool mqttReconnectAttempt() {
 
         return true;
     } else {
-        // rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
-        // rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
+        // Codes utiles renvoyés par g_mqttClient.state() après un connect() raté
+        // (source : PubSubClient.h, #define MQTT_*) :
+        //   rc=-4  MQTT_CONNECTION_TIMEOUT    — pas de réponse du broker dans les
+        //   MQTT_SOCKET_TIMEOUT (15 s par défaut).
+        //                                       En pratique sur ce projet :
+        //                                       handshake mbedtls qui patine (heap
+        //                                       fragmenté → cf. pré-check
+        //                                       MQTT_TLS_MIN_FREE_HEAP_B
+        //                                       au-dessus), ou tentative de
+        //                                       connexion sur 8883 sans TLS.
+        //   rc=-3  MQTT_CONNECTION_LOST       — TCP RST / WiFi tombé pendant ou
+        //   juste après le handshake. rc=-2  MQTT_CONNECT_FAILED        — pas de
+        //   TCP du tout : DNS qui échoue, port fermé, broker URL erronée dans
+        //   personal-data.h. rc=-1  MQTT_DISCONNECTED          — on a appelé
+        //   disconnect() nous-mêmes (cf. /mqtt drop). rc=4
+        //   MQTT_CONNECT_BAD_CREDENTIALS — CONNACK du broker : user/password
+        //   incorrect dans g_mqttServerInfo (personal-data.h). rc=5
+        //   MQTT_CONNECT_UNAUTHORIZED   — CONNACK : creds OK mais ACL refuse cette
+        //   opération (ex. topic non autorisé pour ce user).
+        // Note : ne pas confondre rc=-4 (timeout transport) et rc=4 (broker
+        // refusant les creds) — le signe compte.
         if (g_mqttReconnectAttempts < UINT8_MAX) {
             g_mqttReconnectAttempts++;
         }
@@ -250,7 +276,9 @@ bool mqttReconnectAttempt() {
 // our disconnect. Passing DEAD here would be a programming error and is logged + dropped rather than published.
 void mqttSendLiveness(MQTTLiveness subtype) {
     if (subtype == MQTTLiveness::DEAD) {
-        ESP_LOGW(TAG_MQTT, "mqttSendLiveness: DEAD is reserved for the Will, not a self-publish — skipping");
+        ESP_LOGW(TAG_MQTT,
+                 "mqttSendLiveness: DEAD is reserved for the Will, not a "
+                 "self-publish — skipping");
         return;
     }
 
@@ -268,7 +296,6 @@ void mqttSendLiveness(MQTTLiveness subtype) {
         ESP_LOGE(TAG_MQTT, "Liveness publish FAILED for [%s] (state=%d size=%u) : [%s]", topic, g_mqttClient.state(), (unsigned)strlen(payload), payload);
     }
 }
-
 
 // Returns true if the publish was accepted by PubSubClient (sent on the wire — no broker ACK at QoS 0 so this is best-effort). Callers that need
 // to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
@@ -310,7 +337,6 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
     return ok;
 }
 
-
 // Parses the leading positive integer in `str` and returns true iff it is a valid deviceId in [1..254]. 0 and 255 are reserved (DEVICE_ID_UNSET).
 // Used to extract the id from the admin/liveness/<id> topic suffix (after the prefix). Anything malformed (empty, non-numeric, out of range, or
 // followed by an unexpected non-separator character) is rejected so a peer cannot spoof "device 0" via a crafted topic.
@@ -335,7 +361,6 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
     return true;
 }
 
-
 // PubSubClient subscribe callback. Two families of topics:
 //   - admin/liveness/<id>     drives the friend-presence LEDs / contact silhouettes (BOOT/RECO/LIVE = alive, DEAD = offline).
 //   - msg/broadcast | msg/unicast/<me>     chat traffic, funneled through routeMessage() for wake-on-input + /cmd interception + display.
@@ -350,7 +375,6 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
 // On subscribe we receive it, compare the embedded epoch against our local time(nullptr), and ignore it if older than the keepalive window + 5 s of
 // margin. The check is gated by "our own clock is plausibly synced" (time(nullptr) > 1.7e9 — same threshold setupNTP uses) — early-boot devices
 // without NTP yet can't compare, so they fall back to trusting the LIVE rather than locking out every peer.
-
 
 // Trailer parser for chat payloads on msg/broadcast and msg/unicast/<id>. mqttPushFormattedMessage() appends "<userMsg> ### ts:<…> deviceId:<n>
 // msgId:<n>" to every outgoing chat — we use that trailer here for self-echo filtering AND for author identification.
@@ -372,7 +396,8 @@ static byte extractSenderAndStripTrailer(String& message) {
     }
     const int devIdx = message.indexOf("deviceId:", sentinelIdx);
     if (devIdx < 0) {
-        return 0;  // sentinelle isolée — probablement du texte utilisateur, on n'altère pas le payload
+        return 0;  // sentinelle isolée — probablement du texte utilisateur, on
+                   // n'altère pas le payload
     }
 
     // À partir d'ici on est confiants que c'est notre format de trailer : on strip TOUJOURS, même si le deviceId est non-parseable / hors plage.
@@ -384,7 +409,6 @@ static byte extractSenderAndStripTrailer(String& message) {
     message = message.substring(0, sentinelIdx);
     return senderId;
 }
-
 
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
     String message;
@@ -438,7 +462,12 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         if (nowEpoch > 1'700'000'000L) {
             long age = (long)nowEpoch - payloadEpoch;
             if (age > (long)(MQTT_KEEPALIVE_INTERVAL_MS / 1000) + 5) {
-                ESP_LOGD(TAG_MQTT, "Ignoring stale liveness retain for device %d (age %lds, payload=[%s])", remoteDeviceId, age, msgC);
+                ESP_LOGD(TAG_MQTT,
+                         "Ignoring stale liveness retain for device %d (age %lds, "
+                         "payload=[%s])",
+                         remoteDeviceId,
+                         age,
+                         msgC);
                 return;
             }
         }
@@ -468,7 +497,6 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
     }
 }
-
 
 // TLS root CA has moved out of this file — it now lives in personal-data.h as the HIVEMQ_ROOT_CA static array, referenced by g_mqttServerInfo.rootCA.
 // setup() in minimessenger.ino reads it via that struct and wires it into g_wifiClient.setCACert() (or falls back to setInsecure() if rootCA is null).

@@ -1,10 +1,8 @@
 #include "mm_blekb.h"
 #include "mm_log.h"
 
-
 // This one cannot be a static class member for some C++ reason
 static mm_btkb_on_keystroke_callback g_clientOnKeystrokeCallback = nullptr;
-
 
 bool MiniMessengerBLEKeyboardInterface::isFullyConnected() {
     return m_connectionDone;
@@ -116,7 +114,6 @@ void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanR
     }
 }
 
-
 // ============================================================================
 // Client callbacks (NimBLEClientCallbacks)
 // ============================================================================
@@ -141,13 +138,11 @@ void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(NimBLEConnInfo&
     }
 }
 
-
 // ============================================================================
 
 void MiniMessengerBLEKeyboardInterface::bleNotifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
     g_clientOnKeystrokeCallback(pData, length);
 }
-
 
 bool MiniMessengerBLEKeyboardInterface::setup(bool                           clearExistingBonds,
                                               mm_btkb_on_connection_callback onConnectionCallback,
@@ -176,7 +171,8 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
     const int  bondedCount     = NimBLEDevice::getNumBonds();
     const bool hasExistingBond = (bondedCount > 0);
     ESP_LOGI(TAG_BTKB,
-             "Starting scan for any device advertising HID service 0x%04X (activeScan=%d, bondedCount=%d)",
+             "Starting scan for any device advertising HID service 0x%04X "
+             "(activeScan=%d, bondedCount=%d)",
              BT_SERVICE_HID_1812,
              hasExistingBond ? 0 : 1,
              bondedCount);
@@ -203,7 +199,6 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
 
     return true;
 }
-
 
 void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
     if (doConnect) {

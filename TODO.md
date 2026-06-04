@@ -12,22 +12,7 @@ Règles:
 - LED_STATUS
 
 
-Tu dis
-"Le rc=-4 est MQTT_CONNECTION_TIMEOUT côté PubSubClient"
 
-ce qui n'est pas comme le commentaire
-// rc=-4 : MQTT_CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD (or not using WiFiClientSecure)
-// rc=-2 : MQTT_CONNECTION_REFUSED_SERVER_UNAVAILABLE
-
-Quelle est la bonne version. Complete mon commentaire dans le code avec des rc qui sont possibles et utiles (pas toute la liste) et leur fichier source.
-
-
-
-
-================
-
-
-remplacer les addConversationBlock pour les erreurs actelles (mais centrées :( )
 
 ================
 

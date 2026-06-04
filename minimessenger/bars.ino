@@ -11,9 +11,7 @@
 // would be invisible to any earlier-concatenated file. Keeping the call sites of every color macro inside this same TU section means we can
 // rename / retune palette entries with a single grep here. Same pattern as commands.ino (CMD_* constants + dispatcher together).
 
-
 #define RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
-
 
 // === Color palette ==============================================================
 
@@ -21,7 +19,7 @@
 #define STATUS_BAR_SEPARATOR_COLOR 0xDEFB
 
 // Background of the whole status-bar strip — also used as the wipe color before each repaint.
-#define STATUS_BAR_BG_COLOR RGB565(0x30, 0x15, 0x10)  //ST77XX_BLACK
+#define STATUS_BAR_BG_COLOR RGB565(0x30, 0x15, 0x10)  // ST77XX_BLACK
 
 // Per-indicator colors on the top status bar. ICON_BT_COLOR is reused by the footer's "<no keyboard>" placeholder so the BT state stays
 // visually coherent across both bars (same hue when the keyboard is absent, regardless of which bar is showing it).
@@ -44,7 +42,6 @@
 // Yellow caret bar drawn at the insertion point, growing leftward as the user types.
 #define KB_BAR_CURSOR_COLOR ST77XX_YELLOW
 
-
 // === Last-drawn-state cache =====================================================
 // Used by redrawStatusBar() to skip a repaint when no indicator's state changed. Lives here because nothing outside redrawStatusBar reads or
 // writes these — they are entirely internal to the bar's repaint debounce. g_statusBarDirty (defined in minimessenger.ino) is the external
@@ -55,7 +52,6 @@ static bool g_lastDrawnMqtt = false;
 static bool g_lastDrawnCaps = false;
 // Sentinel -1 forces a paint on the very first redraw — any real count from contactGetActiveCount() (0..MAX_CONTACTS) breaks the cache match.
 static int g_lastDrawnContactCount = -1;
-
 
 // === Status bar (TFA) ===========================================================
 // Three indicators on the left, one chip on the right. Filled = ON, outline only = OFF.
@@ -116,7 +112,7 @@ void redrawStatusBar() {
     bool wifi         = (WiFi.status() == WL_CONNECTED);
     bool mqtt         = g_mqttClient.connected();
     bool caps         = kbIsCapsLockOn;
-    int  contactCount = contactGetActiveCount();  // 0 = aucun contact en ligne, 1 = un seul, 2+ = au moins deux (capped à l'affichage 2-icônes).
+    int  contactCount = contactGetActiveCount();  // 0 = aucun contact en ligne, 1 = un seul, 2+ = au moins deux (capped à l'affichage).
 
     if (!g_statusBarDirty && bt == g_lastDrawnBt && wifi == g_lastDrawnWifi && mqtt == g_lastDrawnMqtt && caps == g_lastDrawnCaps &&
         contactCount == g_lastDrawnContactCount) {
@@ -153,7 +149,6 @@ void redrawStatusBar() {
     g_lastDrawnContactCount = contactCount;
     g_statusBarDirty        = false;
 }
-
 
 // === Input feedback footer (BFA) ================================================
 // Shows the current `g_currentMsgFromKeyboard` being typed via the BT keyboard, with the yellow cursor bar tracking g_msgCursorIdx (movable

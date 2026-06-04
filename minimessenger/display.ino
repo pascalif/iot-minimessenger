@@ -9,17 +9,36 @@
 // g_inConversationMode, g_lastShownTsEpoch, g_lastMsgSenderId, g_mqttClient, g_kb, …), and the HW-scroll primitives (hwScrollSetupArea(),
 // hwScrollTo(), hwScrollReset()) are visible here without forward decls.
 //
-// What stays in minimessenger.ino on purpose:
-//   - setupDisplay() / setDisplayPowerState() / updateDisplayPowerState() — boot-time hardware init and idle-timer dim/off state machine,
-//     orchestration code that doesn't draw glyphs.
-//   - the HW-scroll primitives (hwScrollSetupArea / hwScrollTo / hwScrollReset) — low-level ST7789 register pokes used from many call sites
-//     including setupDisplay and clearConversationHistory; live next to them in minimessenger.ino.
-//   - clearConversationHistory() / goAndResetConversationScreen() / returnToConversationsScreen() / refreshInfoScreenIfShown() — screen-state
-//     transitions, not glyph drawing.
-//
 // Bar drawing (top status bar + bottom input footer) is in bars.ino, not here. Portal-mode instructions (drawPortalInstructions, called from
 // showUpdatedInfoScreen below) live in wifi.ino since they're WiFi-state-specific.
 
+// ================================================================================
+// Constants
+// ================================================================================
+
+#define INFO_LINE_RIGHT_COL_X 90
+
+#define CONVO_TS_COLOR         ST77XX_CYAN
+#define CONVO_TS_FONT_SIZE     1
+#define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
+
+#define CONVO_MSG_FONT_SIZE      1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
+#define CONVO_MSG_MARGIN_BOTTOM  7  //
+#define CONVO_HELP_MARGIN_BOTTOM 4  //
+
+#define CONVO_MYSELF_COLOR ST77XX_WHITE
+#define CONVO_OTHERS_COLOR ST77XX_YELLOW
+
+#define CONVO_INFO_COLOR  ST77XX_GREEN
+#define CONVO_ERROR_COLOR ST77XX_RED
+
+// Hot pink (RGB565 ≈ #FF69B4). Used by command-output listings (help / cmd echoes) to make them visually distinct from regular messages and from info/error notices.
+#define CONVO_CMD_COLOR 0xFB56
+
+
+// ================================================================================
+// Code
+// ================================================================================
 
 void showSplashScreen() {
     // Show image buffer on the display hardware.
@@ -56,7 +75,6 @@ void showSplashScreen() {
         ESP_LOGW(TAG_MM, "Display: no splash screen (display not configured)");
     }
 }
-
 
 // Replay every entry of the ring buffer through the same HW-scroll draw
 // algorithm as addConversationBlock. After this:
@@ -123,22 +141,14 @@ void redrawAllConversations() {
     }
 }
 
-// Drop a single line into the conversation scroll area, with optional two-column layout for command listings.
-//
-// Two overloads share the same impl below; the single-arg one is a thin forwarder that passes an empty `right`. Behavior:
-//   - `right` empty  → just `left`, left-aligned at x=2. Used for banners ("Commands:"), status messages ("Forgot: X"), errors.
+// Internal one-line painter for the conversation scroll area. Not exposed in minimessenger.ino on purpose — outside callers go through the
+// printCmdInfo / printCmdError / printInfoLineNumber wrappers below.
 //   - `right` filled → `left` at x=2, `right` at x=INFO_LINE_RIGHT_COL_X. Used for /help listings (cmd name + description on the same row).
 //
-// Overload disambiguation: the 1-string version takes a uint16_t color as 2nd arg; the 2-string takes a String. A literal "foo" as 2nd arg
-// resolves to String (direct match), beating the uint16_t version which would require a const-char* → uint16_t conversion that doesn't exist.
-// A numeric color as 2nd arg resolves to uint16_t (direct match) over String (would need a user-defined conversion). No ambiguity in practice.
-//
-// HW-scroll primitives (g_drawY / g_scrollY / hwScrollTo) make successive calls accumulate visually like any other conversation content,
-// and hwScrollReset() drops the lot during a screen switch.
-//
-// Defaults: pink CMD color + CONVO_CMD_FONT; both overridable.
+// HW-scroll primitives (g_drawY / g_scrollY / hwScrollTo) make successive calls accumulate visually like any other conversation content, and
+// hwScrollReset() drops the lot during a screen switch.
 
-void printInfoLine(const String& left, const String& right, uint16_t color, const GFXfont* font) {
+void printLineLowLevel(const String& left, const String& right, uint16_t color, const GFXfont* font = &CONVO_CMD_FONT) {
     if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
@@ -207,25 +217,40 @@ void printInfoLine(const String& left, const String& right, uint16_t color, cons
     hwScrollTo(g_scrollY);
 }
 
-void printInfoLine(const String& msg, uint16_t color, const GFXfont* font) {
-    printInfoLine(msg, String(), color, font);
+void printCmdInfo(const String& message) {
+    printLineLowLevel(message, String(), CONVO_CMD_COLOR);
+}
+void printCmdInfo(const String& left, const String& right) {
+    printLineLowLevel(left, right, CONVO_CMD_COLOR);
 }
 
-void printInfoLineNumber(const String& left, uint32_t right, uint16_t color, const GFXfont* font) {
-    printInfoLine(left, String(right), color, font);
+void printCmdError(const String& message) {
+    printLineLowLevel(message, String(), CONVO_ERROR_COLOR);
 }
 
-// TODO pourquou pas const String& msg
-void printVersatileConversationInfo(String msg) {
-    addConversationBlock(String(), msg, CONVO_INFO_COLOR, CENTER);
+void printVersatileConversationInfo(const String& message) {
+    addConversationBlock(String(), message, CONVO_INFO_COLOR, CENTER);
 }
 
-void printVersatileConversationError(String msg) {
-    addConversationBlock(String(), msg, CONVO_ERROR_COLOR, CENTER);
+void printVersatileConversationError(const String& message) {
+    addConversationBlock(String(), message, CONVO_ERROR_COLOR, CENTER);
 }
 
+void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId) {
+            addConversationBlock(ts, message, CONVO_OTHERS_COLOR, LEFT, senderDeviceId);
+}
 
-void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align, byte senderDeviceId) {
+void addConversationMeOKBlock(String ts, const String& message) {
+            addConversationBlock(ts, message, CONVO_MYSELF_COLOR, RIGHT, g_deviceData.deviceId);
+}
+
+void addConversationMeErrorBlock(String ts, const String& message) {
+            addConversationBlock(ts, "[ERROR] " + message, CONVO_ERROR_COLOR, RIGHT, g_deviceData.deviceId);
+}
+
+// `ts` stays by value because it's mutated locally (cleared on cluster-suppress, prefixed with the sender's pseudo); `msg` is read-only — just
+// copied into msgBuf via strncpy — so const-ref to avoid the per-call heap alloc the by-value copy would trigger on ESP32's String.
+void addConversationBlock(String ts, const String& msg, uint16_t msgColor, Align align, byte senderDeviceId) {
     char msgBuf[CONVO_MSG_MAX_LEN];
     strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
     msgBuf[sizeof(msgBuf) - 1] = '\0';
@@ -241,7 +266,7 @@ void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align,
     if (!ts.isEmpty()) {
         const time_t now              = time(nullptr);
         const bool   sameSenderAsLast = (senderDeviceId == g_lastMsgSenderId);
-        const bool   insideTimeWindow     = (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
+        const bool   insideTimeWindow = (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
 
         if (sameSenderAsLast && insideTimeWindow) {
             ts = "";  // suppressed; the empty-ts path below skips the ts row entirely
@@ -277,6 +302,7 @@ void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align,
     /*
 1. Pourquoi getTextBounds retourne des valeurs de y négatives avec certaines polices comme FreeSans9pt8b ?
 Dans les bibliothèques graphiques comme Adafruit_GFX, le système de coordonnées pour le texte est basé sur le point de base (baseline) du texte. Voici ce qui se passe :
+
 
 Origine du texte :
 Le point (0, 0) pour le texte est généralement placé sur la ligne de base (baseline) du texte, c'est-à-dire la ligne sur laquelle reposent les lettres (sans les descendantes comme "j", "p", "g", etc.).
@@ -316,7 +342,6 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     g_disp->getTextBounds(msgBuf, 0, 0, &msgBox[BOX_X], &msgBox[BOX_Y], (uint16_t*)&msgBox[BOX_W], (uint16_t*)&msgBox[BOX_H]);
     msgBlockHWithMargin = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
 
-
     uint16_t H = tsBlockHWithMargin + msgBlockHWithMargin;
 
     // Compute X alignment in screen-space (g_disp->width() reflects rotation 0
@@ -337,7 +362,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     }
     int writeIdx    = (g_lineHead + g_lineCount) % MAX_LINES;
     lines[writeIdx] = TextLine(ts,
-                               CONV0_TS_COLOR,
+                               CONVO_TS_COLOR,
                                NULL,
                                CONVO_TS_FONT_SIZE,
                                tsBlockHWithMargin,
@@ -383,7 +408,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     if (!ts.isEmpty()) {
         g_disp->setFont(NULL);
         g_disp->setTextSize(CONVO_TS_FONT_SIZE);
-        g_disp->setTextColor(CONV0_TS_COLOR);
+        g_disp->setTextColor(CONVO_TS_COLOR);
         g_disp->setCursor(tsX - tsBox[BOX_X], fbY - tsBox[BOX_Y]);
         g_disp->print(ts);
         fbY += tsBlockHWithMargin;
@@ -399,7 +424,6 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
     hwScrollTo(g_scrollY);
 }
-
 
 // Print `value` at (x, y) wrapping to a second line at (x, y + lineH) if it doesn't fit in `availableWidth`. Both lines start at the same x.
 // Returns the total vertical pixels consumed (lineH for a single line, 2*lineH if wrapped).
@@ -462,14 +486,14 @@ void showUpdatedInfoScreen() {
     // shows scrambled data after /status: (1) called multiple times in rapid succession (double-render race), (2) called once with wrong data
     // (state-read bug), (3) called once with correct data (purely a rendering / VRAM-residue issue on the ST7789 side).
     ESP_LOGI(TAG_MM,
-             "showUpdatedInfoScreen(): mac=%s ssid=%s ip=%s mqtt=%d ble=%d wifiState=%d",
+             "showUpdatedInfoScreen(): mac=%s ssid=%s ip=%s mqtt=%d ble=%d "
+             "wifiState=%d",
              mac.c_str(),
              WiFi.SSID().c_str(),
              WiFi.localIP().toString().c_str(),
              (int)g_mqttClient.connected(),
              (int)g_kb.isFullyConnected(),
              (int)wifiGetState());
-
 
     Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
 
