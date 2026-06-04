@@ -285,7 +285,7 @@ static void wifiTransitionTo(WifiState newState) {
 
     case WifiState::LOST:
         if (g_wifiWasConnected) {
-            addConversationBlock("", "WiFi lost - Retrying...", CONVO_ERROR_COLOR, CENTER);
+            printVersatileConversationError("WiFi lost - Retrying...");
         }
         g_wifiWasConnected = false;  // re-arm so the next CONNECTED prints a banner.
         break;
@@ -376,7 +376,6 @@ static void wifiOnConnected() {
 
     // Banner on the rising edge (first CONNECTED after a LOST or initial connect).
     if (!g_wifiWasConnected) {
-        //addConversationBlock("", "WiFi back", CONVO_INFO_COLOR, CENTER);
         g_wifiWasConnected = true;
     }
 }
@@ -623,6 +622,72 @@ void wifiPrintListToConversation() {
         printInfoLine("  (none)");
     }
     g_wifiPrefs.end();
+}
+
+int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, bool& outSaturated) {
+    outSaturated = false;
+    int appended = 0;
+
+    // Track SSIDs already emitted from NVS so Pass 2 can skip COMPILED_WIFI_DEFAULTS duplicates. Same precedence rule as
+    // wifiLoadNVSAndCompiledIntoMulti at boot: NVS wins. Capped at MAX_WIFI_NETWORKS — same cap as NVS storage.
+    String emittedSsids[MAX_WIFI_NETWORKS];
+    int    emittedCount = 0;
+
+    // Helper: try to append one "\n<ssid>|<pwd>" row, return true on success. Roll back to the previous NUL position and set outSaturated on overflow.
+    auto tryAppend = [&](const char* ssid, const char* pwd) -> bool {
+        int needed = snprintf(buffer + used, cap - used, "\n%s|%s", ssid, pwd ? pwd : "");
+        if (needed < 0 || (size_t)needed >= cap - used) {
+            buffer[used]  = '\0';
+            outSaturated = true;
+            return false;
+        }
+        used += (size_t)needed;
+        return true;
+    };
+
+    // === Pass 1: NVS (priority) ===
+    g_wifiPrefs.begin(WIFI_PREFS_NAMESPACE, true);
+    uint8_t count = g_wifiPrefs.getUChar("count", 0);
+    for (uint8_t i = 0; i < count && i < MAX_WIFI_NETWORKS; i++) {
+        String ssid = g_wifiPrefs.getString(wifiNvsSsidKey(i).c_str(), "");
+        if (ssid.length() == 0) {
+            continue;  // hole left by /wifi forget
+        }
+        String pwd = g_wifiPrefs.getString(wifiNvsPwdKey(i).c_str(), "");
+        if (!tryAppend(ssid.c_str(), pwd.c_str())) {
+            g_wifiPrefs.end();
+            return appended;
+        }
+        if (emittedCount < MAX_WIFI_NETWORKS) {
+            emittedSsids[emittedCount++] = ssid;
+        }
+        appended++;
+    }
+    g_wifiPrefs.end();
+
+    // === Pass 2: compile-time defaults, skipping SSIDs already emitted from NVS ===
+    for (size_t i = 0; i < COMPILED_WIFI_DEFAULTS_COUNT; i++) {
+        const CompiledWifiEntry& e = COMPILED_WIFI_DEFAULTS[i];
+        if (e.ssid == nullptr || e.ssid[0] == '\0') {
+            continue;
+        }
+        bool dup = false;
+        for (int k = 0; k < emittedCount; k++) {
+            if (emittedSsids[k] == e.ssid) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) {
+            continue;
+        }
+        if (!tryAppend(e.ssid, e.pwd)) {
+            return appended;
+        }
+        appended++;
+    }
+
+    return appended;
 }
 
 // ================================================================================

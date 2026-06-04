@@ -57,6 +57,14 @@ void wifiClearNvs();
 // returning a std::vector<String> across the .ino boundary (which would complicate the forward declaration).
 void wifiPrintListToConversation();
 
+// Append every known WiFi credential as lines "\n<ssid>|<pwd>" into `buffer`, starting at offset `used` (which is grown in place). Pulls from both
+// sources that wifiLoadNVSAndCompiledIntoMulti feeds into WiFiMulti at boot: first the NVS-stored entries, then the COMPILED_WIFI_DEFAULTS rows
+// whose SSID hasn't already been emitted from NVS (same NVS-wins precedence rule as the boot loader). Stops cleanly without truncating mid-line if
+// the next pair wouldn't fit within `cap`, setting `outSaturated = true`. Returns the number of pairs successfully appended. Cleartext passwords —
+// this helper exists to let /wifi pub assemble a payload for OTA bootstrap; the MQTT publishing itself lives in commands.ino
+// (cmdWifiPublishNetworksToMQTTPeer) so the NVS-access and compile-table knowledge stays encapsulated here.
+int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, bool& outSaturated);
+
 // Force the state machine into PORTAL right now (used by /wifi portal). Closes any active STA attempt and opens the captive AP.
 void wifiForcePortal();
 

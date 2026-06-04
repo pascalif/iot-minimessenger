@@ -56,6 +56,9 @@ const char* const CMD_WIFI_CLEAN  = "/wifi clean";
 const char* const CMD_WIFI_LIST   = "/wifi list";
 const char* const CMD_WIFI_FORGET = "/wifi forget";  // payload: "/wifi forget <ssid>"
 const char* const CMD_WIFI_PORTAL = "/wifi portal";
+// /wifi pub — publishes the device's NVS-stored WiFi credentials (SSID|PWD per line) back to the sender via msg/unicast/<senderId>. Only valid when
+// invoked from MQTT with a parseable senderDeviceId in the trailer; ignored (warning log) from serial or BLE keyboard since there is no return path.
+const char* const CMD_WIFI_PUB    = "/wifi pub";
 
 // Debug / diagnostic subcommands. Visual recovery (redraw) and diagnostic dumps (chip, mem).
 const char* const CMD_DBG_CHIP   = "/dbg chip";
@@ -94,6 +97,7 @@ void printHelpWifi() {
     printInfoLine("- list", "known nets");
     printInfoLine("- forget", "<ssid>");
     printInfoLine("- portal", "open portal");
+    printInfoLine("- pub", "publish");
 }
 
 void printHelpMqtt() {
@@ -117,12 +121,62 @@ void printHelpDbg() {
 }
 
 
+// === Command implementations ==================================================
+
+// /wifi pub — assemble every known WiFi credential (NVS + COMPILED_WIFI_DEFAULTS, NVS wins on duplicate SSID) as a multi-line payload "SSID|PWD"
+// per line, and publish it back to the sender via msg/unicast/<recipientDeviceId>. Mirrors the boot-time merge done by
+// wifiLoadNVSAndCompiledIntoMulti so the published set matches exactly what WiFiMulti has loaded, including the compile-time entries that a freshly
+// flashed device with an empty NVS would otherwise hide. The MQTT publishing logic lives here in the command layer; the NVS + compile-table access
+// details stay encapsulated in wifi.ino's wifiAppendKnownCredentialsToBuffer helper (exposed via wifi.h). The unicast topic is built into a local
+// buffer so g_mqttOutgoingRecipientTopic (the chat recipient) is left untouched. Cleartext passwords on purpose — the whole point is to give an OTA
+// operator the credentials they need to join the same WiFi network as the device.
+static void cmdWifiPublishNetworksToMQTTPeer(byte recipientDeviceId) {
+    char unicastTopic[MQTT_TOPIC_SIZE];
+    snprintf(unicastTopic, MQTT_TOPIC_SIZE, "msg/unicast/%u", (unsigned)recipientDeviceId);
+
+    // Payload budget: MSG_BUFFER_SIZE (500) is also the size of g_mqttOutgoingMsg, into which mqttPushFormattedMessage will copy `payload` AND append
+    // the "### ts:… deviceId:… msgId:…" trailer (~60 chars worst case). We reserve 64 chars of headroom so the trailer fits without truncation.
+    char         payload[MSG_BUFFER_SIZE];
+    const size_t budget = MSG_BUFFER_SIZE - 64;
+    size_t       used   = 0;
+    int          written = snprintf(payload, sizeof(payload), "wifi pub:");
+    if (written > 0) {
+        used = (size_t)written;
+    }
+
+    bool saturated = false;
+    int  published = wifiAppendKnownCredentialsToBuffer(payload, budget, used, saturated);
+
+    if (published == 0) {
+        snprintf(payload, sizeof(payload), "wifi pub: (none)");
+    }
+
+    bool ok = mqttPushFormattedMessage(unicastTopic, payload);
+    if (ok) {
+        ESP_LOGI(TAG_MM,
+                 "Published %d WiFi entries to [%s]%s",
+                 published,
+                 unicastTopic,
+                 saturated ? " (buffer saturated, list truncated)" : "");
+    } else {
+        ESP_LOGW(TAG_MM, "Failed to publish WiFi entries to [%s]", unicastTopic);
+    }
+    if (saturated) {
+        ESP_LOGW(TAG_MM, "Payload buffer saturated — some NVS WiFi entries were omitted from the [%s] publication", unicastTopic);
+    }
+}
+
+
 // === Dispatchers ==============================================================
 
 // Top-level command dispatcher. Three orphan commands (/help, /status, /clear) and four prefix groups (/wifi *, /mqtt *, /bt *, /dbg *). For groups,
 // the bare prefix (e.g. "/wifi" alone with no subcommand) prints the group's partial help; a typo subcommand (e.g. "/wifi xyzzy") prints an "Unknown"
 // banner followed by the same partial help. Returns true if the message was consumed as a command (caller skips display + republish).
-bool processPayloadAsCommand(const String& message) {
+//
+// `source` and `senderDeviceId` are threaded through so subcommands that need to reply via MQTT (currently only /wifi pub) can authenticate the
+// origin and address the response. For local-only commands the parameters are simply ignored. Passing them down to every sub-dispatcher (rather than
+// only /wifi) keeps the surface uniform — adding a future /mqtt-pub-style command won't require a signature change cascade.
+bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId) {
     if (message == CMD_HELP) {
         printHelpGlobal();
         return true;
@@ -141,21 +195,21 @@ bool processPayloadAsCommand(const String& message) {
     // Group routing: the bare prefix OR the prefix followed by a space. The trailing-space check rules out false positives like "/wifix" (no
     // such command, must not be misrouted into the WiFi dispatcher).
     if (message == GROUP_WIFI || message.startsWith(String(GROUP_WIFI) + " ")) {
-        return processWifiSubcommand(message);
+        return processWifiSubcommand(message, source, senderDeviceId);
     }
     if (message == GROUP_MQTT || message.startsWith(String(GROUP_MQTT) + " ")) {
-        return processMqttSubcommand(message);
+        return processMqttSubcommand(message, source, senderDeviceId);
     }
     if (message == GROUP_BT || message.startsWith(String(GROUP_BT) + " ")) {
-        return processBtSubcommand(message);
+        return processBtSubcommand(message, source, senderDeviceId);
     }
     if (message == GROUP_DBG || message.startsWith(String(GROUP_DBG) + " ")) {
-        return processDbgSubcommand(message);
+        return processDbgSubcommand(message, source, senderDeviceId);
     }
     return false;
 }
 
-bool processWifiSubcommand(const String& message) {
+bool processWifiSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
     if (message == GROUP_WIFI) {
         printHelpWifi();
         return true;
@@ -196,6 +250,24 @@ bool processWifiSubcommand(const String& message) {
         wifiForcePortal();
         return true;
     }
+    if (message == CMD_WIFI_PUB) {
+        // Guardrail: this command only makes sense over MQTT, because the response is a unicast publish back to the sender's deviceId — which is
+        // only available when the incoming payload carried a parseable trailer (the dispatcher in mqtt.ino extracted it and routeMessage passed it
+        // down to us). A serial-typed or BLE-typed "/wifi pub" has no return path → silent refusal with a warning log so the operator can see why
+        // nothing happened. We also refuse senderDeviceId == 0 (means: MQTT message had no parseable deviceId trailer, e.g. mosquitto_pub from a
+        // dev laptop without our trailer format) for the same reason: no valid return topic.
+        if (source != MessageSource::REMOTE || senderDeviceId == 0) {
+            ESP_LOGW(TAG_MM,
+                     "Command [%s] ignored — only valid from MQTT with a parseable senderDeviceId (got source=%d senderId=%u)",
+                     CMD_WIFI_PUB,
+                     (int)source,
+                     (unsigned)senderDeviceId);
+            return true;
+        }
+        ESP_LOGI(TAG_MM, "Command [%s] from #%u — publishing NVS WiFi credentials", CMD_WIFI_PUB, (unsigned)senderDeviceId);
+        cmdWifiPublishNetworksToMQTTPeer(senderDeviceId);
+        return true;
+    }
     // Unknown subcommand — show what's available so the user can correct.
     ESP_LOGW(TAG_MM, "Unknown /wifi subcommand: [%s]", message.c_str());
     printInfoLine("Unknown /wifi cmd", CONVO_ERROR_COLOR);
@@ -203,7 +275,9 @@ bool processWifiSubcommand(const String& message) {
     return true;
 }
 
-bool processMqttSubcommand(const String& message) {
+bool processMqttSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
+    (void)source;            // unused for now — kept in the signature for symmetry with /wifi pub
+    (void)senderDeviceId;    // unused for now — kept in the signature for symmetry with /wifi pub
     if (message == GROUP_MQTT) {
         printHelpMqtt();
         return true;
@@ -219,7 +293,9 @@ bool processMqttSubcommand(const String& message) {
     return true;
 }
 
-bool processBtSubcommand(const String& message) {
+bool processBtSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
+    (void)source;            // unused for now — kept in the signature for symmetry with /wifi pub
+    (void)senderDeviceId;    // unused for now — kept in the signature for symmetry with /wifi pub
     if (message == GROUP_BT) {
         printHelpBt();
         return true;
@@ -238,7 +314,9 @@ bool processBtSubcommand(const String& message) {
     return true;
 }
 
-bool processDbgSubcommand(const String& message) {
+bool processDbgSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
+    (void)source;            // unused for now — kept in the signature for symmetry with /wifi pub
+    (void)senderDeviceId;    // unused for now — kept in the signature for symmetry with /wifi pub
     if (message == GROUP_DBG) {
         printHelpDbg();
         return true;

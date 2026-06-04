@@ -116,7 +116,13 @@ static void announceContactTransition(byte deviceId, ContactLiveness liveness) {
     String                 label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
     const bool             alive = (liveness == ContactLiveness::LIVE);
     label += alive ? " connected" : " disconnected";
-    addConversationBlock("", label, alive ? CONVO_INFO_COLOR : CONVO_ERROR_COLOR, CENTER);
+
+    if (alive) {
+    printVersatileConversationInfo(label);
+    }
+    else {
+    printVersatileConversationError(label);
+    }
 }
 
 

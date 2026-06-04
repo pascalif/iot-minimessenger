@@ -36,6 +36,7 @@ faire un bilan des tailles:
 - 500 pour mqtt
 - serial ?
 - bt ?
+- buffer staturated dans cmdWifiPublishNetworksToMQTTPeer
 
 
 =============

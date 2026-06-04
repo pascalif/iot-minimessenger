@@ -123,9 +123,6 @@ void redrawAllConversations() {
     }
 }
 
-
-// utf8ToLatin1 lives in strings.ino — see the forward decl in minimessenger.ino.
-
 // Drop a single line into the conversation scroll area, with optional two-column layout for command listings.
 //
 // Two overloads share the same impl below; the single-arg one is a thin forwarder that passes an empty `right`. Behavior:
@@ -217,6 +214,18 @@ void printInfoLine(const String& msg, uint16_t color, const GFXfont* font) {
 void printInfoLineNumber(const String& left, uint32_t right, uint16_t color, const GFXfont* font) {
     printInfoLine(left, String(right), color, font);
 }
+
+// TODO pourquou pas const String& msg
+void printVersatileConversationInfo(String msg) {
+addConversationBlock( String(), msg, CONVO_INFO_COLOR, CENTER);
+}
+
+void printVersatileConversationError(String msg) {
+addConversationBlock( String(), msg, CONVO_ERROR_COLOR, CENTER);
+}
+
+
+
 
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align, byte senderDeviceId) {
     char msgBuf[CONVO_MSG_MAX_LEN];

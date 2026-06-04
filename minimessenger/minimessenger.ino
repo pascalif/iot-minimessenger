@@ -413,8 +413,8 @@ void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
 void resetSerialBuffer();
-// contacts.ino API — explicit forward decls because the Arduino auto-prototype pass occasionally misses cross-.ino calls (notably from bars.ino into
-// contacts.ino, which is concatenated AFTER bars.ino in alphabetical order). Without these the build fails with "not declared in this scope".
+
+// contacts.ino API
 void contactsSetup();
 void contactsTick();
 void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
@@ -422,24 +422,27 @@ int  contactGetActiveCount();
 void printInfoLine(const String& msg, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
 void printInfoLine(const String& left, const String& right, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
 void printInfoLineNumber(const String& left, uint32_t right, uint16_t color = CONVO_CMD_COLOR, const GFXfont* font = &CONVO_CMD_FONT);
+void printVersatileConversationError(String msg) ;
+void printVersatileConversationInfo(String msg);
 
-// display.ino API — concatenated after minimessenger.ino, so every call site in this file needs an explicit forward decl. addConversationBlock
-// carries its default argument here (the definition in display.ino does not — defaults belong on the declaration in C++).
+// display.ino
 void showSplashScreen();
 void redrawAllConversations();
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align, byte senderDeviceId = DEVICE_ID_UNSET);
 
-// String utilities — defined in strings.ino. Called from printInfoLine / addConversationBlock (display.ino), which would compile before the
-// strings.ino concatenation appends the definition, so the forward decl is mandatory.
+// String utilities — defined in strings.ino.
 size_t utf8ToLatin1(char* s);
 
 // Command layer — defined in commands.ino. routeMessage() (this file) calls processPayloadAsCommand() to interpret /cmd payloads; the rest is
 // internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
-bool processPayloadAsCommand(const String& message);
-bool processWifiSubcommand(const String& message);
-bool processMqttSubcommand(const String& message);
-bool processBtSubcommand(const String& message);
-bool processDbgSubcommand(const String& message);
+// `source` and `senderDeviceId` are threaded down to subcommand handlers so /wifi pub (currently the only consumer) can validate the origin and
+// reply via msg/unicast/<senderId>; the other dispatchers ignore them but keep the parameter for signature symmetry.
+bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId);
+bool processWifiSubcommand(const String& message, MessageSource source, byte senderDeviceId);
+bool processMqttSubcommand(const String& message, MessageSource source, byte senderDeviceId);
+bool processBtSubcommand(const String& message, MessageSource source, byte senderDeviceId);
+bool processDbgSubcommand(const String& message, MessageSource source, byte senderDeviceId);
+
 void printHelpGlobal();
 void printHelpWifi();
 void printHelpMqtt();
@@ -1155,7 +1158,7 @@ void onMQTTReconnected() {
     if (!g_inConversationMode) {
         goAndResetConversationScreen();
     }
-    addConversationBlock("", "Ready !", CONVO_INFO_COLOR, CENTER);
+    printVersatileConversationInfo("Ready !");
 }
 
 // ----------------------------------------------------------------------------
@@ -1200,10 +1203,10 @@ void dumpChipInfo() {
 
     // Echo a compact summary into the conversation so it's visible on-device too.
     char line[64];
-    snprintf(line, sizeof(line), "chip model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
-    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+    snprintf(line, sizeof(line), "model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
+    printInfoLine(line );
     snprintf(line, sizeof(line), "flash=%uKB reset=%d", ESP.getFlashChipSize() / 1024, (int)esp_reset_reason());
-    addConversationBlock("", line, CONVO_CMD_COLOR, LEFT);
+    printInfoLine( line);
 }
 
 
@@ -1258,8 +1261,9 @@ void routeMessage(const String& message, MessageSource source, byte senderDevice
     noteUserActivity();
 
     // Step 2 — if it's a known command, execute and stop. No display, no
-    // republish — this is the whole point of the funnel.
-    if (processPayloadAsCommand(message)) {
+    // republish — this is the whole point of the funnel. `source` and `senderDeviceId` are passed so subcommands that need to reply via MQTT (only
+    // /wifi pub today) can authenticate the origin and build the return unicast topic.
+    if (processPayloadAsCommand(message, source, senderDeviceId)) {
         return;
     }
 
@@ -1453,7 +1457,7 @@ void loop() {
             // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
             // edge logic and the status bar indicator stay accurate.
             if (WiFi.status() == WL_CONNECTED) {
-                addConversationBlock("", "Lost server - Retrying...", CONVO_ERROR_COLOR, CENTER);
+                printVersatileConversationError( "Lost server - Retrying...");
             }
         }
 
