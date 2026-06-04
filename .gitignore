@@ -1,0 +1,18 @@
+  # Sensitive — broker creds, per-device table, TLS root CA
+  minimessenger/personal-data.h
+
+  # Arduino IDE build artifacts (normalement dans /tmp, on couvre par sécurité)
+  build/
+  *.elf
+  *.bin
+  *.hex
+  *.map
+  *.o
+  *.d
+
+  # Editor / OS noise
+  .vscode/
+  .idea/
+  *.swp
+  *~
+  .DS_Store
