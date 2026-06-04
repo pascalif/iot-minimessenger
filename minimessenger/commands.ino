@@ -10,7 +10,7 @@
 // for the funnel's three-step contract (wake screen → interpret as command → otherwise route to display + MQTT).
 //
 // Arduino IDE concatenates this file with the main .ino into a single translation unit (in alphabetical order after the sketch-named file).
-// commands.ino therefore sees all of minimessenger.ino above it and can call dumpChipInfo, processPayloadAsCommand, etc. without forward decls.
+// commands.ino therefore sees all of minimessenger.ino above it and can call addConversationBlock, printInfoLine, etc. without forward decls.
 // Symbols defined later (display.ino / wifi.ino) are reached via explicit forward declarations: addConversationBlock / printInfoLine* /
 // redrawAllConversations / showUpdatedInfoScreen are declared in minimessenger.ino's forward-decl block, and wifi.ino exports its API via wifi.h.
 
@@ -164,6 +164,89 @@ static void cmdWifiPublishNetworksToMQTTPeer(byte recipientDeviceId) {
     if (saturated) {
         ESP_LOGW(TAG_MM, "Payload buffer saturated — some NVS WiFi entries were omitted from the [%s] publication", unicastTopic);
     }
+}
+
+
+// /dbg chip — diagnostic dump of silicon identity (chip model, revision, cores, features, package, MACs, flash, IDF version, reset reason). Sent
+// both to the serial log (multi-line, with structured fields) and to the conversation in compact form so the info is visible on the device too.
+// See ../docs/howto_efuse.md for what each line means and which API gives it.
+static void cmdDumpChipInfo() {
+    esp_chip_info_t info;
+    esp_chip_info(&info);
+
+    ESP_LOGI(TAG_MM, "--- /dbg chip ---");
+    ESP_LOGI(TAG_MM, "Chip: model=%d revision=%d cores=%d features=0x%lx", (int)info.model, info.revision, info.cores, (unsigned long)info.features);
+    ESP_LOGI(TAG_MM,
+             "Caps: WiFi:%s BT:%s BLE:%s EmbFlash:%s EmbPSRAM:%s",
+             (info.features & CHIP_FEATURE_WIFI_BGN) ? "y" : "-",
+             (info.features & CHIP_FEATURE_BT) ? "y" : "-",
+             (info.features & CHIP_FEATURE_BLE) ? "y" : "-",
+             (info.features & CHIP_FEATURE_EMB_FLASH) ? "y" : "-",
+             (info.features & CHIP_FEATURE_EMB_PSRAM) ? "y" : "-");
+    ESP_LOGI(TAG_MM, "CPU: %u MHz", ESP.getCpuFreqMHz());
+    ESP_LOGI(TAG_MM, "Flash: size=%u mode=%d speed=%u Hz", ESP.getFlashChipSize(), ESP.getFlashChipMode(), ESP.getFlashChipSpeed());
+
+    uint8_t mac[6];
+    // Use ESP_MAC_EFUSE_FACTORY (direct silicon read) instead of esp_efuse_mac_get_default() — see identifyDevice() for the full explanation
+    // of why the latter returns ESP_OK + zeros when called before the IDF base-MAC cache has been populated.
+    esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
+    ESP_LOGI(TAG_MM, "MAC base/STA: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    esp_read_mac(mac, ESP_MAC_BT);
+    ESP_LOGI(TAG_MM, "MAC BT:       %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
+    ESP_LOGI(TAG_MM, "IDF: %s", esp_get_idf_version());
+    ESP_LOGI(TAG_MM, "Last reset reason: %d", (int)esp_reset_reason());
+
+    // Echo a compact summary into the conversation so it's visible on-device too.
+    char line[64];
+    snprintf(line, sizeof(line), "model=%d rev=%d cpu=%uMHz", (int)info.model, info.revision, ESP.getCpuFreqMHz());
+    printInfoLine(line);
+    snprintf(line, sizeof(line), "flash=%uKB reset=%d", ESP.getFlashChipSize() / 1024, (int)esp_reset_reason());
+    printInfoLine(line);
+}
+
+
+// /dbg mem — diagnostic dump of heap state. "free" is the sum of all free bytes; "largest" is the biggest single contiguous run (the one mbedtls /
+// TLS / SPI buffers need). "min ever" is the historical low-water mark — a value that keeps dropping over time is the classic signature of a leak.
+// Sketch / partition counters are flash-side, not RAM, but useful in the same diagnostic dump.
+static void cmdDumpMemInfo() {
+    uint32_t totalHeap   = ESP.getHeapSize();
+    uint32_t freeHeap    = ESP.getFreeHeap();
+    uint32_t largest     = ESP.getMaxAllocHeap();
+    uint32_t minEverFree = ESP.getMinFreeHeap();
+    uint32_t usedHeap    = totalHeap - freeHeap;
+
+    ESP_LOGI(TAG_MM, "--- /dbg mem ---");
+    ESP_LOGI(TAG_MM, "Heap: total=%u used=%u free=%u largest=%u min-ever-free=%u", totalHeap, usedHeap, freeHeap, largest, minEverFree);
+    ESP_LOGI(TAG_MM, "Heap fragmentation: %u%% (= 1 - largest/free)", freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0);
+    // All byte-counts shown in KB on the device screen (integer division — values < 1 KB display as "0 KB", which is itself a useful red-flag signal
+    // for the stack low-watermark). The serial log above keeps the raw byte counts for precise diagnostics.
+    printInfoLine("heap:");
+    printInfoLine("- free", String(freeHeap / 1024) + " KB");
+    printInfoLine("- max block", String(largest / 1024) + " KB");
+    printInfoLine("- min ever", String(minEverFree / 1024) + " KB");
+    printInfoLine("- frag", String(freeHeap > 0 ? (100 - (largest * 100 / freeHeap)) : 0) + " %");
+
+    // PSRAM is only present on certain ESP32 variants (e.g. WROVER). On chips without PSRAM these calls return 0.
+    if (ESP.getPsramSize() > 0) {
+        ESP_LOGI(TAG_MM, "PSRAM: total=%u free=%u largest=%u", ESP.getPsramSize(), ESP.getFreePsram(), ESP.getMaxAllocPsram());
+    } else {
+        ESP_LOGI(TAG_MM, "PSRAM: none");
+    }
+
+    // Stack high-water-mark for the task currently running this code (typically the Arduino loop task). Lower number = closer to overflow.
+    // Returns the minimum free stack the task has ever had since boot, in WORDS (uint32_t units on ESP32) — multiply by 4 for bytes.
+    UBaseType_t stackHWMWords = uxTaskGetStackHighWaterMark(NULL);
+    uint32_t    stackHWMBytes = (uint32_t)stackHWMWords * 4;
+    ESP_LOGI(TAG_MM, "Loop task stack: min-ever-free=%u bytes", (unsigned)stackHWMBytes);
+    printInfoLine("stack:");
+    printInfoLine("- min ever", String(stackHWMBytes / 1024) + " KB");
+
+    ESP_LOGI(TAG_MM, "Sketch: size=%u free=%u", ESP.getSketchSize(), ESP.getFreeSketchSpace());
+    printInfoLine("sketch:");
+    printInfoLine("- size", String(ESP.getSketchSize() / 1024) + " KB");
+    printInfoLine("- free", String(ESP.getFreeSketchSpace() / 1024) + " KB");
 }
 
 
@@ -330,12 +413,12 @@ bool processDbgSubcommand(const String& message, MessageSource source, byte send
     }
     if (message == CMD_DBG_CHIP) {
         ESP_LOGI(TAG_MM, "Command [%s] — dumping chip info", CMD_DBG_CHIP);
-        dumpChipInfo();
+        cmdDumpChipInfo();
         return true;
     }
     if (message == CMD_DBG_MEM) {
         ESP_LOGI(TAG_MM, "Command [%s] — dumping memory info", CMD_DBG_MEM);
-        dumpMemInfo();
+        cmdDumpMemInfo();
         return true;
     }
     ESP_LOGW(TAG_MM, "Unknown /dbg subcommand: [%s]", message.c_str());

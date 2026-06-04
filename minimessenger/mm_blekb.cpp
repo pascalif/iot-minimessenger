@@ -184,6 +184,15 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
     NimBLEScan* pBLEScan = NimBLEDevice::getScan();
     pBLEScan->setScanCallbacks(this, false);
     pBLEScan->setActiveScan(!hasExistingBond);
+    if (hasExistingBond) {
+        // Bonded path = reconnexion en boucle quand le clavier est éteint. NimBLE par défaut configure interval = window = 30 ms, soit 100 % de duty
+        // cycle radio. L'ESP32 a une seule antenne 2,4 GHz partagée avec le WiFi : un scan permanent prend les paquets WiFi (même symptôme que le portail
+        // captif, cf. pauseScan()). On réduit ici à window=30 ms toutes les 300 ms → 10 % de duty cycle. Le clavier advertise typiquement toutes les
+        // 100 ms-1 s, on le détecte donc en 1-3 s au pire (au lieu de "quasi instantané"), ce qui est imperceptible à l'usage. Sur le chemin onboarding
+        // (active scan, !hasExistingBond), on garde 100 % duty cycle : c'est un événement rare et on veut accrocher vite un nouveau clavier.
+        pBLEScan->setInterval(300);
+        pBLEScan->setWindow(30);
+    }
     // NimBLE-Arduino 2.x: scan duration is in MILLISECONDS (1.x was in seconds)
     pBLEScan->start(m_scanningDurationSec * 1000);
     // Scan already running; onScanEnd() will re-arm doScan if it ends without finding the keyboard.

@@ -1,1 +1,2 @@
 - [Display charset restriction (TFT/GFX Latin-1)](feedback_display_charset.md) — only ASCII + Latin-1 in strings reaching the screen; em dash / ellipsis / smart quotes fail. Comments and ESP_LOGx are unaffected.
+- [Static variable naming (`gs_` prefix)](feedback_static_naming.md) — function-local `static` variables (hidden in method bodies but consuming .bss) are prefixed `gs_` so a single grep finds them all. File-scope statics keep `g_`; `static const` constants are exempt.

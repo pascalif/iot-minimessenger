@@ -399,6 +399,242 @@ Pourquoi `true` chez nous :
 
 Avec QoS 0 partout, clean session ≈ no-op fonctionnel. Garder `true`.
 
+## Alternatives à PubSubClient
+
+PubSubClient (Nick O'Leary, 2012) est notre lib actuelle : MQTT 3.1.1,
+publish QoS 0 uniquement, subscribe QoS 0/1, API synchrone, ~6 KB de
+flash. Battle-tested, stable, mais minimaliste. La question — légitime —
+"et si on passait à une lib plus moderne ?" mérite une réponse posée
+parce que le coût n'est pas nul.
+
+### Les candidats sérieux (vérifié juin 2026)
+
+| Lib                                  | MQTT 5 | QoS pub | Async | Code flash | Maintenance        | API                  | Stack TLS                      |
+|--------------------------------------|--------|---------|-------|------------|--------------------|----------------------|--------------------------------|
+| **PubSubClient** (actuel, knolleary) | ❌     | 0 only  | non   | ~6 KB      | calme (stable)     | très simple          | WiFiClientSecure + mbedTLS     |
+| **espMqttClient** (bertmelis)        | ❌     | 0/1/2   | sync ou async | ~30 KB | très active   | callbacks lambda     | WiFiClientSecure + mbedTLS     |
+| **ArduinoMqttClient** (Arduino off.) | ❌     | 0/1/2   | non   | ~10 KB     | officielle (lente) | proche PubSub        | WiFiClientSecure + mbedTLS     |
+| **esp-mqtt** (ESP-IDF)               | ✅     | 0/1/2   | async (event loop) | ~25 KB | Espressif (gold) | C, event-driven      | esp-tls (séparé)               |
+
+⚠ **Important** : dans l'écosystème Arduino-ESP32, **aucune lib
+Arduino-friendly ne supporte MQTT 5**. PubSubClient, espMqttClient,
+ArduinoMqttClient, AsyncMqttClient sont tous MQTT 3.1.1. **Le seul
+chemin vers MQTT 5 sur ESP32 est `esp-mqtt` de l'ESP-IDF**, qui change
+de paradigme (API C event-driven plutôt qu'Arduino/C++ classique).
+
+`AsyncMqttClient`, longtemps populaire, est devenu fragile depuis
+qu'AsyncTCP_SSL a divergé (dernière release 2021). À éviter
+aujourd'hui sur ESP32.
+
+### Ce qu'on gagnerait — deux scénarios distincts
+
+Il y a deux niveaux d'upgrade possibles, à séparer parce que les
+bénéfices et coûts ne sont pas comparables :
+
+#### Scénario A — Upgrade MQTT 3.1.1 (espMqttClient ou ArduinoMqttClient)
+
+Le seul gain réel : **QoS 1 en publish**, donc garantie at-least-once
+sur les messages chat. Les messages ne sont plus perdus silencieusement
+quand TLS hoquette. C'est le bénéfice visible côté utilisateur final.
+
+Bonus secondaires : `MQTT_MAX_PACKET_SIZE 256` disparaît (taille
+dynamique), API async possible avec espMqttClient (latence un peu
+meilleure pendant les publish).
+
+**Ce qu'on N'a PAS** : pas de No Local subscription, pas de user
+properties, pas de Will delay. Tous les nettoyages architecturaux
+liés à MQTT 5 restent hors de portée — le trailer
+`### deviceId:N msgId:N` reste nécessaire pour le self-filter, etc.
+
+#### Scénario B — Upgrade vers MQTT 5 (esp-mqtt uniquement)
+
+C'est seulement ici qu'on accède aux features MQTT 5 qui changent
+l'architecture :
+
+1. **No Local subscription** — le broker ne renvoie pas nos propres
+   publish via la wildcard. `extractSenderAndStripTrailer()` et le
+   trailer deviennent **inutiles** pour le self-filter. Nettoyage
+   architectural significatif.
+
+2. **User Properties** — on déplace `senderId` du payload (trailer)
+   vers une property metadata séparée. Le payload chat redevient
+   **purement le texte saisi par l'utilisateur**, donc parfaitement
+   compatible avec une console web qui tape "salut" sans tricks.
+
+3. **Will Delay** — le broker attend N secondes après détection de
+   déconnexion avant de tirer le Will. Évite les "DEAD" intempestifs
+   sur reconnexions courtes.
+
+4. **Subscription IDs, Message Expiry, Topic Alias** — features
+   périphériques que ce projet n'utiliserait probablement pas.
+
+Et bien sûr QoS 1/2 inclus aussi (donc le bénéfice du scénario A est
+embarqué).
+
+### Ce qu'on paierait
+
+Coûts communs aux deux scénarios :
+
+1. **Flash** : +5 à +30 KB selon la lib (ArduinoMqttClient ~10 KB,
+   espMqttClient ~30 KB, esp-mqtt ~25 KB). Sur notre binaire de
+   1.56 MB sur partition de 3 MB, c'est confortable, mais ça mange la
+   marge si on prévoit l'OTA (partitions de 1.9 MB max — cf.
+   `info_memory_mgt.md`).
+
+2. **Heap** : +5 à +15 KB de footprint runtime (queues internes,
+   callback state, buffers tx/rx séparés). À surveiller : mbedTLS
+   réclame déjà 38 KB **contigus** pour la handshake. Une lib qui
+   fragmente plus la DRAM peut faire passer `mqttReconnectAttempt()`
+   en pré-check fail systématique.
+
+3. **Refactoring** : ~150-200 lignes à réécrire (`mqtt.ino` +
+   `mqtt.h` + `routeMessage()`) dans le scénario A,
+   significativement plus dans le scénario B parce qu'esp-mqtt change
+   le paradigme (event-handler pattern ESP-IDF). Compter 2-3 sessions
+   pour A, 4-6 pour B.
+
+4. **Régression sur les paths bien rodés** : la chaîne
+   `WiFiClientSecure → setCACert → connect → mbedtls handshake` est
+   cadrée après des heures de debug (Bluedroid → NimBLE, pré-check
+   heap, rc=-2…). Refaire ce tuning avec une nouvelle lib =
+   potentiellement re-débugger les mêmes points. C'est particulièrement
+   vrai pour `esp-mqtt` qui n'utilise PAS `WiFiClientSecure` — il a sa
+   propre stack TLS (`esp-tls`), donc nouvelle calibration heap +
+   gestion du root CA.
+
+5. **Stabilité PubSubClient** : la lib est en maintenance lente parce
+   qu'**elle est terminée**. Pas de bug critique connu, API gelée
+   depuis 2020. Les alternatives "actively maintained" voient passer
+   des breaking changes mineurs entre versions, ce qui complique la
+   reproductibilité (et pèse sur le `sketch.yaml` à pinner serré).
+
+6. **Documentation et StackOverflow** : ~10 ans d'historique sur
+   PubSubClient. Les libs modernes ont moins de retours d'expérience
+   publics, surtout sur les cas tordus (TLS + NimBLE + WiFiManager
+   simultanés sur ESP32).
+
+Coût spécifique au scénario B (esp-mqtt) :
+
+7. **Quitter le paradigme Arduino** : esp-mqtt est API ESP-IDF en C,
+   event-driven (`esp_mqtt_client_register_event`,
+   `esp_mqtt_event_handle_t`, etc.). Le code MQTT du projet devient
+   hybride Arduino + IDF, moins consistant. Tu perds l'option
+   "n'importe quel hobbyiste Arduino peut lire ce code".
+
+8. **Documentation et examples plus rares** sur les usages mixtes
+   Arduino-ESP32 + esp-mqtt (la plupart des exemples Espressif sont
+   en pur IDF).
+
+### Recommandation
+
+**Rester sur PubSubClient pour l'instant**, sauf si l'un de ces deux
+signaux apparaît :
+
+- **Pertes de messages chat observées** entre devices (typiquement :
+  un message envoyé pendant un hiccup WiFi/TLS, jamais reçu en face —
+  symptôme classique du QoS 0). À ce moment-là, **scénario A**
+  devient justifié → bascule vers **espMqttClient** (actif, le
+  meilleur successeur Arduino-friendly de PubSubClient aujourd'hui).
+
+- **Volonté de nettoyer la sémantique MQTT** : payload purement
+  utilisateur, plus de trailer pour le self-filter, compatibilité
+  totale avec une console web qui tape juste du texte. C'est le
+  **scénario B**, et le seul chemin est **`esp-mqtt`** avec MQTT 5.
+  Investissement plus important (changement de paradigme), mais c'est
+  ce qu'il faut.
+
+Si bascule un jour, classement :
+
+- **`espMqttClient`** : pour QoS 1 + maintenance active, sans MQTT 5.
+- **`ArduinoMqttClient`** : option "minimum viable upgrade" Arduino
+  officielle, simple, mais maintenance lente.
+- **`esp-mqtt`** : la seule porte d'entrée vers MQTT 5 sur ESP32. À
+  retenir si tu vises spécifiquement les features MQTT 5 (No Local,
+  user properties, will delay) — sinon c'est overkill et invasif.
+
+### Migration incrémentale possible côté broker
+
+HiveMQ Cloud supporte 3.1.1 et 5.0 simultanément sur le même endpoint
+TLS. Un device en CONNECT v5 et un device en CONNECT v3.1.1 cohabitent
+sur les mêmes topics sans souci — c'est le client qui choisit sa
+version à la connexion. Conséquence pratique :
+
+- Tu peux migrer un seul device de test vers esp-mqtt + MQTT 5
+  d'abord, les autres restent en PubSubClient (ou en espMqttClient
+  3.1.1).
+- Le device "v5" lit les messages des "v3.1.1" comme du texte (sans
+  user properties → fallback "ext" comme aujourd'hui pour les
+  messages externes).
+- Les "v3.1.1" lisent les messages du "v5" aussi — le broker leur
+  livre le payload sans les properties (qu'ils ignoreraient de toute
+  façon).
+- Tu flash les autres devices au fil de ta confiance dans la nouvelle
+  lib.
+
+Pas de big bang requis — c'est un point fort majeur de MQTT 5 vs
+d'autres protocoles.
+
+### Outils pour publier en MQTT 5 manuellement (test / debug)
+
+⚠ Attention : **le client web embarqué dans `console.hivemq.cloud`
+(panneau "Web Client") n'expose PAS les controls MQTT 5**. Son
+formulaire "Send Message" se limite à Topic / Payload / QoS — pas de
+toggle de version protocole, pas de section User Properties. Pour
+tester un device MQTT 5, il te faut un outil externe :
+
+#### MQTTX (GUI recommandée, gratuit, multi-plateforme)
+
+<https://mqttx.app/>
+
+Workflow :
+
+1. **New Connection** → Host `<cluster>.s1.eu.hivemq.cloud`, Port
+   8883, SSL/TLS ✓, Username/Password tes creds. **MQTT Version : 5.0**
+   (le toggle est dans les options avancées de la fenêtre New
+   Connection).
+2. **Publish** → Topic + Payload + QoS classiques, puis section
+   pliable **User Properties** en bas du formulaire : tu cliques "+"
+   pour ajouter `senderId=5`, `pseudo=Pac`, etc.
+3. **Subscribe** : le panneau de réception déplie les user properties
+   reçues dans un sous-panneau, donc tu vois à l'œil nu ce qu'un
+   firmware enverrait/lirait.
+
+#### mosquitto_pub / mosquitto_sub (CLI, version ≥ 2.0)
+
+Publish avec user properties :
+
+```bash
+mosquitto_pub -h <cluster>.s1.eu.hivemq.cloud -p 8883 \
+  --capath /etc/ssl/certs -u <user> -P <pass> \
+  -V mqttv5 \
+  -D PUBLISH user-property senderId 5 \
+  -D PUBLISH user-property pseudo Pac \
+  -t msg/broadcast \
+  -m "salut tout le monde"
+```
+
+Subscribe en imprimant les properties à la réception :
+
+```bash
+mosquitto_sub -h <cluster>.s1.eu.hivemq.cloud -p 8883 \
+  --capath /etc/ssl/certs -u <user> -P <pass> \
+  -V mqttv5 \
+  -F '%t | %x | %P' \
+  -t 'msg/#'
+```
+
+`-V mqttv5` force le CONNECT en version 5. `-D PUBLISH user-property
+K V` ajoute une property (répétable). `%P` dans le format de sortie
+imprime les properties reçues.
+
+#### Pourquoi pas la web console HiveMQ ?
+
+L'onglet "Web Client" du `console.hivemq.cloud` reste utile pour les
+tests basiques en MQTT 3.1.1 (vérifier qu'un device publie, ce que le
+broker reçoit, etc.). Pour MQTT 5 il faut payer la version self-hosted
+HiveMQ ou utiliser un client externe. C'est une limitation produit, pas
+une limite du broker — le broker lui-même gère MQTT 5 sans problème.
+
 ## Pour aller plus loin
 
 - Spec MQTT 3.1.1 (PubSubClient l'implémente) :

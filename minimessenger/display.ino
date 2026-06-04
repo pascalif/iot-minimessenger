@@ -217,14 +217,12 @@ void printInfoLineNumber(const String& left, uint32_t right, uint16_t color, con
 
 // TODO pourquou pas const String& msg
 void printVersatileConversationInfo(String msg) {
-addConversationBlock( String(), msg, CONVO_INFO_COLOR, CENTER);
+    addConversationBlock(String(), msg, CONVO_INFO_COLOR, CENTER);
 }
 
 void printVersatileConversationError(String msg) {
-addConversationBlock( String(), msg, CONVO_ERROR_COLOR, CENTER);
+    addConversationBlock(String(), msg, CONVO_ERROR_COLOR, CENTER);
 }
-
-
 
 
 void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align, byte senderDeviceId) {
@@ -243,9 +241,9 @@ void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align,
     if (!ts.isEmpty()) {
         const time_t now              = time(nullptr);
         const bool   sameSenderAsLast = (senderDeviceId == g_lastMsgSenderId);
-        const bool   insideWindow     = (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
+        const bool   insideTimeWindow     = (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
 
-        if (sameSenderAsLast && insideWindow) {
+        if (sameSenderAsLast && insideTimeWindow) {
             ts = "";  // suppressed; the empty-ts path below skips the ts row entirely
         } else if (senderDeviceId != DEVICE_ID_UNSET && senderDeviceId != g_deviceData.deviceId) {
             // Peer or anonymous "unk" — prefix the pseudo. findById() does an O(N) walk over COMPILED_DEVICE_DATA_ENTRIES; the table is small
@@ -279,7 +277,6 @@ void addConversationBlock(String ts, String msg, uint16_t msgColor, Align align,
     /*
 1. Pourquoi getTextBounds retourne des valeurs de y négatives avec certaines polices comme FreeSans9pt8b ?
 Dans les bibliothèques graphiques comme Adafruit_GFX, le système de coordonnées pour le texte est basé sur le point de base (baseline) du texte. Voici ce qui se passe :
-
 
 Origine du texte :
 Le point (0, 0) pour le texte est généralement placé sur la ligne de base (baseline) du texte, c'est-à-dire la ligne sur laquelle reposent les lettres (sans les descendantes comme "j", "p", "g", etc.).
