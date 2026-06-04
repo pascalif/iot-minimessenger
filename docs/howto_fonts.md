@@ -116,7 +116,7 @@ Generate FreeSans 9pt with the Latin-1 glyph range `[0x20, 0xFF]` = `[32, 255]`:
 ```bash
 cd ~/Dev/workspace_pascal/arduino/libraries/Adafruit_GFX_Library/fontconvert
 ./fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 9 32 255 \
-  > ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/FreeSans9pt8b_latin1.h
+  > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans9pt8b_latin1.h
 ```
 
 This produces a header roughly 4–5 KB in size (versus ~1.8 KB for the
@@ -125,7 +125,7 @@ ASCII-only version). Flash budget is unaffected on a 1.9 MB partition.
 Sanity check the generated file:
 
 ```bash
-grep -E "^const GFXfont " ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/FreeSans9pt8b_latin1.h
+grep -E "^const GFXfont " ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans9pt8b_latin1.h
 # Expected line ends with:  ..., 0x20, 0xFF, <yAdvance> };
 ```
 
@@ -139,8 +139,8 @@ Two things to update in `minimessenger.ino`:
 
 ```bash
 sed -i \
-  's|#include <Fonts/FreeSans9pt7b.h>|#include "FreeSans9pt8b_latin1.h"|' \
-  ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/minimessenger.ino
+  's|#include <Fonts/FreeSans9pt7b.h>|#include "fonts/FreeSans9pt8b_latin1.h"|' \
+  ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino
 ```
 
 **5b. Rename the C symbol** from `FreeSans9pt7b` to `FreeSans9pt8b`.
@@ -162,14 +162,14 @@ anchors prevent the filename `FreeSans9pt7b_latin1.h` (which has `_` after the
 
 ```bash
 sed -i 's/\bFreeSans9pt7b\b/FreeSans9pt8b/g' \
-  ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/minimessenger.ino
+  ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino
 ```
 
 Verify:
 
 ```bash
-grep -n "FreeSans9pt" ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/minimessenger.ino
-# Expected: line 97 still has `#include "FreeSans9pt8b_latin1.h"` (filename intact),
+grep -n "FreeSans9pt" ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino
+# Expected: line 97 still has `#include "fonts/FreeSans9pt8b_latin1.h"` (filename intact),
 # all `&FreeSans9ptXb` references now point at `&FreeSans9pt8b`.
 ```
 
@@ -197,7 +197,7 @@ Then rename the 5 symbol references in the sketch (the ones used as
 
 ```bash
 sed -i 's/&FreeSans[0-9]\+pt8b\b/\&CONVO_MSG_FONT/g' \
-  ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/minimessenger.ino
+  ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino
 ```
 
 The regex `FreeSans[0-9]\+pt8b` matches `FreeSans9pt8b`, `FreeSans10pt8b`,
@@ -205,7 +205,7 @@ The regex `FreeSans[0-9]\+pt8b` matches `FreeSans9pt8b`, `FreeSans10pt8b`,
 
 After this, switching to a different font becomes a 2-line change:
 ```cpp
-#include "FreeSans12pt8b_latin1.h"   // re-generated at size 12
+#include "fonts/FreeSans12pt8b_latin1.h"   // re-generated at size 12
 #define CONVO_MSG_FONT FreeSans12pt8b
 ```
 No code further down the file needs to be touched.
@@ -361,7 +361,7 @@ Not recommended for the messenger UI.
 
 ## Cleanup checklist after switching to Option B
 
-- [ ] `FreeSans9pt7b_latin1.h` committed alongside the sketch, license note
+- [ ] `FreeSans9pt8b_latin1.h` committed under `minimessenger/fonts/`, license note
       added (GNU FreeFont is GPLv3 with font exception — usable in firmware).
 - [ ] Original `#include <Fonts/FreeSans9pt7b.h>` removed.
 - [ ] `utf8ToLatin1()` called on every path that lands in `addConversationBlock`.

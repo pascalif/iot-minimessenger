@@ -1,6 +1,6 @@
 #pragma once
 // auto-generated from /home/pascal/Downloads/go1.jpg (128x128, RGB565)
-// regenerate via docs/howto_logo.md
+// regenerate via ../docs/howto_logo.md
 // paste in showSplashScreen(): pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2, splash_bmp, splash_bmp_w, splash_bmp_h);
 static const uint16_t         splash_bmp_w = 128;
 static const uint16_t         splash_bmp_h = 128;

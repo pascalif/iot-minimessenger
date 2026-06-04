@@ -8,8 +8,8 @@ counters: { BUG: 5, LOGIC: 8, EDGE: 1, MEM: 7, PERF: 8, SEC: 9, OBS: 3, DUP: 5, 
 -->
 
 **Last run:** 2026-06-02 18:30 UTC
-**Project root:** `/home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger`
-**Files scanned:** 17 (`minimessenger.ino`, `wifi.ino`, `mqtt.ino`, `commands.ino`, `contacts.ino`, `bars.ino`, `strings.ino`, `mm_blekb.cpp`, `mm_blekb.h`, `mm_log.h`, `mqtt.h`, `wifi_state.h`, `contacts.h`, `display.h`, `hid_keys.h`, `symbols.h`, `personal-data.h`)
+**Project root:** `/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger`
+**Files scanned:** 17 (`minimessenger.ino`, `wifi.ino`, `mqtt.ino`, `commands.ino`, `contacts.ino`, `bars.ino`, `strings.ino`, `mm_blekb.cpp`, `mm_blekb.h`, `mm_log.h`, `mqtt.h`, `wifi.h`, `contacts.h`, `display.h`, `hid_keys.h`, `symbols.h`, `personal-data.h`)
 
 ## Summary
 

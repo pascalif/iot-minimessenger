@@ -175,7 +175,8 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
     // model only puts it in the SCAN_RSP, force a re-bond via g_kb.setup(true, ...) to get active scan back.
     const int  bondedCount     = NimBLEDevice::getNumBonds();
     const bool hasExistingBond = (bondedCount > 0);
-    ESP_LOGI(TAG_BTKB, "Starting scan for any device advertising HID service 0x%04X (activeScan=%d, bondedCount=%d)",
+    ESP_LOGI(TAG_BTKB,
+             "Starting scan for any device advertising HID service 0x%04X (activeScan=%d, bondedCount=%d)",
              BT_SERVICE_HID_1812,
              hasExistingBond ? 0 : 1,
              bondedCount);

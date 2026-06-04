@@ -1,0 +1,1 @@
+- [Display charset restriction (TFT/GFX Latin-1)](feedback_display_charset.md) — only ASCII + Latin-1 in strings reaching the screen; em dash / ellipsis / smart quotes fail. Comments and ESP_LOGx are unaffected.

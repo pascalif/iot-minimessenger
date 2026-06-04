@@ -10,8 +10,9 @@
 // for the funnel's three-step contract (wake screen → interpret as command → otherwise route to display + MQTT).
 //
 // Arduino IDE concatenates this file with the main .ino into a single translation unit (in alphabetical order after the sketch-named file).
-// commands.ino therefore sees all of minimessenger.ino above it and can call addConversationBlock, dumpChipInfo, etc. without forward decls.
-// Symbols defined in wifi.ino (concatenated later) are reached via the forward declarations in wifi.h, which we include below.
+// commands.ino therefore sees all of minimessenger.ino above it and can call dumpChipInfo, processPayloadAsCommand, etc. without forward decls.
+// Symbols defined later (display.ino / wifi.ino) are reached via explicit forward declarations: addConversationBlock / printInfoLine* /
+// redrawAllConversations / showUpdatedInfoScreen are declared in minimessenger.ino's forward-decl block, and wifi.ino exports its API via wifi.h.
 
 #include <Arduino.h>
 #include "wifi.h"

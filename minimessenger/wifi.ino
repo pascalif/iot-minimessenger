@@ -629,7 +629,7 @@ void wifiPrintListToConversation() {
 // Portal instructions renderer for the info screen
 // ================================================================================
 //
-// Called from showUpdatedInfoScreen() in minimessenger.ino when g_wifiState == PORTAL. The caller has already drawn ID / Name / MAC / BTKB rows
+// Called from showUpdatedInfoScreen() in display.ino when g_wifiState == PORTAL. The caller has already drawn ID / Name / MAC / BTKB rows
 // and passes the current nextY by reference; we advance it for each row we paint so it can continue the layout (HELP row gets appended below).
 
 void drawPortalInstructions(Adafruit_ST7789* pDisp, int& nextY, int colHeaders, int colValues, int lineHeight) {

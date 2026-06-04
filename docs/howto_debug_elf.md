@@ -142,9 +142,9 @@ Expected output (illustrative — actual symbols depend on your build):
 0x40103c3a: WebServer::~WebServer() at libraries/WebServer/src/WebServer.cpp:120
 0x401043f5: WiFiManager::shutdownConfigPortal() at libraries/WiFiManager/WiFiManager.cpp:2845
 0x400d6907: WiFiManager::stopConfigPortal() at libraries/WiFiManager/WiFiManager.cpp:2802
-0x400d6a35: wifiStopPortal() at /home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/wifi.ino:285
-0x400d805e: wifiTick(unsigned long) at /home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/wifi.ino:172
-0x40115080: loop() at /home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/minimessenger.ino:2200
+0x400d6a35: wifiStopPortal() at /home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/wifi.ino:285
+0x400d805e: wifiTick(unsigned long) at /home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/wifi.ino:172
+0x40115080: loop() at /home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino:2200
 0x40095af5: loopTask(void*) at cores/esp32/main.cpp:73
 ```
 

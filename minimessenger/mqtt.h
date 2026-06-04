@@ -5,7 +5,7 @@ Console HiveMQ : https://console.hivemq.cloud/clusters — l'identifiant du clus
 
 Tester manuellement depuis le web-client du broker :
 
-  - Notifier qu'un device 1 est LIVE :    topic admin/liveness/1   payload "LIVE 1717459200"   (retained=true — voir docs/howto_mqtt.md)
+  - Notifier qu'un device 1 est LIVE :    topic admin/liveness/1   payload "LIVE 1717459200"   (retained=true — voir ../docs/howto_mqtt.md)
   - Notifier qu'un device 1 est mort :    topic admin/liveness/1   payload "DEAD"              (retained=true — tombstone d'état)
   - Envoyer un message à tous :           topic msg/broadcast      payload "hello"             (retained=false : évènement de chat)
 */
@@ -30,10 +30,11 @@ extern const char* g_mqttIncomingTopicBroadcast;  // msg/broadcast — subscribe
 // broker's retained store always reflects "what each device believes is its current state". Per-device topic lets a fresh subscriber to
 // admin/liveness/+ get one retained per peer in a single shot (a shared topic would only retain the last publisher). The DEAD payload doubles as
 // the MQTT Last Will, set in connect() with retained=true so the broker-detected disconnect leaves a tombstone visible to future subscribers. The
-// admin/dead topic that used to handle the Will is gone. See docs/howto_mqtt.md for the design rationale.
-#define MQTT_LIVENESS_TOPIC_PREFIX     "admin/liveness/"
-#define MQTT_LIVENESS_TOPIC_PREFIX_LEN (sizeof(MQTT_LIVENESS_TOPIC_PREFIX) - 1)  // compile-time, excludes the trailing NUL — used by the dispatch strncmp / suffix-parse path.
-#define MQTT_LIVENESS_TOPIC_WILDCARD   "admin/liveness/+"                        // single-level wildcard — matches admin/liveness/<id> for any id, not deeper paths.
+// admin/dead topic that used to handle the Will is gone. See ../docs/howto_mqtt.md for the design rationale.
+#define MQTT_LIVENESS_TOPIC_PREFIX "admin/liveness/"
+#define MQTT_LIVENESS_TOPIC_PREFIX_LEN                                                                                                                         \
+    (sizeof(MQTT_LIVENESS_TOPIC_PREFIX) - 1)             // compile-time, excludes the trailing NUL — used by the dispatch strncmp / suffix-parse path.
+#define MQTT_LIVENESS_TOPIC_WILDCARD "admin/liveness/+"  // single-level wildcard — matches admin/liveness/<id> for any id, not deeper paths.
 
 // Liveness payload subtype — the leading word of an admin/liveness/<id> payload. Wire format: "<TYPE> <epochSeconds>" for BOOT/RECO/LIVE, just
 // "DEAD" (no timestamp) for the Will. Epoch seconds rather than a formatted timestamp so the staleness check on the receiver side is a single
@@ -134,14 +135,14 @@ extern const MQTTServerInfo g_mqttServerInfo;
 // ================================================================================
 // Runtime globals defined in mqtt.ino
 // ================================================================================
-extern PubSubClient  g_mqttClient;        // PubSubClient bound to the WiFiClientSecure declared in minimessenger.ino.
-extern int           g_mqttConnectionId;  // monotonically incremented on each successful (re)connect. -1 before the first.
-extern unsigned int  g_mqttOutputMsgNextId;   // monotonic id appended to every outgoing payload (### msgId:<n>).
-extern bool          g_mqttWasConnected;  // edge-detection latch — true while connected, falls to false on the first loop iteration that sees the link down.
-extern unsigned long g_mqttLastReconnectTryTimestampMs;             // millis() of the last mqttReconnectAttempt() attempt — used to throttle retries.
-extern uint8_t       g_mqttReconnectAttempts;                       // failed attempts since the last successful (re)connect; drives mqttReconnectDelayMs().
-extern unsigned long g_mqttPreviousKeepAliveTimestampMs;            // millis() of the last admin/liveness/<id> keepalive publish.
-extern char          g_mqttOutgoingMsg[MSG_BUFFER_SIZE];            // scratch buffer used by mqttPushFormattedMessage() to assemble the payload + trailer.
+extern PubSubClient  g_mqttClient;           // PubSubClient bound to the WiFiClientSecure declared in minimessenger.ino.
+extern int           g_mqttConnectionId;     // monotonically incremented on each successful (re)connect. -1 before the first.
+extern unsigned int  g_mqttOutputMsgNextId;  // monotonic id appended to every outgoing payload (### msgId:<n>).
+extern bool          g_mqttWasConnected;     // edge-detection latch — true while connected, falls to false on the first loop iteration that sees the link down.
+extern unsigned long g_mqttLastReconnectTryTimestampMs;              // millis() of the last mqttReconnectAttempt() attempt — used to throttle retries.
+extern uint8_t       g_mqttReconnectAttempts;                        // failed attempts since the last successful (re)connect; drives mqttReconnectDelayMs().
+extern unsigned long g_mqttPreviousKeepAliveTimestampMs;             // millis() of the last admin/liveness/<id> keepalive publish.
+extern char          g_mqttOutgoingMsg[MSG_BUFFER_SIZE];             // scratch buffer used by mqttPushFormattedMessage() to assemble the payload + trailer.
 extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current unicast recipient topic — written by setRecipient(), read by routeMessage().
 
 
@@ -149,9 +150,11 @@ extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current 
 // Functions defined in mqtt.ino, callable from minimessenger.ino
 // ================================================================================
 void          setupMQTT();
-bool          mqttReconnectAttempt();       // Attempts a TLS+MQTT (re)connect; returns true on success. Driven by the loop()-level reconnect gate.
-unsigned long mqttReconnectDelayMs();       // Current reconnect-throttle interval (exponential backoff capped at MQTT_CONNECT_RETRY_MAX_MS).
-void          mqttSendLiveness(MQTTLiveness subtype);  // Publish a retained "<subtype> <epoch>" on admin/liveness/<id>. Accepts BOOT/RECO/LIVE (DEAD is reserved for the Will, see mqttReconnectAttempt()).
+bool          mqttReconnectAttempt();  // Attempts a TLS+MQTT (re)connect; returns true on success. Driven by the loop()-level reconnect gate.
+unsigned long mqttReconnectDelayMs();  // Current reconnect-throttle interval (exponential backoff capped at MQTT_CONNECT_RETRY_MAX_MS).
+void          mqttSendLiveness(
+             MQTTLiveness
+                 subtype);  // Publish a retained "<subtype> <epoch>" on admin/liveness/<id>. Accepts BOOT/RECO/LIVE (DEAD is reserved for the Will, see mqttReconnectAttempt()).
 // Append the "### ts:… deviceId:… msgId:…" trailer and publish. Returns the PubSubClient publish() result.
-bool          mqttPushFormattedMessage(const char* topic, const char* payload);
-void          onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);  // PubSubClient subscribe callback — dispatches by topic prefix.
+bool mqttPushFormattedMessage(const char* topic, const char* payload);
+void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length);  // PubSubClient subscribe callback — dispatches by topic prefix.

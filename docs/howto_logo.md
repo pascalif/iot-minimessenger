@@ -39,7 +39,7 @@ Adapter les 5 variables en haut, puis exécuter :
 
 ```bash
 SRC=~/Pictures/mon_logo.jpg
-DST=/home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/splash.h
+DST=/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/splash.h
 W=64                # largeur cible en pixels
 H=64                # hauteur cible en pixels
 NAME=splash_bmp     # nom du symbole C généré
@@ -113,7 +113,7 @@ Et sur la console (stderr, pas redirigé) :
 
 ### Câblage dans `showSplashScreen()`
 
-1. Ajouter l'include en haut de `minimessenger.ino`, à côté des autres headers projet (`display.h`, `wifi_state.h`, …) :
+1. Ajouter l'include en haut de `minimessenger.ino`, à côté des autres headers projet (`display.h`, `wifi.h`, …) :
 
 ```cpp
 #include "splash.h"
@@ -168,7 +168,7 @@ Mêmes variables qu'au-dessus + une `MODE` à choisir parmi `rgb565` / `gray8` /
 
 ```bash
 SRC=~/Pictures/mon_logo.jpg
-DST=/home/pascal/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/splash.h
+DST=/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/splash.h
 W=128
 H=128
 NAME=splash_bmp

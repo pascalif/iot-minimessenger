@@ -137,5 +137,5 @@ faster if this is a one-off.
 ## Related docs
 
 - `docs/howto_wifi.md` — current onboarding (WiFiManager + WiFiMulti + NVS).
-- `docs/howto_ota.md` — partition / OTA constraints, partly motivates the desire to shed WiFiManager weight.
+- `docs/idea_ota.md` — partition / OTA constraints, partly motivates the desire to shed WiFiManager weight.
 - `docs/howto_fonts.md` — character set restrictions that the password input must respect.

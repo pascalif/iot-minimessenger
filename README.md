@@ -20,6 +20,6 @@ hardware revision adds a battery, those topics need to be revisited.
 
 ## Code audit
 
-A tracked audit report lives at [`docs/audit_claude.md`](./docs/audit_claude.md).
+A tracked audit report lives at [`docs/audit_claude.md`](docs/audit_claude.md).
 Issues have stable IDs (`SEC-001`, `HW-002`, …) so the report survives across
 runs; the `Won't fix` section captures known intentional trade-offs.

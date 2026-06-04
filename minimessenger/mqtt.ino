@@ -52,7 +52,7 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // ================================================================================
 PubSubClient  g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
 int           g_mqttConnectionId                 = -1;
-unsigned int  g_mqttOutputMsgNextId                  = 0;
+unsigned int  g_mqttOutputMsgNextId              = 0;
 bool          g_mqttWasConnected                 = false;
 unsigned long g_mqttLastReconnectTryTimestampMs  = 0;
 unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
@@ -70,10 +70,14 @@ char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
 
 const char* mqttLivenessAsString(MQTTLiveness subtype) {
     switch (subtype) {
-        case MQTTLiveness::BOOT: return "BOOT";
-        case MQTTLiveness::RECO: return "RECO";
-        case MQTTLiveness::LIVE: return "LIVE";
-        case MQTTLiveness::DEAD: return "DEAD";
+    case MQTTLiveness::BOOT:
+        return "BOOT";
+    case MQTTLiveness::RECO:
+        return "RECO";
+    case MQTTLiveness::LIVE:
+        return "LIVE";
+    case MQTTLiveness::DEAD:
+        return "DEAD";
     }
     return "????";  // unreachable in practice — all enum values handled above. Placeholder kept so the compiler doesn't warn about missing return.
 }
@@ -87,10 +91,22 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
     if (tail != '\0' && tail != ' ') {
         return false;
     }
-    if (memcmp(payload, "BOOT", 4) == 0) { outSubtype = MQTTLiveness::BOOT; return true; }
-    if (memcmp(payload, "RECO", 4) == 0) { outSubtype = MQTTLiveness::RECO; return true; }
-    if (memcmp(payload, "LIVE", 4) == 0) { outSubtype = MQTTLiveness::LIVE; return true; }
-    if (memcmp(payload, "DEAD", 4) == 0) { outSubtype = MQTTLiveness::DEAD; return true; }
+    if (memcmp(payload, "BOOT", 4) == 0) {
+        outSubtype = MQTTLiveness::BOOT;
+        return true;
+    }
+    if (memcmp(payload, "RECO", 4) == 0) {
+        outSubtype = MQTTLiveness::RECO;
+        return true;
+    }
+    if (memcmp(payload, "LIVE", 4) == 0) {
+        outSubtype = MQTTLiveness::LIVE;
+        return true;
+    }
+    if (memcmp(payload, "DEAD", 4) == 0) {
+        outSubtype = MQTTLiveness::DEAD;
+        return true;
+    }
     return false;
 }
 
@@ -257,12 +273,18 @@ void mqttSendLiveness(MQTTLiveness subtype) {
 // Returns true if the publish was accepted by PubSubClient (sent on the wire — no broker ACK at QoS 0 so this is best-effort). Callers that need
 // to react to the failure (e.g. routeMessage tagging the local message with "[ERROR] ") should check the return value; keepalive callers can
 // safely ignore it — the next interval will retry. The `retained` flag is forwarded to the broker as-is: pass MQTT_MSG_RETAINED only for state
-// topics, MQTT_MSG_NOT_RETAINED for events (chat messages). See docs/howto_mqtt.md. Note: liveness publishes go through mqttSendLiveness() with a
+// topics, MQTT_MSG_NOT_RETAINED for events (chat messages). See ../docs/howto_mqtt.md. Note: liveness publishes go through mqttSendLiveness() with a
 // dedicated minimal payload (no trailer), they don't call this function.
 bool mqttPushFormattedMessage(const char* topic, const char* payload) {
     // The sentinel between user payload and trailer is the shared MQTT_TRAILER_SENTINEL constant from mqtt.h — same string is matched by
     // extractSenderAndStripTrailer() on the receiver side. The C string concatenation glues it into the snprintf format literal at compile time.
-    snprintf(g_mqttOutgoingMsg, MSG_BUFFER_SIZE, "%s" MQTT_TRAILER_SENTINEL "ts:%s deviceId:%d msgId:%d", payload, getCurrentDateTime(), g_deviceData.deviceId, g_mqttOutputMsgNextId);
+    snprintf(g_mqttOutgoingMsg,
+             MSG_BUFFER_SIZE,
+             "%s" MQTT_TRAILER_SENTINEL "ts:%s deviceId:%d msgId:%d",
+             payload,
+             getCurrentDateTime(),
+             g_deviceData.deviceId,
+             g_mqttOutputMsgNextId);
 
     // Publishing. Only QoS 0 is possible at publish time with PubSubClient
     bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_NOT_RETAINED);
@@ -318,7 +340,7 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
 //   - admin/liveness/<id>     drives the friend-presence LEDs / contact silhouettes (BOOT/RECO/LIVE = alive, DEAD = offline).
 //   - msg/broadcast | msg/unicast/<me>     chat traffic, funneled through routeMessage() for wake-on-input + /cmd interception + display.
 //
-// Liveness payload contract (cf. docs/howto_mqtt.md):
+// Liveness payload contract (cf. ../docs/howto_mqtt.md):
 //   "DEAD"                                  → device is offline, no timestamp.
 //   "<BOOT|RECO|LIVE> <epochSeconds>"       → device is alive at the given wall-clock epoch.
 //
@@ -402,8 +424,8 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         }
 
         // BOOT/RECO/LIVE: payload must be "<TYPE> <epoch>". The TYPE is exactly 4 chars (validated above), so the epoch field starts at offset 5.
-        const char* epochField = msgC + 5;
-        char*       endptr     = nullptr;
+        const char* epochField   = msgC + 5;
+        char*       endptr       = nullptr;
         long        payloadEpoch = strtol(epochField, &endptr, 10);
         if (endptr == epochField || payloadEpoch <= 0) {
             ESP_LOGW(TAG_MQTT, "Liveness epoch not numeric for device %d: [%s]", remoteDeviceId, msgC);

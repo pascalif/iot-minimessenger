@@ -93,7 +93,7 @@ automatically. Each file:
    purely through its exported functions, no header is needed beyond the
    prototypes (or the prototypes can themselves live in a tiny `.h` if
    you want them grouped). Two concrete examples in this project:
-   - `wifi_state.h` is the **light** case: `minimessenger.ino` never
+   - `wifi.h` is the **light** case: `minimessenger.ino` never
      reads `wifi.ino`'s globals directly (everything goes through
      `setupWifi()` / `wifiTick()` / `wifiGetState()`), so the header
      only carries the shared `WifiState` enum and the function
@@ -193,13 +193,13 @@ a `#if` flag.
 2. **Spot-check that no function got dropped or duplicated:**
    ```bash
    grep -rE '^(void|bool|int|String|char\*|static)\s+\w+\s*\(' \
-     ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/*.ino \
+     ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/*.ino \
      | wc -l
    ```
    Run before and after — the count should be identical.
 3. **`grep` for any stale forward reference:**
    ```bash
-   grep -n 'TODO\|FIXME\|XXX' ~/Dev/workspace_pascal/arduino/pascal_projects/minimessenger/*.ino
+   grep -n 'TODO\|FIXME\|XXX' ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/*.ino
    ```
 4. **Flash and smoke-test** the boot flow, BLE keystroke, MQTT publish.
    Behavior must be byte-identical because the source content is
