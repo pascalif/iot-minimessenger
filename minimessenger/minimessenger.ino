@@ -1749,7 +1749,7 @@ void showUpdatedInfoScreen() {
     int colHeaders      = 2;
     int colValues       = 66;
     int lineHeight      = 22;
-    int separatorHeight = 16;
+    int separatorHeight = 20;
 
     int nextY = 0;
 

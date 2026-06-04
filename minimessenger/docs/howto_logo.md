@@ -360,3 +360,62 @@ void setupSplashFromFS() {
 - **Logo unique, taille raisonnable (≤ 128×128), pas besoin de le changer souvent** → Option 1, basta.
 - **Plusieurs images / grandes images / changement fréquent du visuel sans reflash app** → Option 2 (LittleFS + TJpg_Decoder).
 - **Splash plein écran 240×320 en RGB565 PROGMEM** → ça passe sur ESP32 mais c'est 154 Ko de flash gaspillés pour un fichier qui ferait 20 Ko en JPG ; à ce stade l'option 2 devient justifiée.
+
+### Comparaison chiffrée — cas actuel (logo `go1.jpg`, 6870 octets, 128×128)
+
+C'est le seul logo embarqué aujourd'hui. Comparons les deux solutions
+de bout en bout, en additionnant tout ce qui finit dans la flash :
+
+| Coût flash                        | Option 1 — PROGMEM RGB565   | Option 2 — LittleFS + TJpg_Decoder        |
+|-----------------------------------|-----------------------------|-------------------------------------------|
+| Code lib TJpg_Decoder             | 0                           | ~28 Ko                                    |
+| Code lib LittleFS (core esp32)    | 0                           | ~18 Ko (selon API utilisée)               |
+| Partition LittleFS (réservée)     | 0                           | ≥ 24 Ko (minimum pratique)                |
+| Données image                     | 32 768 octets (32 Ko RGB565) | 6 870 octets (JPG quality ~80)            |
+| **Total flash consommée**         | **~32 Ko**                  | **~78 Ko** (28 + 18 + 24 + 7)             |
+
+Verdict pour un seul logo de cette taille : **Option 1 (PROGMEM) gagne
+de ~46 Ko**. Le coût fixe des deux libs + le minimum incompressible de
+la partition LittleFS plombent l'option 2 pour une si petite image
+unique.
+
+### Seuil de rentabilité — quand l'option 2 devient meilleure
+
+Comme on peut adapter le partitionnement (cf. `info_memory_mgt.md` →
+`partitions.csv`), la question pertinente est : à quel volume d'images
+LittleFS commence à être rentable ?
+
+Formule grossière, en supposant un ratio compression JPG ~5× (typique
+qualité 80 sur un logo) :
+
+```
+cout_option1(N_images, taille_RGB565_moy) = N × taille_RGB565
+cout_option2(N_images, taille_RGB565_moy) = 46 Ko (libs)
+                                          + max(24 Ko, N × taille_RGB565 / 5 × 1.1)  (partition + metadata)
+```
+
+Quelques cas concrets :
+
+| Cas d'usage                                 | Option 1                | Option 2                    | Meilleur choix |
+|---------------------------------------------|-------------------------|-----------------------------|----------------|
+| 1 logo 128×128 (actuel)                     | 32 Ko                   | ~78 Ko                      | **Option 1**   |
+| 4 logos 128×128 (= 4 × 32 Ko PROGMEM)       | 128 Ko                  | ~46 + 32 = ~78 Ko           | **Option 2**   |
+| 1 splash 240×320 plein écran                | 154 Ko                  | ~46 + 64 = ~110 Ko          | **Option 2**   |
+| 2 logos 128×128 + 1 splash 240×320          | 64 + 154 = 218 Ko       | ~46 + 80 = ~126 Ko          | **Option 2**   |
+| 1 logo 64×64                                | 8 Ko                    | ~78 Ko                      | **Option 1**   |
+
+**Règle de pouce** : option 2 devient rentable dès qu'on a soit **≥ 2-3
+images** de taille moyenne (≥ 64×64), soit **une seule image plein
+écran** (≥ 240×135). En dessous, le coût fixe des libs + partition
+n'est jamais amorti.
+
+### Pourquoi on reste sur l'option 1 aujourd'hui
+
+`go1.jpg` actuel = un seul logo 128×128, embarqué en RGB565 dans
+`splash.h`. La place perdue (~25 Ko vs un JPG décodé) est inférieure
+au coût des libs qu'il faudrait tirer pour faire mieux. Si un jour on
+ajoute (a) un second logo, (b) une animation, (c) un splash plein
+écran personnalisable par device, l'option 2 devient le bon choix
+mécaniquement — et il faudra alors aussi ajuster `partitions.csv`
+pour réserver une partition LittleFS de ~64-128 Ko (cf. exemples
+dans `info_memory_mgt.md`).
