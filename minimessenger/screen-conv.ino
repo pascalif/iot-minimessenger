@@ -5,36 +5,31 @@
 // Owns every pixel drawn into the conversation scroll area between the top status bar and the bottom input footer: incoming/outgoing message blocks
 // (with their timestamp / pseudo prefix / alignment + clustering), the "Ready" / "Lost server" system banners, and the cmd-listing rows printed by
 // /help. Also owns the HW-scroll bookkeeping that lets new messages scroll in without a full repaint.
-//
-// Arduino IDE concatenates this file with minimessenger.ino into a single translation unit (alphabetical order after the sketch-named file), so all
-// the layout constants in minimessenger.ino (FB_WIDTH, SCROLL_AREA_*, BOX_*, …), all the globals (g_disp, g_deviceData, g_drawY, g_scrollY,
-// g_lineHead, g_lineCount, lines[], g_lastMsgSenderId, …), and the HW-scroll primitives (hwScrollTo, hwScrollReset) are visible here without forward
-// decls. The TextLine struct comes from screen-conv.h (included by minimessenger.ino early enough to be visible). The ts-clustering state
-// (CONVO_TS_HIDE_THRESHOLD_S + g_lastShownTsEpoch) is owned by this file — see the Constants block below.
+
+
+
+// ================================================================================
+// Librairies
+// ================================================================================
+// Cf howto_fond pour la bascule vers une font buildée pour les accents
+//#include <Fonts/FreeSans9pt8b.h>  // Police SANS accents 9x7 au lieu de 7x5 de la font par defaut
+#include "fonts/FreeSans10pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
+#include "fonts/FreeSans9pt8b_latin1.h"   // Police AVEC accents (et 9x7 au lieu de 7x5)
+// A "null" police == Glcdfont, une police bitmap 5x7 pixels fixe, définie dans glcdfont.c., et non accessible à travers une variable
+
+// To switch font size or range (7b/8b), change the #include above + #define below
 
 
 // ================================================================================
 // Constants
 // ================================================================================
 
-#define INFO_LINE_RIGHT_COL_X 90
-
-#define CONVO_TS_COLOR         ST77XX_CYAN
+// Remote pseudo & Timestamp lines
+// -------------------------------
+#define CONVO_TS_FONT_REF  nullptr
 #define CONVO_TS_FONT_SIZE     1
+#define CONVO_TS_COLOR         ST77XX_CYAN
 #define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
-
-#define CONVO_MSG_FONT_SIZE      1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
-#define CONVO_MSG_MARGIN_BOTTOM  7  //
-#define CONVO_HELP_MARGIN_BOTTOM 4  //
-
-#define CONVO_MYSELF_COLOR ST77XX_WHITE
-#define CONVO_OTHERS_COLOR ST77XX_YELLOW
-
-#define CONVO_INFO_COLOR  ST77XX_GREEN
-#define CONVO_ERROR_COLOR ST77XX_RED
-
-// Hot pink (RGB565 ≈ #FF69B4). Used by command-output listings (help / cmd echoes) to make them visually distinct from regular messages and from info/error notices.
-#define CONVO_CMD_COLOR 0xFB56
 
 // When two messages from the SAME author land within this many seconds, suppress the second one's timestamp to declutter the conversation view.
 // "Same author" is determined by senderDeviceId (see g_lastMsgSenderId in minimessenger.ino): a sender change bypasses the clustering window and
@@ -42,12 +37,78 @@
 // timestamp" tracking continues until either (a) a message arrives outside the window OR (b) a different sender shows up, at which point the
 // timestamp is shown again.
 #define CONVO_TS_HIDE_THRESHOLD_S 10
-time_t g_lastShownTsEpoch = 0;
+
+
+// Effective user messages lines
+// ------------------------------
+#define CONVO_CMD_FONT_REF FreeSans9pt8b
+#define CONVO_CMD_COLOR 0xFB56 // Hot pink (RGB565 ≈ #FF69B4).
+#define CONVO_INFO_COLOR  ST77XX_GREEN
+#define CONVO_ERROR_COLOR ST77XX_RED
+
+
+// Command lines
+// --------------
+#define CONVO_CMD_RIGHT_COL_X 90
+#define CONVO_MSG_FONT_REF FreeSans10pt8b
+#define CONVO_MSG_FONT_SIZE  1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
+#define CONVO_MSG_MYSELF_COLOR ST77XX_WHITE
+#define CONVO_MSG_OTHERS_COLOR ST77XX_YELLOW
+#define CONVO_MSG_MARGIN_BOTTOM  7  //
+#define CONVO_HELP_MARGIN_BOTTOM 4  //
 
 
 // ================================================================================
 // Code
 // ================================================================================
+
+void setupFontTests() {
+    // ==== Font default
+    // lineAdvance : 8
+    // Bounds for text [jjjjj]: x1=0, y1=0, w=30, h=8
+    // Bounds for text [Abefg]: x1=0, y1=0, w=30, h=8
+    // Bounds for text [     ]: x1=0, y1=0, w=30, h=8
+    // Bounds for text [_____]: x1=0, y1=0, w=30, h=8
+    // ==== Font FreeSans9pt8b
+    // yAdvance : 22
+    // lineAdvance : 22
+    // Bounds for text [aaaaa]: x1=1, y1=-9, w=49, h=10
+    // Bounds for text [ttttt]: x1=1, y1=-11, w=24, h=12
+    // Bounds for text [jjjjj]: x1=0, y1=-12, w=20, h=17
+    // Bounds for text [Abefg]: x1=0, y1=-12, w=46, h=17
+    // Bounds for text [     ]: x1=0, y1=0, w=20, h=0
+    // Bounds for text [_____]: x1=0, y1=3, w=50, h=1
+
+    uint8_t        textSize    = 1;
+    String         texts[]     = { "aaaaa", "AAAAA", "ttttt", "qqqqq", "Attqq", "     ", "_____" };
+    String         fontNames[] = { "default", "FreeSans9pt8b" };
+    const GFXfont* fonts[]     = { NULL, &CONVO_MSG_FONT_REF };
+
+    int16_t  x1, y1;
+    uint16_t w, h;
+
+    for (int f = 0; f < 2; f++) {
+        ESP_LOGD(TAG_MM, "==== Font %s", fontNames[f].c_str());
+        const GFXfont* font = fonts[f];
+
+        g_disp->setFont(font);
+        g_disp->setTextSize(textSize);
+
+        uint8_t yAdvance = 8;
+        if (font != NULL) {
+            yAdvance = pgm_read_byte(&font->yAdvance);
+            ESP_LOGD(TAG_MM, "yAdvance: %u", yAdvance);
+        }
+        uint8_t lineAdvance = yAdvance * textSize;
+        ESP_LOGD(TAG_MM, "lineAdvance: %u", lineAdvance);
+
+        for (auto& text : texts) {
+            g_disp->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+            ESP_LOGD(TAG_MM, "Bounds for [%s]: x1=%d y1=%d w=%u h=%u", text.c_str(), x1, y1, w, h);
+        }
+    }
+}
+
 
 // Replay every entry of the ring buffer through the same HW-scroll draw
 // algorithm as addConversationBlockImpl. After this:
@@ -102,7 +163,7 @@ void redrawAllConversations() {
             g_disp->print(line.ts);
             fbY += line.tsHeightWithBottomMargin;
         }
-        g_disp->setFont(&CONVO_MSG_FONT);
+        g_disp->setFont(&CONVO_MSG_FONT_REF);
         g_disp->setTextSize(line.msgFontSize);
         g_disp->setTextColor(line.msgColor);
         g_disp->setCursor(line.msgX - line.msgBounds[BOX_X], fbY - line.msgBounds[BOX_Y]);
@@ -116,12 +177,12 @@ void redrawAllConversations() {
 
 // Internal one-line painter for the conversation scroll area. Not exposed in minimessenger.ino on purpose — outside callers go through the
 // printCmdInfo / printCmdError / printInfoLineNumber wrappers below.
-//   - `right` filled → `left` at x=2, `right` at x=INFO_LINE_RIGHT_COL_X. Used for /help listings (cmd name + description on the same row).
+//   - `right` filled → `left` at x=2, `right` at x=CONVO_CMD_RIGHT_COL_X. Used for /help listings (cmd name + description on the same row).
 //
 // HW-scroll primitives (g_drawY / g_scrollY / hwScrollTo) make successive calls accumulate visually like any other conversation content, and
 // hwScrollReset() drops the lot during a screen switch.
 
-void printLineLowLevelImpl(const String& left, const String& right, uint16_t color, const GFXfont* font = &CONVO_CMD_FONT) {
+void printLineLowLevelImpl(const String& left, const String& right, uint16_t color, const GFXfont* font = &CONVO_CMD_FONT_REF) {
     if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
@@ -180,7 +241,7 @@ void printLineLowLevelImpl(const String& left, const String& right, uint16_t col
 
     // Draw right at the fixed column, same baseline as left.
     if (hasRight) {
-        g_disp->setCursor(INFO_LINE_RIGHT_COL_X, g_drawY + SCROLL_AREA_Y_FB - by);
+        g_disp->setCursor(CONVO_CMD_RIGHT_COL_X, g_drawY + SCROLL_AREA_Y_FB - by);
         g_disp->print(rightBuf);
     }
 
@@ -194,6 +255,11 @@ void printLineLowLevelImpl(const String& left, const String& right, uint16_t col
 // `ts` stays by value because it's mutated locally (cleared on cluster-suppress, prefixed with the sender's pseudo); `msg` is read-only — just
 // copied into msgBuf via strncpy — so const-ref to avoid the per-call heap alloc the by-value copy would trigger on ESP32's String.
 void addConversationBlockImpl(String ts, const String& msg, uint16_t msgColor, Align align, byte senderDeviceId = DEVICE_ID_UNSET) {
+    // Function-local static buffers.
+    static time_t gs_lastShownTsEpoch = 0;
+    static byte g_lastMsgSenderId = DEVICE_ID_UNSET;
+
+
     char msgBuf[CONVO_MSG_MAX_LEN];
     strncpy(msgBuf, msg.c_str(), sizeof(msgBuf) - 1);
     msgBuf[sizeof(msgBuf) - 1] = '\0';
@@ -209,7 +275,7 @@ void addConversationBlockImpl(String ts, const String& msg, uint16_t msgColor, A
     if (!ts.isEmpty()) {
         const time_t now              = time(nullptr);
         const bool   sameSenderAsLast = (senderDeviceId == g_lastMsgSenderId);
-        const bool   insideTimeWindow = (now - g_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
+        const bool   insideTimeWindow = (now - gs_lastShownTsEpoch < CONVO_TS_HIDE_THRESHOLD_S);
 
         if (sameSenderAsLast && insideTimeWindow) {
             ts = "";  // suppressed; the empty-ts path below skips the ts row entirely
@@ -233,7 +299,7 @@ void addConversationBlockImpl(String ts, const String& msg, uint16_t msgColor, A
         // Always update the trackers when we entered this block, even if ts was suppressed: the NEXT message compares against this most recent
         // arrival, not the most recent DISPLAYED ts. Otherwise a long stream of same-sender messages would never reset and a sender change after
         // many silent clusters wouldn't bypass cleanly.
-        g_lastShownTsEpoch = now;
+        gs_lastShownTsEpoch = now;
         g_lastMsgSenderId  = senderDeviceId;
     }
 
@@ -269,7 +335,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
 */
 
     if (!ts.isEmpty()) {
-        g_disp->setFont(NULL);
+        g_disp->setFont(CONVO_TS_FONT_REF);
         g_disp->setTextSize(CONVO_TS_FONT_SIZE);
         g_disp->getTextBounds(ts, 0, 0, &tsBox[BOX_X], &tsBox[BOX_Y], (uint16_t*)&tsBox[BOX_W], (uint16_t*)&tsBox[BOX_H]);
 
@@ -280,7 +346,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     uint16_t       msgBlockHWithMargin = 0;
     static int16_t msgBox[4]           = { 0, 0, 0, 0 };
 
-    g_disp->setFont(&CONVO_MSG_FONT);
+    g_disp->setFont(&CONVO_MSG_FONT_REF);
     g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
     g_disp->getTextBounds(msgBuf, 0, 0, &msgBox[BOX_X], &msgBox[BOX_Y], (uint16_t*)&msgBox[BOX_W], (uint16_t*)&msgBox[BOX_H]);
     msgBlockHWithMargin = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
@@ -313,7 +379,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
                                tsBox,
                                msgBuf,
                                msgColor,
-                               &CONVO_MSG_FONT,
+                               &CONVO_MSG_FONT_REF,
                                CONVO_MSG_FONT_SIZE,
                                msgBlockHWithMargin,
                                msgX,
@@ -356,7 +422,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
         g_disp->print(ts);
         fbY += tsBlockHWithMargin;
     }
-    g_disp->setFont(&CONVO_MSG_FONT);
+    g_disp->setFont(&CONVO_MSG_FONT_REF);
     g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
     g_disp->setTextColor(msgColor);
     g_disp->setCursor(msgX - msgBox[BOX_X], fbY - msgBox[BOX_Y]);
@@ -391,11 +457,11 @@ void printGeneralError(const String& message) {
 
 
 void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId) {
-    addConversationBlockImpl(ts, message, CONVO_OTHERS_COLOR, LEFT, senderDeviceId);
+    addConversationBlockImpl(ts, message, CONVO_MSG_OTHERS_COLOR, LEFT, senderDeviceId);
 }
 
 void addConversationMeOKBlock(String ts, const String& message) {
-    addConversationBlockImpl(ts, message, CONVO_MYSELF_COLOR, RIGHT, g_deviceData.deviceId);
+    addConversationBlockImpl(ts, message, CONVO_MSG_MYSELF_COLOR, RIGHT, g_deviceData.deviceId);
 }
 
 void addConversationMeErrorBlock(String ts, const String& message) {

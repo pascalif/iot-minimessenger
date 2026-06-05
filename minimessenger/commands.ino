@@ -380,33 +380,33 @@ bool processDbgSubcommand(const String& message) {
 
 bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId) {
     if (message == CMD_HELP) {
-    printHelpGlobal();
-    return true;
-}
+        printHelpGlobal();
+        return true;
+    }
     if (message == CMD_STATUS) {
-    ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
-    showUpdatedInfoScreen();
-    g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
-    return true;
-}
+        ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
+        showUpdatedInfoScreen();
+        g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
+        return true;
+    }
     if (message == CMD_CLEAR) {
-    ESP_LOGI(TAG_MM, "Command [%s] — wiping conversation history + scroll area", CMD_CLEAR);
-    clearConversationHistory();
-    return true;
-}
+        ESP_LOGI(TAG_MM, "Command [%s] — wiping conversation history + scroll area", CMD_CLEAR);
+        clearConversationHistory();
+        return true;
+    }
     // Group routing: the bare prefix OR the prefix followed by a space. The trailing-space check rules out false positives like "/wifix" (no
     // such command, must not be misrouted into the WiFi dispatcher).
     if (message == GROUP_WIFI || message.startsWith(String(GROUP_WIFI) + " ")) {
-    return processWifiSubcommand(message, source, senderDeviceId);
-}
+        return processWifiSubcommand(message, source, senderDeviceId);
+    }
     if (message == GROUP_MQTT || message.startsWith(String(GROUP_MQTT) + " ")) {
-    return processMqttSubcommand(message);
-}
+        return processMqttSubcommand(message);
+    }
     if (message == GROUP_BT || message.startsWith(String(GROUP_BT) + " ")) {
-    return processBtSubcommand(message);
-}
+        return processBtSubcommand(message);
+    }
     if (message == GROUP_DBG || message.startsWith(String(GROUP_DBG) + " ")) {
-    return processDbgSubcommand(message);
-}
+        return processDbgSubcommand(message);
+    }
     return false;
 }

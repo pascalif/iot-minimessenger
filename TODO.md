@@ -7,6 +7,14 @@ Physique:
 - bouton reveil ?
 - bouton bonus ?
 
+Software:
+- pas d'accents (ï) sur pseudo (petite font par defaut non générée avec latin1) : changer de font
+
+
+Pour une éventuelle V2 si 3+ devices sont fabriqués:
+----------------------------------------------------
+- selectionner le destinataire pour faire de l'unicast
+
 
 # Features à modifier
 
@@ -17,10 +25,8 @@ Règles:
 - LED_STATUS
 
 
-===
-latin1 sur pseudo ?
-
 ====
+
 sketch.yaml et partition.csv dans le projet
 
 ================

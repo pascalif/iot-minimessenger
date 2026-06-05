@@ -8,13 +8,6 @@
 // (alphabetical order after the sketch-named file), so the globals it touches (none today — the clock state lives in the ESP-IDF SNTP module
 // directly, accessed through libc's time()/localtime_r()) and the libc time.h header pulled in from minimessenger.ino are visible here without
 // forward decls.
-//
-// What stays elsewhere:
-//   - `time_t g_lastShownTsEpoch` and `CONVO_TS_HIDE_THRESHOLD_S` live in display.ino, next to their sole consumer addConversationBlockImpl — they're
-//     conversation-clustering state, not generic wall-clock helpers.
-//   - Per-call `time(nullptr)` reads in display.ino / mqtt.ino are plain libc calls; no wrapper is provided since each call site needs a different
-//     downstream formatting (epoch comparison for clustering, epoch trailer for MQTT, etc.).
-//   - MQTT keepalive / retry intervals are MQTT-specific and stay in mqtt.h.
 
 // POSIX timezone string for Paris (Europe/Paris). Decoded:
 //   CET-1     standard time name = CET, POSIX offset -1 → human UTC+1

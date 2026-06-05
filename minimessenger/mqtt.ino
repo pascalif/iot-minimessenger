@@ -31,9 +31,9 @@ extern WiFiClientSecure g_wifiClient;
 
 // LED + display helpers called from this file (LED on after a successful connect, message routing for incoming chat messages, contact liveness LEDs).
 // Forward-declared so the auto-prototype ordering does not bite us.
-extern void  ledSetState(int pin, int requiredState);
-extern void  routeMessage(const String& message, MessageSource source, byte senderDeviceId);
-extern void  onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
+extern void ledSetState(int pin, int requiredState);
+extern void routeMessage(const String& message, MessageSource source, byte senderDeviceId);
+extern void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 // getCurrentDateTime() lives in time.ino, concatenated after mqtt.ino — explicit extern so the trailer-build call below resolves without relying on
 // auto-prototypes across .ino files.
 extern char* getCurrentDateTime();
