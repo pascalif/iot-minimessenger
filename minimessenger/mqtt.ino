@@ -30,6 +30,7 @@ extern WiFiClientSecure g_wifiClient;
 // identifyDevice() for the init path.
 
 // LED + display helpers called from this file (LED on after a successful connect, message routing for incoming chat messages, contact liveness LEDs).
+
 // Forward-declared so the auto-prototype ordering does not bite us.
 extern void ledSetState(int pin, int requiredState);
 extern void routeMessage(const String& message, MessageSource source, byte senderDeviceId);
@@ -37,6 +38,7 @@ extern void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness
 // getCurrentDateTime() lives in time.ino, concatenated after mqtt.ino — explicit extern so the trailer-build call below resolves without relying on
 // auto-prototypes across .ino files.
 extern char* getCurrentDateTime();
+
 
 // ================================================================================
 // Topic strings
@@ -60,7 +62,7 @@ unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
 uint8_t       g_mqttReconnectAttempts            = 0;
 
 // Pas partagé, mais permet d'allouer une fois pour toute dans la mémoire .bss
-char g_mqttOutgoingMsg[MSG_BUFFER_SIZE];
+char g_mqttCurrentOutgoingPayload[MQTT_PAYLOAD_MAX_LENGTH+1];
 
 char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
 
@@ -117,6 +119,8 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
 // ================================================================================
 
 void setupMQTT() {
+    g_mqttCurrentIncomingPayload.reserve(MQTT_PAYLOAD_MAX_LENGTH);
+
     // The verification mode is driven by g_mqttServerInfo.rootCA: non-null → strict verification against that CA, null → setInsecure() so mbedtls still
     // negotiates TLS but accepts whatever cert the broker presents. Calling NEITHER would leave WiFiClientSecure in its strict-no-CA default state
     // and the handshake would systematically fail with MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, so the null branch is wired explicitly to setInsecure().
@@ -307,8 +311,8 @@ void mqttSendLiveness(MQTTLiveness subtype) {
 bool mqttPushFormattedMessage(const char* topic, const char* payload) {
     // The sentinel between user payload and trailer is the shared MQTT_TRAILER_SENTINEL constant from mqtt.h — same string is matched by
     // extractSenderAndStripTrailer() on the receiver side. The C string concatenation glues it into the snprintf format literal at compile time.
-    snprintf(g_mqttOutgoingMsg,
-             MSG_BUFFER_SIZE,
+    snprintf(g_mqttCurrentOutgoingPayload,
+             MQTT_PAYLOAD_MAX_LENGTH,
              "%s" MQTT_TRAILER_SENTINEL "ts:%s deviceId:%d msgId:%d",
              payload,
              getCurrentDateTime(),
@@ -316,9 +320,9 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
              g_mqttOutputMsgNextId);
 
     // Publishing. Only QoS 0 is possible at publish time with PubSubClient
-    bool ok = g_mqttClient.publish(topic, g_mqttOutgoingMsg, MQTT_MSG_NOT_RETAINED);
+    bool ok = g_mqttClient.publish(topic, g_mqttCurrentOutgoingPayload, MQTT_MSG_NOT_RETAINED);
     if (ok) {
-        ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgNextId, topic, g_mqttOutgoingMsg);
+        ESP_LOGI(TAG_MQTT, "Published #%u to [%s]: [%s]", g_mqttOutputMsgNextId, topic, g_mqttCurrentOutgoingPayload);
     } else {
         // On failure, include state() and the payload size so we can tell apart the four PubSubClient failure modes (see CLAUDE.md / discussions):
         //   state =  0 (MQTT_CONNECTED)         → write to the socket failed mid-send (TCP buffer full, TLS error, link dropped between connected()
@@ -331,8 +335,8 @@ bool mqttPushFormattedMessage(const char* topic, const char* payload) {
                  g_mqttOutputMsgNextId,
                  topic,
                  g_mqttClient.state(),
-                 (unsigned)strlen(g_mqttOutgoingMsg),
-                 g_mqttOutgoingMsg);
+                 (unsigned)strlen(g_mqttCurrentOutgoingPayload),
+                 g_mqttCurrentOutgoingPayload);
     }
 
     g_mqttOutputMsgNextId++;
@@ -413,13 +417,17 @@ static byte extractSenderAndStripTrailer(String& message) {
 }
 
 void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (unsigned int i = 0; i < length; i++) {
-        message += (char)payload[i];
+    if (length > MQTT_PAYLOAD_MAX_LENGTH) {
+        ESP_LOGW(TAG_MQTT, "MQTT message too big. Will be truncated");
     }
-    message.trim();
 
-    ESP_LOGD(TAG_MQTT, "Incoming message [%s] -> [%s]", topic, message.c_str());
+    String g_currentIncomingPayloadFromMQTT;
+    for (unsigned int i = 0; i < std::min(length, MQTT_PAYLOAD_MAX_LENGTH); i++) {
+        g_currentIncomingPayloadFromMQTT += (char)payload[i];
+    }
+    g_currentIncomingPayloadFromMQTT.trim();
+
+    ESP_LOGD(TAG_MQTT, "Incoming message [%s] -> [%s]", topic, g_currentIncomingPayloadFromMQTT.c_str());
 
     // admin/liveness/<id> — id from the topic suffix, payload from "TYPE [epoch]".
     if (strncmp(topic, MQTT_LIVENESS_TOPIC_PREFIX, MQTT_LIVENESS_TOPIC_PREFIX_LEN) == 0) {
@@ -434,7 +442,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
             return;
         }
 
-        const char* msgC = message.c_str();
+        const char* msgC = g_currentIncomingPayloadFromMQTT.c_str();
 
         // Parse the leading TYPE word. Rejects unknown / truncated payloads (e.g. somebody manually publishing "hello" on the topic).
         MQTTLiveness subtype;
@@ -484,7 +492,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         //      identifies the echo and we drop it silently (no double-display).
         //   2. Identify the author for the UI pseudo prefix — passed through to routeMessage and ultimately to addConversationBlockImpl.
         // Messages from a web-MQTT console / mosquitto_pub have no trailer; they fall through with senderId=0 and are displayed as "ext".
-        byte senderId = extractSenderAndStripTrailer(message);
+        byte senderId = extractSenderAndStripTrailer(g_currentIncomingPayloadFromMQTT);
 
         if (senderId != 0 && senderId == g_deviceData.deviceId) {
             ESP_LOGD(TAG_MQTT, "Ignoring self-echo on [%s]", topic);
@@ -493,10 +501,10 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
 
         // Route through the common funnel: wakes the screen, intercepts CMD_*
         // commands, otherwise renders LEFT.
-        routeMessage(message, MessageSource::REMOTE, senderId);
+        routeMessage(g_currentIncomingPayloadFromMQTT, MessageSource::REMOTE, senderId);
 
     } else {
-        ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, message.c_str());
+        ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, g_currentIncomingPayloadFromMQTT.c_str());
     }
 }
 

@@ -125,24 +125,21 @@ static void cmdWifiPublishNetworksToMQTTPeer(byte recipientDeviceId) {
     char unicastTopic[MQTT_TOPIC_SIZE];
     snprintf(unicastTopic, MQTT_TOPIC_SIZE, "msg/unicast/%u", (unsigned)recipientDeviceId);
 
-    // Payload budget: MSG_BUFFER_SIZE (500) is also the size of g_mqttOutgoingMsg, into which mqttPushFormattedMessage will copy `payload` AND append
-    // the "### ts:… deviceId:… msgId:…" trailer (~60 chars worst case). We reserve 64 chars of headroom so the trailer fits without truncation.
-    char         payload[MSG_BUFFER_SIZE];
-    const size_t budget  = MSG_BUFFER_SIZE - 64;
+    char         message[MQTT_USERMSG_MAX_LENGTH+1];
     size_t       used    = 0;
-    int          written = snprintf(payload, sizeof(payload), "wifi pub:");
+    int          written = snprintf(message, sizeof(message), "wifi pub:");
     if (written > 0) {
         used = (size_t)written;
     }
 
     bool saturated = false;
-    int  published = wifiAppendKnownCredentialsToBuffer(payload, budget, used, saturated);
+    int  published = wifiAppendKnownCredentialsToBuffer(message, MQTT_USERMSG_MAX_LENGTH, used, saturated);
 
     if (published == 0) {
-        snprintf(payload, sizeof(payload), "wifi pub: (none)");
+        snprintf(message, sizeof(message), "wifi pub: (none)");
     }
 
-    bool ok = mqttPushFormattedMessage(unicastTopic, payload);
+    bool ok = mqttPushFormattedMessage(unicastTopic, message);
     if (ok) {
         ESP_LOGI(TAG_MM, "Published %d WiFi entries to [%s]%s", published, unicastTopic, saturated ? " (buffer saturated, list truncated)" : "");
     } else {

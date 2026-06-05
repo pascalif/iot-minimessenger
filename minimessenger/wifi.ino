@@ -644,6 +644,12 @@ void wifiPrintListToConversation() {
     g_wifiPrefs.end();
 }
 
+/**
+  * The method must control the available size because we never know how many
+  * networks the user has saved in the device.
+  * With current implementation, the sent message will contains a subset of the networks
+  * and WON'T TELL if it's partial or not.
+*/
 int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, bool& outSaturated) {
     outSaturated = false;
     int appended = 0;

@@ -18,16 +18,6 @@ Physique:
 
 
 
-================
-
-faire un bilan des tailles:
-- 500 pour mqtt
-- buffer staturated dans cmdWifiPublishNetworksToMQTTPeer
--
-- serial OIK
-- bt OK
-
-
 =============
 
 section debug avec tous les logs

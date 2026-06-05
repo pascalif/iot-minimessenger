@@ -319,18 +319,52 @@ bool          g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 
 // Keyboard
-// Nb max de caractères utiles. (Pas nécessaire pour éviter des overflow car on utilise une String mais on limite pour éviter
-// des problèmes d'allocation Heap et une utilisation excessive du clavier pour le fun...)
-#define BT_MSG_MAX_LENGTH 100
 
-bool   kbIsCapsLockOn           = false;
-String g_currentMsgFromKeyboard = "";
+bool kbIsCapsLockOn = false;
 
 // Insertion point inside g_currentMsgFromKeyboard, range [0, g_currentMsgFromKeyboard.length()].
 // When equal to length(), the cursor sits after the last character (default
 // state — equivalent to "append at end").
 // Mutated only via the currentMsgXxxCursor() helpers so the invariant is centrally enforced.
 size_t g_msgCursorIdx = 0;
+
+
+// Strings size management
+// ------------------------
+// We determine the allowed quantity of usefull characters in messages (add one for \0).
+// It's not absolutely required for the variables of type String (compared to char[]) but it's still
+// a good practise to avoid the OS from dynamically resizing Strings and fragmenting the heap.
+
+
+// ----- 1. Reading from Serial (if enabled by a #define switch)
+#define SERIAL_USERMSG_MAX_LENGTH 100u
+
+// ----- 2. Reading from BT keyboard
+#define BT_USERMSG_MAX_LENGTH 100u
+String g_currentMsgFromKeyboard = "";
+
+
+// ----- 3. Reading from MQTT
+// - Overestimated estimation of the max length of " ### ts:2026-06-04|14:34:27 deviceId:4 msgId:1"
+#define MQTT_EXTRA_TRAILER_RESERVE 60u
+
+// MQTT_USERMSG_MAX_LENGTH is usefull when building a message (like in a command processing)
+// independantly of the keyboard buffer.
+// We use the same length of keyboard message to have the best fit
+#define MQTT_USERMSG_MAX_LENGTH BT_USERMSG_MAX_LENGTH
+
+// Now the whole MQTT payload : message + footer
+#define MQTT_PAYLOAD_MAX_LENGTH (MQTT_USERMSG_MAX_LENGTH + MQTT_EXTRA_TRAILER_RESERVE)
+// This String is used locally in onMqttIncomingMessage() but we need to declare it globally for a .reserve() call at setup time.
+String g_mqttCurrentIncomingPayload = "";
+// char g_mqttCurrentOutgoingPayload[] is defined privately in mqtt.ino
+
+
+// Some sanities to avoid not wanted combinations
+static_assert(SERIAL_USERMSG_MAX_LENGTH + MQTT_EXTRA_TRAILER_RESERVE <= MQTT_PAYLOAD_MAX_LENGTH,
+              "Serial-typed message won't fit in MQTT buffer on subscribers sides");
+static_assert(BT_USERMSG_MAX_LENGTH + MQTT_EXTRA_TRAILER_RESERVE <= MQTT_PAYLOAD_MAX_LENGTH, "BT-typed message won't fit in MQTT buffer on subscribers sides");
+
 
 
 // ================================================================================
@@ -347,10 +381,12 @@ void redrawInputFooter();
 bool noteUserActivity();
 void routeMessage(const String& message, MessageSource source, byte senderDeviceId);
 void ledSetState(int pin, int requiredState);
-// mqttSendLiveness / mqttPushFormattedMessage / onMqttIncomingMessage prototypes provided by mqtt.h.
 void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
+
+// Prototypes in mqtt.h
+// mqttSendLiveness / mqttPushFormattedMessage / onMqttIncomingMessage
 
 // contacts.ino
 void contactsSetup();
@@ -459,14 +495,14 @@ void currentMsgInsertCharAtCursor(char c) {
     if (g_msgCursorIdx > lenBefore) {
         return;  // invariant violated — should never happen since the caller helpers clamp the cursor; bail rather than corrupting the buffer.
     }
-    if (lenBefore >= BT_MSG_MAX_LENGTH) {
+    if (lenBefore >= BT_USERMSG_MAX_LENGTH) {
         Serial.println("Too big");
         return;
     }
 
     // Cursor is at the end : normal append at the end of the string
     if (g_msgCursorIdx >= lenBefore) {
-        // In-place edit: append the char at the end (String::concat reuses the reserve(BT_MSG_MAX_LENGTH) buffer with no heap allocation as long as length stays below
+        // In-place edit: append the char at the end (String::concat reuses the reserve(BT_USERMSG_MAX_LENGTH) buffer with no heap allocation as long as length stays below
         // capacity), then if the cursor was somewhere before the end, walk the tail right one position with setCharAt so the new char ends up at the cursor.
         // This avoids the previous substring+concat reassignment which allocated four short-lived String temporaries per keystroke and fragmented the heap.
         g_currentMsgFromKeyboard.concat(c);
@@ -793,7 +829,7 @@ MiniMessengerBLEKeyboardInterface g_kb;
 
 boolean setupKeyboard() {
     ESP_LOGI(TAG_BTKB, "setupKeyboard()...");
-    g_currentMsgFromKeyboard.reserve(BT_MSG_MAX_LENGTH);
+    g_currentMsgFromKeyboard.reserve(BT_USERMSG_MAX_LENGTH);
 
     // Scan filter is now based on the HID GATT service UUID (see mm_blekb.cpp::onResult), not on the device name — no keyboard name to pass here.
     return g_kb.setup(DBG_BLE_CLEAR_BONDS_AT_SETUP, onBluetoothKeyboardConnectionCallback, onBluetoothKeyboardKeyPressedOrReleasedCallback);
@@ -1229,14 +1265,12 @@ void loop() {
     contactsTick();
 
 #ifdef FLAG_READ_SERIAL_INPUTS
-// /!\ Code OK uniquement pour un Serial qui envoit toutes les datas d'un coup, une fois la touche [Enter] appuyée (envoie "\r\n": 13,10)
-//     Si on veut tester char par char : utiliser simplement le clavier BT qui est là pour ça,
-//     ou utiliser un serial en mode Raw (minicim, screen, picocom, ou avec pyserial) et revoir le code.
-#define SERIAL_MSG_MAX_LENGTH 100
-
+    // /!\ Code OK uniquement pour un Serial qui envoit toutes les datas d'un coup, une fois la touche [Enter] appuyée (envoie "\r\n": 13,10)
+    //     Si on veut tester char par char : utiliser simplement le clavier BT qui est là pour ça,
+    //     ou utiliser un serial en mode Raw (minicim, screen, picocom, ou avec pyserial) et revoir le code.
     if (Serial.available() > 0) {
         byte nextCharIndex = 0;
-        char buffer[SERIAL_MSG_MAX_LENGTH + 1];
+        char buffer[SERIAL_USERMSG_MAX_LENGTH + 1];
 
         // Max = 5, buffer = 5+1
         // nextCharIndex 0 1 2 3 4 5
@@ -1251,7 +1285,7 @@ void loop() {
                 //ESP_LOGI(TAG_MM, "End of string detected");
             } else {
                 // Too long ?
-                if (nextCharIndex == SERIAL_MSG_MAX_LENGTH + 1) {
+                if (nextCharIndex == SERIAL_USERMSG_MAX_LENGTH + 1) {
                     //ESP_LOGI(TAG_MM, "Serial: msg too long, dropping excessive chars");
                 } else {
                     buffer[nextCharIndex] = nextChar;
