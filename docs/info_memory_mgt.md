@@ -527,7 +527,7 @@ structurées que ce que NVS gère bien :
 - **Logs** → sortis sur le port série, pas persistés.
 - **Pages web** → pas de serveur HTTP embarqué.
 - **Assets graphiques** → les fontes `FreeSans*_latin1.h` et le logo
-  `splash.h` sont des tableaux C `const` → en flash via `.rodata`,
+  `screen-splash-img.h` sont des tableaux C `const` → en flash via `.rodata`,
   accédés via cache MMU, pas besoin d'un FS pour ça.
 
 Résultat : on n'a aucun besoin actif → on supprime la partition pour

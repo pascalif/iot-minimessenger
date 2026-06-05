@@ -1,6 +1,6 @@
 # minimessenger
 
-A self-contained ESP32 (or ESP8266 D1 mini) "messenger" appliance: BLE keyboard
+A self-contained ESP32 (board ESP32 Dev Module) "messenger" appliance: BLE keyboard
 for input, ST7789 240×320 TFT for display, MQTT-over-TLS to HiveMQ Cloud as the
 transport between paired devices. Think of it as a hardware mini-WhatsApp for a
 small group of people on the same Wi-Fi network — broadcast to everyone, or

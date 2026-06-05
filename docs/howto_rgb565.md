@@ -1,6 +1,6 @@
 # How-to — RGB565 colors
 
-Quick reference for converting between the standard 24-bit RGB notation (`0xRRGGBB`, what every CSS / Photoshop / Figma picker outputs) and the 16-bit RGB565 format used by the ST7789 panel — and by every `uint16_t color` argument in `bars.ino`, `display.h`, `addConversationBlock`, `printInfoLine`, etc.
+Quick reference for converting between the standard 24-bit RGB notation (`0xRRGGBB`, what every CSS / Photoshop / Figma picker outputs) and the 16-bit RGB565 format used by the ST7789 panel — and by every `uint16_t color` argument in `bars.ino`, `screen-conv.h`, `addConversationBlock`, `printInfoLine`, etc.
 
 ## Why RGB565 and not RGB888
 

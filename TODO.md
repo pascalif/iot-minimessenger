@@ -1,6 +1,11 @@
 # Features à faire
 
-LEdt de statu consolidé (pas wifi ou pas mqtt). Necessaire si bloque sur info screen + eco d'ecran
+Physique:
+- led contact(s)
+- led de statut consolidé (pas wifi ou pas mqtt). Necessaire si bloqué sur info screen + eco d'ecran
+- bouton reset ?
+- bouton reveil ?
+- bouton bonus ?
 
 
 # Features à modifier
@@ -12,10 +17,13 @@ Règles:
 - LED_STATUS
 
 
+===
+latin1 sur pseudo ?
 
+====
+sketch.yaml et partition.csv dans le projet
 
 ================
-
 
 faire un bilan des tailles:
 - 500 pour mqtt
@@ -37,7 +45,6 @@ Si tu chasses une instabilité actuelle, je regarderais d'abord :
 
 
     return g_kb.setup(false,  // clear bonds — flip to true once if a stale bond is
-
 
 
 ================

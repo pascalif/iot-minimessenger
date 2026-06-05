@@ -1,17 +1,17 @@
 // ================================================================================
-// display.ino — Splash, info screen, conversation drawing, /help info-line printers
+// screen-conv.ino — Conversation scroll area + two-column /help printers
 // ================================================================================
 //
-// Owns the pixels of every "long-form" UI element: the boot splash, the full-screen info / status overlay, every block of the conversation
-// scroll area, and the two-column /help listings. Arduino IDE concatenates this file with minimessenger.ino into a single translation unit
-// (alphabetical order after the sketch-named file), so all the layout constants in minimessenger.ino (FB_WIDTH, FB_HEIGHT, SCROLL_AREA_*,
-// CONVO_*, INFO_LINE_RIGHT_COL_X, BOX_*, …), all the globals (g_disp, g_deviceData, g_drawY, g_scrollY, g_lineHead, g_lineCount, lines[],
-// g_inConversationMode, g_lastMsgSenderId, g_mqttClient, g_kb, …), and the HW-scroll primitives (hwScrollSetupArea(), hwScrollTo(), hwScrollReset())
-// are visible here without forward decls. The ts-clustering state (CONVO_TS_HIDE_THRESHOLD_S + g_lastShownTsEpoch) is owned by this file — see the
-// Constants block below.
+// Owns every pixel drawn into the conversation scroll area between the top status bar and the bottom input footer: incoming/outgoing message blocks
+// (with their timestamp / pseudo prefix / alignment + clustering), the "Ready" / "Lost server" system banners, and the cmd-listing rows printed by
+// /help. Also owns the HW-scroll bookkeeping that lets new messages scroll in without a full repaint.
 //
-// Bar drawing (top status bar + bottom input footer) is in bars.ino, not here. Portal-mode instructions (drawPortalInstructions, called from
-// showUpdatedInfoScreen below) live in wifi.ino since they're WiFi-state-specific.
+// Arduino IDE concatenates this file with minimessenger.ino into a single translation unit (alphabetical order after the sketch-named file), so all
+// the layout constants in minimessenger.ino (FB_WIDTH, SCROLL_AREA_*, BOX_*, …), all the globals (g_disp, g_deviceData, g_drawY, g_scrollY,
+// g_lineHead, g_lineCount, lines[], g_lastMsgSenderId, …), and the HW-scroll primitives (hwScrollTo, hwScrollReset) are visible here without forward
+// decls. The TextLine struct comes from screen-conv.h (included by minimessenger.ino early enough to be visible). The ts-clustering state
+// (CONVO_TS_HIDE_THRESHOLD_S + g_lastShownTsEpoch) is owned by this file — see the Constants block below.
+
 
 // ================================================================================
 // Constants
@@ -48,42 +48,6 @@ time_t g_lastShownTsEpoch = 0;
 // ================================================================================
 // Code
 // ================================================================================
-
-void showSplashScreen() {
-    // Show image buffer on the display hardware.
-    // Since the buffer is intialized with an Adafruit splashscreen internally, this will display the splashscreen.
-
-    if (g_deviceData.screen == DisplayType::ST7789) {
-        Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-
-        g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
-        hwScrollReset();               // ensure we draw at framebuffer Y = screen Y = 0
-
-        // Vertical layout: trois gaps égaux entourent le texte et l'image. Le texte (default 5×7 font à setTextSize(2)) est traité comme 24 px de
-        // hauteur — c'est la hauteur visuelle "encombrement" décidée côté UI, pas la hauteur de glyphe stricte (16 px) — et l'image est de
-        // splash_bmp_h (128 px). gap = (FB_HEIGHT - kTitleH - splash_bmp_h) / 3 = (320 - 24 - 128) / 3 = 56 px → texte à Y=56, image à Y=136.
-        // Avec setFont(NULL) le setCursor(y) cible le TOP du texte (pas la baseline comme avec les fontes GFX), et drawRGBBitmap place le coin
-        // haut-gauche → on peut écrire les Y directement sans compensation.
-        constexpr int16_t kTitleH = 24;
-        const int16_t     gap     = (FB_HEIGHT - kTitleH - (int16_t)splash_bmp_h) / 3;
-
-        // Title centered horizontally. Default 5×7 font at setTextSize(2) → 12 px advance per glyph. Text width = strlen × 12 ; centered X.
-        pDisp->setFont(NULL);
-        pDisp->setTextSize(2);
-        pDisp->setTextColor(ST77XX_WHITE);
-        const char* title  = "MiniMessenger !";
-        int16_t     titleW = (int16_t)strlen(title) * 12;
-        pDisp->setCursor((FB_WIDTH - titleW) / 2, gap);
-        pDisp->print(title);
-
-        // Logo Goku, centré horizontalement, positionné verticalement après texte + gap.
-        pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, gap + kTitleH + gap, splash_bmp, splash_bmp_w, splash_bmp_h);
-
-        delay(2'000);
-    } else {
-        ESP_LOGW(TAG_MM, "Display: no splash screen (display not configured)");
-    }
-}
 
 // Replay every entry of the ring buffer through the same HW-scroll draw
 // algorithm as addConversationBlockImpl. After this:
@@ -402,139 +366,6 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     g_drawY   = (g_drawY + H) % SCROLL_AREA_H;
     g_scrollY = (g_scrollY + H) % SCROLL_AREA_H;
     hwScrollTo(g_scrollY);
-}
-
-// Print `value` at (x, y) wrapping to a second line at (x, y + lineH) if it doesn't fit in `availableWidth`. Both lines start at the same x.
-// Returns the total vertical pixels consumed (lineH for a single line, 2*lineH if wrapped).
-//
-// Uses the default 5×7 font at setTextSize(2) → 12 px advance per glyph. The split prefers the rightmost natural separator
-// (':', '.', '-', '_', '/', ' ') that keeps the first half within the line, so the cut feels meaningful (e.g. a MAC splits cleanly on a colon).
-// Falls back to a hard cut at maxChars when no separator is present. A leading space on the second half is trimmed so the two lines align on x.
-static int printValueWrapped(Adafruit_ST7789* pDisp, const String& value, int x, int y, int availableWidth, int lineH) {
-    const int charW = 12;
-    int       len   = value.length();
-    pDisp->setCursor(x, y);
-    if (len * charW <= availableWidth) {
-        pDisp->print(value);
-        return lineH;
-    }
-    int maxChars   = availableWidth / charW;
-    int upperBound = (maxChars - 1 < len - 1) ? (maxChars - 1) : (len - 1);
-    int breakAt    = -1;
-    for (int i = upperBound; i > 0; i--) {
-        char c = value[i];
-        if (c == ':' || c == '.' || c == '-' || c == '_' || c == '/' || c == ' ') {
-            breakAt = i + 1;  // first half keeps the separator for visual continuity
-            break;
-        }
-    }
-    if (breakAt < 1) {
-        breakAt = maxChars;  // hard cut fallback
-    }
-    String first  = value.substring(0, breakAt);
-    String second = value.substring(breakAt);
-    while (second.length() > 0 && second[0] == ' ') {
-        second.remove(0, 1);
-    }
-    pDisp->print(first);
-    pDisp->setCursor(x, y + lineH);
-    pDisp->print(second);
-    return 2 * lineH;
-}
-
-// Draw one info-screen row: red header at colHeaders, white value at colValues (wrapped to a 2nd line via printValueWrapped if too wide).
-// Returns the row height consumed (lineHeight or 2 × lineHeight when the value wrapped) so the caller can advance nextY accordingly.
-static int drawInfoRow(Adafruit_ST7789* pDisp, const char* header, const String& value, int colHeaders, int colValues, int nextY, int lineHeight) {
-    pDisp->setTextSize(2);
-    pDisp->setCursor(colHeaders, nextY);
-    pDisp->setTextColor(ST77XX_RED);
-    pDisp->print(header);
-    pDisp->setTextColor(ST77XX_WHITE);
-    return printValueWrapped(pDisp, value, colValues, nextY, FB_WIDTH - colValues, lineHeight);
-}
-
-void showUpdatedInfoScreen() {
-    if (g_deviceData.screen != DisplayType::ST7789) {
-        ESP_LOGW(TAG_MM, "showUpdatedInfoScreen: DISPLAY_TYPE_NOT_CONFIGURED");
-        return;
-    }
-
-    String mac = getRealHardwareMAC();
-
-    // Diagnostic: trace every entry to this function with the exact state we're about to draw. Lets us tell apart 3 scenarios when the screen
-    // shows scrambled data after /status: (1) called multiple times in rapid succession (double-render race), (2) called once with wrong data
-    // (state-read bug), (3) called once with correct data (purely a rendering / VRAM-residue issue on the ST7789 side).
-    ESP_LOGI(TAG_MM,
-             "showUpdatedInfoScreen(): mac=%s ssid=%s ip=%s mqtt=%d ble=%d "
-             "wifiState=%d",
-             mac.c_str(),
-             WiFi.SSID().c_str(),
-             WiFi.localIP().toString().c_str(),
-             (int)g_mqttClient.connected(),
-             (int)g_kb.isFullyConnected(),
-             (int)wifiGetState());
-
-    Adafruit_ST7789* pDisp = (Adafruit_ST7789*)g_disp;
-
-    g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
-    hwScrollReset();               // info screen draws at fixed coordinates, scroll must be 0
-
-    pDisp->setFont(NULL);  // font par défaut
-
-    int colHeaders      = 2;
-    int colValues       = 66;
-    int lineHeight      = 22;
-    int separatorHeight = 18;
-
-    int nextY = 0;
-
-    // Top rows: device identity — always shown regardless of WiFi state since these don't depend on the network being up.
-    // Combined "ID: <id> <name>" row — replaces the previous separate "ID:" / "Name:" rows so the screen reclaims one row (~22 px) for the rest of
-    // the status info. snprintf into a stack buffer keeps the formatting explicit and avoids the 3-alloc String-concat chain.
-    char idAndNameBuf[20];  // worst case: "999 PROTO_999\0" = 14 bytes — 20 leaves slack for a longer namePrefix in the future.
-    snprintf(idAndNameBuf, sizeof(idAndNameBuf), "%d %s", g_deviceData.deviceId, g_deviceData.name());
-    nextY += drawInfoRow(pDisp, "ID:", idAndNameBuf, colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "Owner:", String(g_deviceData.pseudo), colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
-
-    nextY += separatorHeight;
-    nextY += drawInfoRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found", colHeaders, colValues, nextY, lineHeight);
-    nextY += separatorHeight;
-
-    // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
-    // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
-    // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
-    WifiState st = wifiGetState();
-    if (st == WifiState::PORTAL) {
-        drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
-    } else {
-        String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
-        String ipStr;
-        if (WiFi.status() == WL_CONNECTED) {
-            ipStr = WiFi.localIP().toString();
-        } else if (st == WifiState::TRYING_KNOWN) {
-            ipStr = "Connecting...";
-        } else if (st == WifiState::LOST) {
-            ipStr = "Lost, retrying";
-        } else {
-            ipStr = "Booting...";
-        }
-        nextY += drawInfoRow(pDisp, "SSID:", ssidStr, colHeaders, colValues, nextY, lineHeight);
-        nextY += drawInfoRow(pDisp, "IP:", ipStr, colHeaders, colValues, nextY, lineHeight);
-        nextY += separatorHeight;
-        nextY += drawInfoRow(pDisp, "MQTT:", g_mqttClient.connected() ? "OK" : "NOT OK", colHeaders, colValues, nextY, lineHeight);
-        nextY += drawInfoRow(pDisp, "NTP:", String(getTimezoneLabel()), colHeaders, colValues, nextY, lineHeight);
-    }
-
-    nextY += separatorHeight;
-
-    // Heap row — always shown, regardless of WiFi state. The largest contiguous block is the figure that matters for the TLS handshake (compared
-    // against MQTT_TLS_MIN_FREE_HEAP_B in mqttReconnectAttempt()); the free figure is the headline number most users expect to see. Format keeps both
-    // values on one row to avoid stealing two info-screen lines.
-    char heapStr[24];
-    snprintf(heapStr, sizeof(heapStr), "%u/%u", (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getFreeHeap());
-    nextY += drawInfoRow(pDisp, "HEAP:", String(heapStr), colHeaders, colValues, nextY, lineHeight);
-    nextY += drawInfoRow(pDisp, "HELP:", "/help", colHeaders, colValues, nextY, lineHeight);
 }
 
 

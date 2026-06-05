@@ -66,7 +66,7 @@ All devices share one HiveMQ Cloud broker. Topics:
 
 ## Display / conversation buffer
 
-`display.h` defines `TextLine`, a single conversation entry holding both an optional timestamp and the message, each with their own font, colour, size, X position, and pre-computed `getTextBounds` rectangle. `lines[MAX_LINES]` (40) is a ring-ish buffer: when full or when the next line would run off-screen, `addConversationBlock()` shifts the array down by one and decreases `g_nextTextTopY` by the freed height, then `redrawAllConversations()` repaints from scratch. There is no partial-redraw / hardware-scroll path — every new line redraws the full screen.
+`screen-conv.h` defines `TextLine`, a single conversation entry holding both an optional timestamp and the message, each with their own font, colour, size, X position, and pre-computed `getTextBounds` rectangle. `lines[MAX_LINES]` (40) is a ring-ish buffer: when full or when the next line would run off-screen, `addConversationBlock()` shifts the array down by one and decreases `g_nextTextTopY` by the freed height, then `redrawAllConversations()` repaints from scratch. There is no partial-redraw / hardware-scroll path — every new line redraws the full screen.
 
 Coordinate quirk worth knowing: with GFX fonts (`FreeSans9pt7b`), `getTextBounds` returns negative `y` for the bounding-box top because the cursor sits on the baseline. The drawing code compensates with `setCursor(x - bounds[BOX_X], y - bounds[BOX_Y])`. There's a long French comment in `addConversationBlock` explaining this — keep it; it documents non-obvious behaviour of the upstream library.
 

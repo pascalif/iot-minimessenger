@@ -62,6 +62,8 @@ const char* const CMD_MQTT_DROP = "/mqtt drop";
 // BLE subcommands.
 const char* const CMD_BT_CLEAN = "/bt clean";
 
+
+
 // === Help printers ============================================================
 // Each one lists the entries left-aligned in pink so it stands out from normal traffic. The global /help only shows orphan commands and the
 // group prefixes ("/wifi *", "/dbg *"); subcommands are listed only by their group's partial help. This keeps the global view short as new
@@ -235,47 +237,7 @@ static void cmdDumpMemInfo() {
     printCmdInfo("- free", String(ESP.getFreeSketchSpace() / 1024) + " KB");
 }
 
-// === Dispatchers ==============================================================
-
-// Top-level command dispatcher. Three orphan commands (/help, /status, /clear) and four prefix groups (/wifi *, /mqtt *, /bt *, /dbg *). For groups,
-// the bare prefix (e.g. "/wifi" alone with no subcommand) prints the group's partial help; a typo subcommand (e.g. "/wifi xyzzy") prints an "Unknown"
-// banner followed by the same partial help. Returns true if the message was consumed as a command (caller skips display + republish).
-//
-// `source` and `senderDeviceId` are threaded through so subcommands that need to reply via MQTT (currently only /wifi pub) can authenticate the
-// origin and address the response. For local-only commands the parameters are simply ignored. Passing them down to every sub-dispatcher (rather than
-// only /wifi) keeps the surface uniform — adding a future /mqtt-pub-style command won't require a signature change cascade.
-bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId) {
-    if (message == CMD_HELP) {
-        printHelpGlobal();
-        return true;
-    }
-    if (message == CMD_STATUS) {
-        ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
-        showUpdatedInfoScreen();
-        g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
-        return true;
-    }
-    if (message == CMD_CLEAR) {
-        ESP_LOGI(TAG_MM, "Command [%s] — wiping conversation history + scroll area", CMD_CLEAR);
-        clearConversationHistory();
-        return true;
-    }
-    // Group routing: the bare prefix OR the prefix followed by a space. The trailing-space check rules out false positives like "/wifix" (no
-    // such command, must not be misrouted into the WiFi dispatcher).
-    if (message == GROUP_WIFI || message.startsWith(String(GROUP_WIFI) + " ")) {
-        return processWifiSubcommand(message, source, senderDeviceId);
-    }
-    if (message == GROUP_MQTT || message.startsWith(String(GROUP_MQTT) + " ")) {
-        return processMqttSubcommand(message);
-    }
-    if (message == GROUP_BT || message.startsWith(String(GROUP_BT) + " ")) {
-        return processBtSubcommand(message);
-    }
-    if (message == GROUP_DBG || message.startsWith(String(GROUP_DBG) + " ")) {
-        return processDbgSubcommand(message);
-    }
-    return false;
-}
+// === Sub dispatchers ==============================================================
 
 bool processWifiSubcommand(const String& message, MessageSource source, byte senderDeviceId) {
     if (message == GROUP_WIFI) {
@@ -404,4 +366,47 @@ bool processDbgSubcommand(const String& message) {
     printCmdError("Unknown /dbg cmd");
     printHelpDbg();
     return true;
+}
+
+
+// === Top level dispatcher ==============================================================
+
+// (last in file, accessed by minimessenger.ino thanks to a forward declaration there).
+
+// Three orphan commands (/help, /status, /clear) and four prefix groups (/wifi *, /mqtt *, /bt *, /dbg *).
+//
+// For groups, the bare prefix (e.g. "/wifi" alone with no subcommand) prints the group's partial help; a typo subcommand (e.g. "/wifi xyzzy") prints an "Unknown"
+// banner followed by the same partial help. Returns true if the message was consumed as a command (caller skips display + republish).
+
+bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId) {
+    if (message == CMD_HELP) {
+    printHelpGlobal();
+    return true;
+}
+    if (message == CMD_STATUS) {
+    ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
+    showUpdatedInfoScreen();
+    g_statusScreenEndMs = millis() + STATUS_SCREEN_DURATION_MS;
+    return true;
+}
+    if (message == CMD_CLEAR) {
+    ESP_LOGI(TAG_MM, "Command [%s] — wiping conversation history + scroll area", CMD_CLEAR);
+    clearConversationHistory();
+    return true;
+}
+    // Group routing: the bare prefix OR the prefix followed by a space. The trailing-space check rules out false positives like "/wifix" (no
+    // such command, must not be misrouted into the WiFi dispatcher).
+    if (message == GROUP_WIFI || message.startsWith(String(GROUP_WIFI) + " ")) {
+    return processWifiSubcommand(message, source, senderDeviceId);
+}
+    if (message == GROUP_MQTT || message.startsWith(String(GROUP_MQTT) + " ")) {
+    return processMqttSubcommand(message);
+}
+    if (message == GROUP_BT || message.startsWith(String(GROUP_BT) + " ")) {
+    return processBtSubcommand(message);
+}
+    if (message == GROUP_DBG || message.startsWith(String(GROUP_DBG) + " ")) {
+    return processDbgSubcommand(message);
+}
+    return false;
 }

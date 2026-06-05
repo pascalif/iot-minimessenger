@@ -9,12 +9,12 @@
 // least one contact is online, LED_FRIEND_2 when at least two are, regardless of which physical contacts they are. The previous static
 // g_deviceIdFriend1/2 pair (one fixed friend per LED, declared in identifyDevice()) is gone.
 //
-// Concatenation order: this file lands after minimessenger.ino, bars.ino and commands.ino, before mqtt.ino. We therefore see all the layout /
+// Concatenation order: this file lands after minimessenger.ino, screen-conv-bars.ino and commands.ino, before mqtt.ino. We therefore see all the layout /
 // LED constants and globals defined in minimessenger.ino (DEVICE_ID_UNSET, LED_FRIEND_1, LED_STATE_ON, g_deviceData, g_statusBarDirty) and the
 // ledSetState() prototype is auto-emitted by the Arduino builder. The only #include we need is mqtt.h for MQTT_KEEPALIVE_INTERVAL_MS — it lets
 // us keep our timeout derived from the keepalive cadence in a single place rather than duplicating the number here.
 //
-// Exposed to other files purely via the accessor contactGetActiveCount() (read by bars.ino) and the entry point onReceivedContactOnline()
+// Exposed to other files purely via the accessor contactGetActiveCount() (read by screen-conv-bars.ino) and the entry point onReceivedContactOnline()
 // (called by mqtt.ino's incoming-message dispatcher via auto-prototype). No contacts.h — same "light case" pattern as wifi.h.
 
 #include "contacts.h"  // DeviceDataEntry + DeviceDataEntry::findByMac / ::findById — résolution pseudo / namePrefix / screen du contact distant.
@@ -73,7 +73,7 @@ struct ContactLastLiveData {
 
 static ContactLastLiveData g_contacts[MAX_CONTACTS];
 
-// Number of slots currently occupied. Read every ~500 ms by redrawStatusBar() in bars.ino to pick between 0/1/2-icon layouts on the top bar, and
+// Number of slots currently occupied. Read every ~500 ms by redrawStatusBar() in screen-conv-bars.ino to pick between 0/1/2-icon layouts on the top bar, and
 // also used internally by contactsApplyState() / the +/-/timeout log lines to surface the post-change count.
 int contactGetActiveCount() {
     int n = 0;

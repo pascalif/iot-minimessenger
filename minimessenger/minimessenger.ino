@@ -100,9 +100,7 @@ Docs (/docs):
 // severity is set by setupLogging() in setup().
 #include "mm_log.h"
 
-// Auto-generated splash bitmap (see ../docs/howto_logo.md). Must be a .h, not a .ino: Arduino IDE concatene les .ino apres minimessenger.ino, donc un splash.ino
-// arrive trop tard pour que showSplashScreen() voie les declarations de splash_bmp / splash_bmp_w / splash_bmp_h.
-#include "splash.h"
+
 
 // ================================================================================
 // Toggles
@@ -131,6 +129,7 @@ Docs (/docs):
 // without a remote message before the screen dims, then fully turns off.
 #define DISPLAY_IDLE_BEFORE_DIM_MS 60'000UL   // 5 min  -> dim to 50%
 #define DISPLAY_IDLE_BEFORE_OFF_MS 800'000UL  // 5 + 1 min -> panel off
+
 
 // ================================================================================
 // Hardware configuration
@@ -239,7 +238,7 @@ uint16_t g_drawY   = 0;
 #define ICON_CONTACT_X_LEFT  (ICON_CONTACT_X - 15)
 #define ICON_CONTACT_X_RIGHT (ICON_CONTACT_X)
 
-// Last-drawn-state cache + color palette + bar drawing functions all live in bars.ino. Two globals stay here because they are SET from many
+// Last-drawn-state cache + color palette + bar drawing functions all live in screen-conv-bars.ino. Two globals stay here because they are SET from many
 // places in this file (boot, mode switches, caps toggle, etc.): g_statusBarDirty toggles a forced repaint, g_lastStatusBarPollMs is the
 // debounce timer.
 bool          g_statusBarDirty      = true;
@@ -270,7 +269,7 @@ bool g_inConversationMode = false;
 #define BOX_W 2
 #define BOX_H 3
 
-#include "display.h"
+#include "screen-conv.h"
 
 const int MAX_LINES = 13;  // nombre max de lignes gardées en mémoire. Utile uniquement quand on
                            // redessine les conversations depuis l'écran de status
@@ -350,6 +349,7 @@ String g_currentMsgFromKeyboard = "";
 // Mutated only via the currentMsgXxxCursor() helpers so the invariant is centrally enforced.
 size_t g_msgCursorIdx = 0;
 
+
 // ================================================================================
 // Forward declarations — needed because the Arduino IDE's auto-prototype generator can be flaky when the sketch has multiple .ino files / mixes
 // modern C++ types in headers. List functions called from earlier in the file than their definition.
@@ -370,48 +370,38 @@ void returnToConversationsScreen();
 void clearConversationHistory();
 void resetSerialBuffer();
 
-// contacts.ino API
+// contacts.ino
 void contactsSetup();
 void contactsTick();
 void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 int  contactGetActiveCount();
 
-// display.ino
+// screen-splash.ino
 void showSplashScreen();
-void redrawAllConversations();
+
+// screen-conf.ino
 void printGeneralError(const String& message);
 void printGeneralInfo(const String& message);
 void printCmdInfo(const String& message);
 void printCmdInfo(const String& left, const String& right);
 void printCmdError(const String& message);
+void redrawAllConversations();
 void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId);
 void addConversationMeOKBlock(String ts, const String& message);
 void addConversationMeErrorBlock(String ts, const String& message);
 
-// String utilities — defined in strings.ino.
+// strings.ino.
 size_t utf8ToLatin1(char* s);
 
-// time.ino — concatenated after this file, after strings.ino but before wifi.ino.
+// time.ino
 void        setupNTP();
 char*       getCurrentDateTime();
 char*       getCurrentTime();
 const char* getTimezoneLabel();
 
-// Command layer — defined in commands.ino. routeMessage() (this file) calls processPayloadAsCommand() to interpret /cmd payloads; the rest is
-// internal to commands.ino but kept declared here too so any future caller in minimessenger.ino can resolve them without ordering surprises.
-// `source` and `senderDeviceId` are threaded down to subcommand handlers so /wifi pub (currently the only consumer) can validate the origin and
-// reply via msg/unicast/<senderId>; the other dispatchers ignore them but keep the parameter for signature symmetry.
+// commands.ino
 bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId);
-bool processWifiSubcommand(const String& message, MessageSource source, byte senderDeviceId);
-bool processMqttSubcommand(const String& message);
-bool processBtSubcommand(const String& message);
-bool processDbgSubcommand(const String& message);
 
-void printHelpGlobal();
-void printHelpWifi();
-void printHelpMqtt();
-void printHelpBt();
-void printHelpDbg();
 
 // ================================================================================
 // Logging

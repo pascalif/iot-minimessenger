@@ -1,5 +1,5 @@
-#ifndef DISPLAY_H
-#define DISPLAY_H
+#ifndef SCREEN_CONV_H
+#define SCREEN_CONV_H
 
 // Fixed-size storage for one conversation entry. Putting these in char[] (BSS)
 // instead of String (heap) is what makes the conversation buffer immune to

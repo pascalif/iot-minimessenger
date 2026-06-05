@@ -1,13 +1,13 @@
 // ================================================================================
-// bars.ino — Top status bar + bottom keyboard bar: color palette, helpers, drawing functions
+// screen-conv-bars.ino — Top status bar + bottom keyboard bar: color palette, helpers, drawing functions
 // ================================================================================
 //
 // Owns every pixel painted into the two fixed strips (TFA = top status bar, BFA = bottom keyboard input footer). Arduino IDE concatenates this
-// file with the main .ino into a single translation unit (alphabetical order after the sketch-named file, so bars.ino lands right after
+// file with the main .ino into a single translation unit (alphabetical order after the sketch-named file, so screen-conv-bars.ino lands right after
 // minimessenger.ino). Consequence: all the layout constants in minimessenger.ino above (STATUS_BAR_H, FOOTER_H, FOOTER_Y_FB, FB_WIDTH,
 // ICON_*_X, ICON_RADIUS, ICON_Y_CENTER, g_disp, g_statusBarDirty, g_inConversationMode, g_kb, …) are visible here without forward decls.
 //
-// Why colocate constants + functions in the same .ino rather than splitting into bars.h + bars.ino: pure #defines in a separate .ino file
+// Why colocate constants + functions in the same .ino rather than splitting into bars.h + screen-conv-bars.ino: pure #defines in a separate .ino file
 // would be invisible to any earlier-concatenated file. Keeping the call sites of every color macro inside this same TU section means we can
 // rename / retune palette entries with a single grep here. Same pattern as commands.ino (CMD_* constants + dispatcher together).
 

@@ -23,7 +23,7 @@ Adafruit_GFX expose `drawRGBBitmap(int16_t x, int16_t y, const uint16_t *bitmap,
 
 On va :
 1. Redimensionner et convertir l'image (JPG/PNG/…) en raw RGB888 avec Pillow.
-2. Encoder chaque pixel en RGB565 et écrire un `splash.h` prêt à `#include`r en haut de `minimessenger.ino` (un `.ino` ne marcherait pas — cf. encadré « Pourquoi `.h` et pas `.ino` ? » plus bas).
+2. Encoder chaque pixel en RGB565 et écrire un `screen-splash-img.h` prêt à `#include`r en haut de `minimessenger.ino` (un `.ino` ne marcherait pas — cf. encadré « Pourquoi `.h` et pas `.ino` ? » plus bas).
 
 ### Pré-requis
 
@@ -39,7 +39,7 @@ Adapter les 5 variables en haut, puis exécuter :
 
 ```bash
 SRC=~/Pictures/mon_logo.jpg
-DST=/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/splash.h
+DST=/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/screen-splash-img.h
 W=64                # largeur cible en pixels
 H=64                # hauteur cible en pixels
 NAME=splash_bmp     # nom du symbole C généré
@@ -84,7 +84,7 @@ print(f"\n--> a coller dans showSplashScreen():\n  {oneliner}\n", file=sys.stder
 PY
 ```
 
-Sortie attendue dans `splash.h` :
+Sortie attendue dans `screen-splash-img.h` :
 
 ```cpp
 #pragma once
@@ -103,7 +103,7 @@ Et sur la console (stderr, pas redirigé) :
 
 ```
 --> ajouter en haut de minimessenger.ino (avec les autres includes projet):
-  #include "splash.h"
+  #include "screen-splash-img.h"
 
 --> a coller dans showSplashScreen():
   pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2, splash_bmp, splash_bmp_w, splash_bmp_h);
@@ -113,10 +113,10 @@ Et sur la console (stderr, pas redirigé) :
 
 ### Câblage dans `showSplashScreen()`
 
-1. Ajouter l'include en haut de `minimessenger.ino`, à côté des autres headers projet (`display.h`, `wifi.h`, …) :
+1. Ajouter l'include en haut de `minimessenger.ino`, à côté des autres headers projet (`screen-conv.h`, `wifi.h`, …) :
 
 ```cpp
-#include "splash.h"
+#include "screen-splash-img.h"
 ```
 
 2. Remplacer le bloc actuel autour de `minimessenger.ino:1396` :
@@ -168,7 +168,7 @@ Mêmes variables qu'au-dessus + une `MODE` à choisir parmi `rgb565` / `gray8` /
 
 ```bash
 SRC=~/Pictures/mon_logo.jpg
-DST=/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/splash.h
+DST=/home/pascal/Dev/workspace_pascal/iot-minimessenger/minimessenger/screen-splash-img.h
 W=128
 H=128
 NAME=splash_bmp
@@ -412,7 +412,7 @@ n'est jamais amorti.
 ### Pourquoi on reste sur l'option 1 aujourd'hui
 
 `go1.jpg` actuel = un seul logo 128×128, embarqué en RGB565 dans
-`splash.h`. La place perdue (~25 Ko vs un JPG décodé) est inférieure
+`screen-splash-img.h`. La place perdue (~25 Ko vs un JPG décodé) est inférieure
 au coût des libs qu'il faudrait tirer pour faire mieux. Si un jour on
 ajoute (a) un second logo, (b) une animation, (c) un splash plein
 écran personnalisable par device, l'option 2 devient le bon choix
