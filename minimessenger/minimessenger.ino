@@ -102,6 +102,11 @@ Docs (/docs):
 
 #define WITH_LOGS
 
+// Use true to remove any trace of existing BLE bonds (e.g. if a stale bond is blocking pairing with a new physical keyboard)
+// Better : a dynamic way to remove bonds : use the MM command `/bt clear` at runtime
+#define DBG_BLE_CLEAR_BONDS_AT_SETUP false
+
+
 // ================================================================================
 // User configuration
 // ================================================================================
@@ -285,13 +290,6 @@ Adafruit_GFX* g_disp = NULL;
 DisplayPowerState g_displayPowerState = DISPLAY_ON;
 unsigned long     g_lastActivityMs    = 0;
 
-// Serial
-#ifdef FLAG_READ_SERIAL_INPUTS
-#define MAX_SERIAL_MSG_LENGTH 100
-char g_fullMsgFromSerial[MAX_SERIAL_MSG_LENGTH + 1];
-char g_inChar;
-byte g_inNextCharIndex = 0;
-#endif
 
 // Messaging — per-device identity
 // Device IDs are unsigned bytes [0..255]. 0xFF is the "unset" sentinel — only used by contacts.ino as the free-slot marker for the dynamic peer
@@ -321,6 +319,10 @@ bool          g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 
 // Keyboard
+// Nb max de caractères utiles. (Pas nécessaire pour éviter des overflow car on utilise une String mais on limite pour éviter
+// des problèmes d'allocation Heap et une utilisation excessive du clavier pour le fun...)
+#define BT_MSG_MAX_LENGTH 100
+
 bool   kbIsCapsLockOn           = false;
 String g_currentMsgFromKeyboard = "";
 
@@ -349,7 +351,6 @@ void ledSetState(int pin, int requiredState);
 void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
-void resetSerialBuffer();
 
 // contacts.ino
 void contactsSetup();
@@ -456,19 +457,29 @@ void currentMsgClear() {
 void currentMsgInsertCharAtCursor(char c) {
     const size_t lenBefore = g_currentMsgFromKeyboard.length();
     if (g_msgCursorIdx > lenBefore) {
-        return;  // invariant violated — should never happen since the caller helpers
-                 // clamp the cursor; bail rather than corrupting the buffer.
+        return;  // invariant violated — should never happen since the caller helpers clamp the cursor; bail rather than corrupting the buffer.
     }
-    // In-place edit: append the char at the end (String::concat reuses the reserve(100) buffer with no heap allocation as long as length stays below
-    // capacity), then if the cursor was somewhere before the end, walk the tail right one position with setCharAt so the new char ends up at the cursor.
-    // This avoids the previous substring+concat reassignment which allocated four short-lived String temporaries per keystroke and fragmented the heap.
-    g_currentMsgFromKeyboard.concat(c);
-    if (g_msgCursorIdx < lenBefore) {
+    if (lenBefore >= BT_MSG_MAX_LENGTH) {
+        Serial.println("Too big");
+        return;
+    }
+
+    // Cursor is at the end : normal append at the end of the string
+    if (g_msgCursorIdx >= lenBefore) {
+        // In-place edit: append the char at the end (String::concat reuses the reserve(BT_MSG_MAX_LENGTH) buffer with no heap allocation as long as length stays below
+        // capacity), then if the cursor was somewhere before the end, walk the tail right one position with setCharAt so the new char ends up at the cursor.
+        // This avoids the previous substring+concat reassignment which allocated four short-lived String temporaries per keystroke and fragmented the heap.
+        g_currentMsgFromKeyboard.concat(c);
+    }
+    // Cursor in the middle
+    else {
+        // Move every char of the right side of the cursor to its right position, then include the new char at cursor position:
         for (size_t i = lenBefore; i > g_msgCursorIdx; i--) {
             g_currentMsgFromKeyboard.setCharAt(i, g_currentMsgFromKeyboard.charAt(i - 1));
         }
         g_currentMsgFromKeyboard.setCharAt(g_msgCursorIdx, c);
     }
+
     g_msgCursorIdx++;
     ESP_LOGD(TAG_BTKB, "Insert [%c] at %u → msg=[%s] cur=%u", c, (unsigned)(g_msgCursorIdx - 1), g_currentMsgFromKeyboard.c_str(), (unsigned)g_msgCursorIdx);
     redrawInputFooter();
@@ -667,7 +678,7 @@ void onBluetoothKeyboardConnectionCallback(bool isFullyConnected) {
     refreshInfoScreenIfShown();
 }
 
-static void onBluetoothKeyboardNotifyCallback(uint8_t* pData, size_t length) {
+static void onBluetoothKeyboardKeyPressedOrReleasedCallback(uint8_t* pData, size_t length) {
     decodeHIDReport(pData, length);
 }
 
@@ -782,15 +793,10 @@ MiniMessengerBLEKeyboardInterface g_kb;
 
 boolean setupKeyboard() {
     ESP_LOGI(TAG_BTKB, "setupKeyboard()...");
-
-    g_currentMsgFromKeyboard.reserve(100);
+    g_currentMsgFromKeyboard.reserve(BT_MSG_MAX_LENGTH);
 
     // Scan filter is now based on the HID GATT service UUID (see mm_blekb.cpp::onResult), not on the device name — no keyboard name to pass here.
-    return g_kb.setup(false,  // clear bonds — flip to true once if a stale bond is
-                              // blocking pairing with a new physical keyboard;
-                              // prefer `cmd bonds` at runtime
-                      onBluetoothKeyboardConnectionCallback,
-                      onBluetoothKeyboardNotifyCallback);
+    return g_kb.setup(DBG_BLE_CLEAR_BONDS_AT_SETUP, onBluetoothKeyboardConnectionCallback, onBluetoothKeyboardKeyPressedOrReleasedCallback);
 }
 
 // ================================================================================
@@ -1041,8 +1047,8 @@ void routeMessage(const String& message, MessageSource source, byte senderDevice
     ESP_LOGI(TAG_MM, "Routing raw msg from deviceId [%d] : [%s] ", senderDeviceId, message.c_str());
 
     // Step 1 — always wake the screen. We ignore noteUserActivity()'s "was sleeping" return value
-    // which is consumed ONLY when using the keyboard to swallow the first char on wake to avoid
-    // typing accidental characters). A remote or serial text must be consumed fully.
+    // which is consumed ONLY when using the KEYBOARD to swallow the first char on wake to avoid
+    // typing accidental characters). We want a remote or serial text to be displayed fully.
     noteUserActivity();
 
     // Step 2 — if it's a known command, execute and stop. No display, no
@@ -1162,17 +1168,7 @@ void setup() {
     // MQTT (server + callback registration) and TLS verification mode — independent of the WiFi link being up, safe at any point after setupWifi().
     setupMQTT();
 
-    resetSerialBuffer();
-
     ESP_LOGI(TAG_MM, "setup() completed");
-}
-
-void resetSerialBuffer() {
-    // Reset g_inNextCharIndex and clean buffer (then no need to add '\0' at end of current msg)
-    g_inNextCharIndex = 0;
-    for (int i = 0; i <= MAX_SERIAL_MSG_LENGTH; i++) {
-        g_fullMsgFromSerial[i] = 0;
-    }
 }
 
 bool g_firstLoop = true;
@@ -1233,34 +1229,41 @@ void loop() {
     contactsTick();
 
 #ifdef FLAG_READ_SERIAL_INPUTS
-    // Add a new char to the buffer
-    while (Serial.available() > 0) {
-        g_inChar = Serial.read();
+// /!\ Code OK uniquement pour un Serial qui envoit toutes les datas d'un coup, une fois la touche [Enter] appuyée (envoie "\r\n": 13,10)
+//     Si on veut tester char par char : utiliser simplement le clavier BT qui est là pour ça,
+//     ou utiliser un serial en mode Raw (minicim, screen, picocom, ou avec pyserial) et revoir le code.
+#define SERIAL_MSG_MAX_LENGTH 100
 
-        // Wake screen on any serial char but do not swallow the char
-        noteUserActivity();
+    if (Serial.available() > 0) {
+        byte nextCharIndex = 0;
+        char buffer[SERIAL_MSG_MAX_LENGTH + 1];
 
-        // 'Enter key' : send message
-        if (g_inChar == '\n') {
-            if (g_inNextCharIndex > 0) {
-                ESP_LOGI(TAG_MM, "Serial: read msg #%u: %s", g_mqttOutputMsgNextId, g_fullMsgFromSerial);
-                routeMessage(String(g_fullMsgFromSerial), MessageSource::LOCAL, g_deviceData.deviceId);
-                resetSerialBuffer();
+        // Max = 5, buffer = 5+1
+        // nextCharIndex 0 1 2 3 4 5
+        // appends...... H e l l o \r
+        // envoyé....... H e l l o \0
+
+        while (Serial.available() > 0) {
+            int nextChar = Serial.read();
+            //ESP_LOGI(TAG_MM, "[%d] [%c]", nextChar, nextChar);
+
+            if (nextChar == '\n') {
+                //ESP_LOGI(TAG_MM, "End of string detected");
             } else {
-                // Message is empty. Do nothing
-                ESP_LOGD(TAG_MM, "Serial: empty message, skipping publish");
-            }
-        } else {
-            // Too long ?
-            if (g_inNextCharIndex >= MAX_SERIAL_MSG_LENGTH) {
-                // Force reset all
-                ESP_LOGW(TAG_MM, "Serial: msg too long, dropping it");
-                resetSerialBuffer();
-            } else {
-                g_fullMsgFromSerial[g_inNextCharIndex] = g_inChar;
-                g_inNextCharIndex++;
+                // Too long ?
+                if (nextCharIndex == SERIAL_MSG_MAX_LENGTH + 1) {
+                    //ESP_LOGI(TAG_MM, "Serial: msg too long, dropping excessive chars");
+                } else {
+                    buffer[nextCharIndex] = nextChar;
+                    nextCharIndex++;
+                }
             }
         }
+
+        // Remplace le \r par un \0 pour clore la chaine
+        buffer[nextCharIndex - 1] = '\0';
+        ESP_LOGI(TAG_MM, "Serial: read msg #%u: [%s]", g_mqttOutputMsgNextId, buffer);
+        routeMessage(String(buffer), MessageSource::LOCAL, g_deviceData.deviceId);
     }
 #endif
 

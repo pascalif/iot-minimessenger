@@ -52,7 +52,8 @@ AllowShortLoopsOnASingleLine: false
 # par clang-format mais stable en pratique sur du code C/C++ standard. Inverse de RemoveBracesLLVM — ne PAS activer les deux à la fois.
 # DÉSACTIVÉ : Arduino IDE 2.3.9 bundle clang-format 14, qui ne connaît pas cette clé et refuse de parser le fichier (→ Ctrl+T tombe sur les défauts).
 # La règle "braces obligatoires" reste à maintenir manuellement. À ré-activer quand l'IDE upgrade son clang-format à v16+.
-# InsertBraces: true
+# Remis depuis qu'on formatte depuis IJ (avec plugin "clang-format tools"
+InsertBraces: true
 
 
 # Alignement

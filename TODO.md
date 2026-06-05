@@ -7,35 +7,25 @@ Physique:
 - bouton reveil ?
 - bouton bonus ?
 
-Software:
+
+## Pour une éventuelle V2 si 3+ devices sont fabriqués:
 - pas d'accents (ï) sur pseudo (petite font par defaut non générée avec latin1) : changer de font
-
-
-Pour une éventuelle V2 si 3+ devices sont fabriqués:
-----------------------------------------------------
 - selectionner le destinataire pour faire de l'unicast
+- sketch.yaml dans le projet (fix les libs et indique la partition)
 
 
 # Features à modifier
 
-Mettre en cohérence la status bar et les leds sachant que les leds sont structurées differement:
-- une led de status LED_STATUS pour indiquer visuellement quand on est loin du device s'il est opérationnel à 100% ou si il y a un probleme
-- une (pour l'instant) led d'ami pour indiquer que son device est connecté au réseau.
-Règles:
-- LED_STATUS
 
-
-====
-
-sketch.yaml et partition.csv dans le projet
 
 ================
 
 faire un bilan des tailles:
 - 500 pour mqtt
-- serial ?
-- bt ?
 - buffer staturated dans cmdWifiPublishNetworksToMQTTPeer
+-
+- serial OIK
+- bt OK
 
 
 =============
@@ -89,7 +79,12 @@ Tu veux qu'on bascule en full event-driven en branchant les 3 endroits ci-dessus
 
 # Tools à suivre
 
-## .clang-format:
+## .clang-format 1
+
+Une option désactivé car clang-format pas encore compatible
+
+
+## .clang-format 2
 
 REgarde ce commentaire reformaté:
 #define KEY_ERR_OVF                                                                                                                                            \
