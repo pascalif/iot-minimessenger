@@ -152,10 +152,8 @@ Docs (/docs):
 // STT7789v pins, vue de dessus : GND, VCC, SCL, SDA, RST, DC, CS
 // - TFT_SCL : D18 = GPIO18 "SCK" by default
 // - TFT_SDA : D23 = GPIO23 "MOSI" by default
-#define TFT_RST                                                                                                                                                        \
-    GPIO_NUM_NC  // not wired — the ST7789 has an internal Power-On Reset, see                                                                       \         \ \ \ \ \
-                 // ../docs/info_tft_rst.md
-#define TFT_DC GPIO_NUM_2  // Data/Command select
+#define TFT_RST GPIO_NUM_NC  // not wired — the ST7789 has an internal Power-On Reset, see  ../docs/info_tft_rst.md
+#define TFT_DC  GPIO_NUM_2   // Data/Command select
 
 // Chip select — MUST be wired to a real GPIO on this module. Empirically tested: tying the TFT's CS pin to GND on the breadboard side and setting
 // `TFT_CS = GPIO_NUM_NC` (so Adafruit_SPITFT skips every CS digitalWrite via its `if (_cs >= 0)` guard) leaves the panel dark — only the backlight

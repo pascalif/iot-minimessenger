@@ -85,3 +85,28 @@ immédiatement quand rien n'a changé, le coût est négligeable (4 lectures de 
 Tu veux qu'on bascule en full event-driven en branchant les 3 endroits ci-dessus, ou on laisse le polling tel quel pour la robustesse ?
 
 =================
+
+
+# Tools à suivre
+
+## .clang-format:
+
+REgarde ce commentaire reformaté:
+#define KEY_ERR_OVF                                                                                                                                            \
+      0x01  //  Keyboard Error Roll Over - used for all slots if too many keys are                                                                               \
+            //  pressed ("Phantom key")
+
+Comment empecher l'ajout de "\" en fin de ligne qd c'est un commentaire ?
+
+Claude responded: C'est un bug connu de clang-format : il traite les commentaires dans un #define multiligne comme du code
+et ajoute des \ inutiles.C'est un bug connu de clang-format : il traite les commentaires dans un #define multiligne comme du code et ajoute des \ inutiles.
+
+La solution est d'ajouter dans ton .clang-format :
+yamlAlignEscapedNewlines: DontAlign
+
+Mais ça ne résout pas totalement le problème des commentaires dans les macros. La vraie solution est de mettre le commentaire avant ou après le #define :
+cpp// Keyboard Error Roll Over - used for all slots if too many keys are
+// pressed ("Phantom key")
+#define KEY_ERR_OVF 0x01
+
+Clang-format n'a pas d'option pour distinguer un commentaire de fin de ligne dans une macro — c'est une limitation connue et non résolue du tool.

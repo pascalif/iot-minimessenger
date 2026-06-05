@@ -26,7 +26,7 @@
 
 // Remote pseudo & Timestamp lines
 // -------------------------------
-#define CONVO_TS_FONT_REF  nullptr
+#define CONVO_TS_FONT_REF      nullptr
 #define CONVO_TS_FONT_SIZE     1
 #define CONVO_TS_COLOR         ST77XX_CYAN
 #define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
@@ -42,18 +42,18 @@
 // Effective user messages lines
 // ------------------------------
 #define CONVO_CMD_FONT_REF FreeSans9pt8b
-#define CONVO_CMD_COLOR 0xFB56 // Hot pink (RGB565 ≈ #FF69B4).
-#define CONVO_INFO_COLOR  ST77XX_GREEN
-#define CONVO_ERROR_COLOR ST77XX_RED
+#define CONVO_CMD_COLOR    0xFB56  // Hot pink (RGB565 ≈ #FF69B4).
+#define CONVO_INFO_COLOR   ST77XX_GREEN
+#define CONVO_ERROR_COLOR  ST77XX_RED
 
 
 // Command lines
 // --------------
-#define CONVO_CMD_RIGHT_COL_X 90
-#define CONVO_MSG_FONT_REF FreeSans10pt8b
-#define CONVO_MSG_FONT_SIZE  1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
-#define CONVO_MSG_MYSELF_COLOR ST77XX_WHITE
-#define CONVO_MSG_OTHERS_COLOR ST77XX_YELLOW
+#define CONVO_CMD_RIGHT_COL_X    90
+#define CONVO_MSG_FONT_REF       FreeSans10pt8b
+#define CONVO_MSG_FONT_SIZE      1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
+#define CONVO_MSG_MYSELF_COLOR   ST77XX_WHITE
+#define CONVO_MSG_OTHERS_COLOR   ST77XX_YELLOW
 #define CONVO_MSG_MARGIN_BOTTOM  7  //
 #define CONVO_HELP_MARGIN_BOTTOM 4  //
 
@@ -257,7 +257,7 @@ void printLineLowLevelImpl(const String& left, const String& right, uint16_t col
 void addConversationBlockImpl(String ts, const String& msg, uint16_t msgColor, Align align, byte senderDeviceId = DEVICE_ID_UNSET) {
     // Function-local static buffers.
     static time_t gs_lastShownTsEpoch = 0;
-    static byte g_lastMsgSenderId = DEVICE_ID_UNSET;
+    static byte   g_lastMsgSenderId   = DEVICE_ID_UNSET;
 
 
     char msgBuf[CONVO_MSG_MAX_LEN];
@@ -300,7 +300,7 @@ void addConversationBlockImpl(String ts, const String& msg, uint16_t msgColor, A
         // arrival, not the most recent DISPLAYED ts. Otherwise a long stream of same-sender messages would never reset and a sender change after
         // many silent clusters wouldn't bypass cleanly.
         gs_lastShownTsEpoch = now;
-        g_lastMsgSenderId  = senderDeviceId;
+        g_lastMsgSenderId   = senderDeviceId;
     }
 
     // Dimension TS
