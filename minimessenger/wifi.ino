@@ -15,7 +15,7 @@
 //   WIFI_PORTAL → WIFI_TRYING_KNOWN           after WIFI_PORTAL_TIMEOUT_MS without configuration (retry known nets)
 //   WIFI_CONNECTED → WIFI_LOST                when WiFi.status() != WL_CONNECTED
 //   WIFI_LOST → WIFI_CONNECTED                when WiFiMulti.run() succeeds again
-//   WIFI_LOST → WIFI_PORTAL                   when WIFI_LOST persists more than WIFI_LOST_TO_WIFI_PORTAL_MS
+//   WIFI_LOST → WIFI_PORTAL                   when WIFI_LOST persists more than WIFI_LOST_TO_PORTAL_MS
 //
 // NVS layout (namespace "wifi"):
 //   - "count" (uint8): index of the first free slot (0..MAX_WIFI_NETWORKS). Slots before it MAY contain empty strings if a /wifi forget left a
@@ -49,7 +49,7 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 #define WIFI_TRYING_KNOWN_TIMEOUT_MS 45'000
 #define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: WIFI_PORTAL auto-closes and the state machine reverts to  WIFI_TRYING_KNOWN for one more pass.
 #define WIFI_LOST_RETRY_INTERVAL_MS       5'000      // how often we call WiFiMulti.run() inside the WIFI_LOST state.
-#define WIFI_LOST_TO_WIFI_PORTAL_MS       60'000     // if the connection has been WIFI_LOST for more than this, drop into WIFI_PORTAL (router probably gone).
+#define WIFI_LOST_TO_PORTAL_MS       60'000     // if the connection has been WIFI_LOST for more than this, drop into WIFI_PORTAL (router probably gone).
 
 // WIFI_BOOT_EXCLUSIVE_GRACE_MS is declared in wifi.h (not here) because it's used by setup() in minimessenger.ino too, and the Arduino IDE
 // concatenates minimessenger.ino BEFORE wifi.ino — so a #define here is not visible from there.
@@ -253,10 +253,10 @@ void wifiTick(unsigned long currentMillis) {
                 return;
             }
         }
-        // After WIFI_LOST_TO_WIFI_PORTAL_MS of failed retries, the AP is likely gone for good (moved house, router replaced, …). Open the WIFI_PORTAL so the
+        // After WIFI_LOST_TO_PORTAL_MS of failed retries, the AP is likely gone for good (moved house, router replaced, …). Open the WIFI_PORTAL so the
         // user can add a new network without rebuilding firmware.
-        if (currentMillis - g_wifiStateEnteredMs >= WIFI_LOST_TO_WIFI_PORTAL_MS) {
-            ESP_LOGW(TAG_WIFI, "WIFI_LOST for %lu ms — falling back to WIFI_PORTAL", (unsigned long)WIFI_LOST_TO_WIFI_PORTAL_MS);
+        if (currentMillis - g_wifiStateEnteredMs >= WIFI_LOST_TO_PORTAL_MS) {
+            ESP_LOGW(TAG_WIFI, "WIFI_LOST for %lu ms — falling back to WIFI_PORTAL", (unsigned long)WIFI_LOST_TO_PORTAL_MS);
             wifiTransitionTo(WifiState::WIFI_PORTAL);
         }
         return;
@@ -425,7 +425,7 @@ static void wifiOnPortalSave() {
     }
 
     // Signal to wifiStopPortal() that WiFiManager will tear down the WIFI_PORTAL on its own (it does so right after this callback returns when STA
-    // association succeeded). Prevents the double-stopConfigWIFI_PORTAL() that previously caused a LoadProhibited panic.
+    // association succeeded). Prevents the double-stopConfigPortal() that previously caused a LoadProhibited panic.
     g_wifiPortalSelfClosed = true;
 }
 
@@ -670,6 +670,7 @@ int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, b
     int    emittedCount = 0;
 
     // Helper: try to append one "\n<ssid>|<pwd>" row, return true on success. Roll back to the previous NUL position and set outSaturated on overflow.
+    // "[&] = capture all locale variables from the outer function
     auto tryAppend = [&](const char* ssid, const char* pwd) -> bool {
         int needed = snprintf(buffer + used, cap - used, "\n%s|%s", ssid, pwd ? pwd : "");
         if (needed < 0 || (size_t)needed >= cap - used) {
@@ -727,7 +728,7 @@ int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, b
 }
 
 // ================================================================================
-// WIFI_PORTAL instructions renderer for the info screen
+// Portal instructions renderer for the info screen
 // ================================================================================
 //
 // Called from showUpdatedInfoScreen() in display.ino when g_wifiState == WIFI_PORTAL. The caller has already drawn ID / Name / MAC / BTKB rows

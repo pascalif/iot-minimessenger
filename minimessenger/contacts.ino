@@ -78,7 +78,7 @@ int contactGetActiveCount() {
 // actually paint instead of getting cached out.
 static void contactsApplyState() {
     const int count = contactGetActiveCount();
-    ledSetState(LED_FRIEND, (count >= 1) ? LED_STATE_ON : LED_STATE_OFF);
+    ledSetState(LED_FRIEND, (count >= 1) ? LedState::LED_STATE_ON : LedState::LED_STATE_OFF);
     g_statusBarDirty = true;
 }
 

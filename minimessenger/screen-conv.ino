@@ -14,7 +14,7 @@
 // Cf howto_fond pour la bascule vers une font buildée pour les accents
 //#include <Fonts/FreeSans9pt8b.h>  // Police SANS accents 9x7 au lieu de 7x5 de la font par defaut
 #include "fonts/FreeSans10pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
-#include "fonts/FreeSans9pt8b_latin1.h"   // Police AVEC accents (et 9x7 au lieu de 7x5)
+#include "fonts/FreeSans09pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
 // A "null" police == Glcdfont, une police bitmap 5x7 pixels fixe, définie dans glcdfont.c., et non accessible à travers une variable
 
 // To switch font size or range (7b/8b), change the #include above + #define below
@@ -41,7 +41,7 @@
 
 // Effective user messages lines
 // ------------------------------
-#define CONVO_CMD_FONT_REF FreeSans9pt8b
+#define CONVO_CMD_FONT_REF FreeSans09pt8b
 #define CONVO_CMD_COLOR    0xFB56  // Hot pink (RGB565 ≈ #FF69B4).
 #define CONVO_INFO_COLOR   ST77XX_GREEN
 #define CONVO_ERROR_COLOR  ST77XX_RED
@@ -61,54 +61,6 @@
 // ================================================================================
 // Code
 // ================================================================================
-
-void setupFontTests() {
-    // ==== Font default
-    // lineAdvance : 8
-    // Bounds for text [jjjjj]: x1=0, y1=0, w=30, h=8
-    // Bounds for text [Abefg]: x1=0, y1=0, w=30, h=8
-    // Bounds for text [     ]: x1=0, y1=0, w=30, h=8
-    // Bounds for text [_____]: x1=0, y1=0, w=30, h=8
-    // ==== Font FreeSans9pt8b
-    // yAdvance : 22
-    // lineAdvance : 22
-    // Bounds for text [aaaaa]: x1=1, y1=-9, w=49, h=10
-    // Bounds for text [ttttt]: x1=1, y1=-11, w=24, h=12
-    // Bounds for text [jjjjj]: x1=0, y1=-12, w=20, h=17
-    // Bounds for text [Abefg]: x1=0, y1=-12, w=46, h=17
-    // Bounds for text [     ]: x1=0, y1=0, w=20, h=0
-    // Bounds for text [_____]: x1=0, y1=3, w=50, h=1
-
-    uint8_t        textSize    = 1;
-    String         texts[]     = { "aaaaa", "AAAAA", "ttttt", "qqqqq", "Attqq", "     ", "_____" };
-    String         fontNames[] = { "default", "FreeSans9pt8b" };
-    const GFXfont* fonts[]     = { NULL, &CONVO_MSG_FONT_REF };
-
-    int16_t  x1, y1;
-    uint16_t w, h;
-
-    for (int f = 0; f < 2; f++) {
-        ESP_LOGD(TAG_MM, "==== Font %s", fontNames[f].c_str());
-        const GFXfont* font = fonts[f];
-
-        g_disp->setFont(font);
-        g_disp->setTextSize(textSize);
-
-        uint8_t yAdvance = 8;
-        if (font != NULL) {
-            yAdvance = pgm_read_byte(&font->yAdvance);
-            ESP_LOGD(TAG_MM, "yAdvance: %u", yAdvance);
-        }
-        uint8_t lineAdvance = yAdvance * textSize;
-        ESP_LOGD(TAG_MM, "lineAdvance: %u", lineAdvance);
-
-        for (auto& text : texts) {
-            g_disp->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-            ESP_LOGD(TAG_MM, "Bounds for [%s]: x1=%d y1=%d w=%u h=%u", text.c_str(), x1, y1, w, h);
-        }
-    }
-}
-
 
 // Replay every entry of the ring buffer through the same HW-scroll draw
 // algorithm as addConversationBlockImpl. After this:

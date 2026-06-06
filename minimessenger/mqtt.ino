@@ -227,7 +227,7 @@ bool mqttReconnectAttempt() {
         g_mqttReconnectAttempts = 0;  // success — reset the backoff so a future outage starts at BASE_MS
                                       // again instead of inheriting the previous wait.
         g_mqttConnectionId++;
-        updateLedAggregatedStatus();
+        updateLedAggregatedErrorStatus();
 
         // Send public liveness. First successful connect since boot → BOOT; any subsequent reconnect → RECO. The keepalive ticks fired from the loop()
         // gate use LIVE — see minimessenger.ino.

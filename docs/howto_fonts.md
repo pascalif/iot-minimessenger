@@ -116,7 +116,7 @@ Generate FreeSans 9pt with the Latin-1 glyph range `[0x20, 0xFF]` = `[32, 255]`:
 ```bash
 cd ~/Dev/workspace_pascal/arduino/libraries/Adafruit_GFX_Library/fontconvert
 ./fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 9 32 255 \
-  > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans9pt8b_latin1.h
+  > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans09pt8b_latin1.h
 ```
 
 This produces a header roughly 4–5 KB in size (versus ~1.8 KB for the
@@ -125,7 +125,7 @@ ASCII-only version). Flash budget is unaffected on a 1.9 MB partition.
 Sanity check the generated file:
 
 ```bash
-grep -E "^const GFXfont " ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans9pt8b_latin1.h
+grep -E "^const GFXfont " ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans09pt8b_latin1.h
 # Expected line ends with:  ..., 0x20, 0xFF, <yAdvance> };
 ```
 
@@ -139,7 +139,7 @@ Two things to update in `minimessenger.ino`:
 
 ```bash
 sed -i \
-  's|#include <Fonts/FreeSans9pt7b.h>|#include "fonts/FreeSans9pt8b_latin1.h"|' \
+  's|#include <Fonts/FreeSans9pt7b.h>|#include "fonts/FreeSans09pt8b_latin1.h"|' \
   ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino
 ```
 
@@ -169,7 +169,7 @@ Verify:
 
 ```bash
 grep -n "FreeSans9pt" ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/minimessenger.ino
-# Expected: line 97 still has `#include "fonts/FreeSans9pt8b_latin1.h"` (filename intact),
+# Expected: line 97 still has `#include "fonts/FreeSans09pt8b_latin1.h"` (filename intact),
 # all `&FreeSans9ptXb` references now point at `&FreeSans9pt8b`.
 ```
 
@@ -361,12 +361,8 @@ Not recommended for the messenger UI.
 
 ## Cleanup checklist after switching to Option B
 
-- [ ] `FreeSans9pt8b_latin1.h` committed under `minimessenger/fonts/`, license note
-      added (GNU FreeFont is GPLv3 with font exception — usable in firmware).
-- [ ] Original `#include <Fonts/FreeSans9pt7b.h>` removed.
 - [ ] `utf8ToLatin1()` called on every path that lands in `addConversationBlock`.
-- [ ] MQTT outgoing payloads still in UTF-8 (verify by subscribing from a
-      desktop client — `mosquitto_sub` with `-v` shows raw bytes).
+- [ ] MQTT outgoing payloads still in UTF-8 (verify by subscribing from a desktop client — `mosquitto_sub` with `-v` shows raw bytes).
 - [ ] Smoke test: send `"àéèçôîÿ"` over MQTT and Serial; both render on the TFT.
 
 ## Limitations of Latin-1

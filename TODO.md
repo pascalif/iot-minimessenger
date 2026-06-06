@@ -1,22 +1,12 @@
 # Features à faire
 
-Physique:
--allumé
-- probleme
-- contact 1+
--
--
-- bouton reset ?
-- bouton reveil ?
-- bouton bonus ?
-
-- ecran test fonts sizes
+- Connecter des boutons (au moins un pour le reveil)
 
 
 ## Pour une éventuelle V2 si 3+ devices sont fabriqués:
 - pas d'accents (ï) sur pseudo (petite font par defaut non générée avec latin1) : changer de font
 - selectionner le destinataire pour faire de l'unicast
-- sketch.yaml dans le projet (fix les libs et indique la partition)
+- sketch.yaml dans le projet (fixer la partition puis les libs)
 
 
 # Features à modifier

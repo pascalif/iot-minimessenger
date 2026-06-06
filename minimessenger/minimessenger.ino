@@ -139,9 +139,9 @@ Docs (/docs):
 // `D5` silkscreen on the HW-394 / DOIT V1 board (Dxx = GPIOxx on this board family — but NOT on D1 mini, where D2 = GPIO4).
 // (2) The sentinel `GPIO_NUM_NC = -1` documents "this pin is intentionally not connected", which is clearer than a bare `-1` literal.
 
-#define LED_POWER_ON GPIO_NUM_25
-#define LED_ERROR_STATUS   GPIO_NUM_33
-#define LED_FRIEND   GPIO_NUM_32
+#define LED_POWER_ON     GPIO_NUM_25
+#define LED_ERROR_STATUS GPIO_NUM_33
+#define LED_FRIEND       GPIO_NUM_32
 
 
 // Scren configuration
@@ -181,9 +181,8 @@ Docs (/docs):
 // ================================================================================
 
 // === Hardware scroll state (ST7789, portrait, partitioned framebuffer) ===
-// FB_HEIGHT is the ST7789 framebuffer height in its NATIVE portrait
-// orientation. The scroll commands (VSCRDEF / VSCSAD) always operate on
-// framebuffer coordinates, irrespective of setRotation().
+// FB_HEIGHT is the ST7789 framebuffer height in its NATIVE portrait orientation.
+// The scroll commands (VSCRDEF / VSCSAD) always operate on framebuffer coordinates, irrespective of setRotation().
 //
 // We partition the 320 framebuffer lines into three regions:
 //   [0, 25)             Top Fixed Area     → status bar (indicators)
@@ -304,18 +303,22 @@ unsigned long     g_lastActivityMs    = 0;
 // method `g_deviceData.name()` (defined as a member of DeviceDataEntry in contacts.h).
 DeviceDataEntry g_deviceData;
 
-#define LED_STATE_NOT_CONFIGURED -1
-#define LED_STATE_OFF            0
-#define LED_STATE_ON             1
-#define LED_STATE_BLINK_FAST     2
-#define LED_STATE_BLINK_SLOW     3
+enum class LedState {
+    LED_STATE_NOT_CONFIGURED,
+    LED_STATE_OFF,
+    LED_STATE_ON,
+    LED_STATE_BLINK_FAST,
+    LED_STATE_BLINK_SLOW,
+};
+
+
 // LED arrays are indexed by raw GPIO pin number (ledSetState(pin, …) → g_ledRequiredState[pin] = …). The ESP32 exposes GPIOs up to 39, so the arrays
 // must be sized to cover that range — otherwise ledSetState(32, …) writes 32 bytes past a too-small array and corrupts adjacent BSS globals. The
 // previously-used value of 17 came from the D1 mini era (ESP8266, GPIO 0..16) and stealthily wrote on top of adjacent identity BSS globals on ESP32,
 // producing 0x02 (LED_STATE_BLINK_FAST as a byte → rendered as a smiley by the Adafruit GLCD font) at the offset matching LED_ERROR_STATUS=GPIO32 minus
 // the array's actual length. 40 covers the full ESP32 GPIO range (0..39); bump to 48 if porting to ESP32-S2/S3/C3 with larger GPIO maps.
 #define LED_QTY 40
-byte          g_ledRequiredState[LED_QTY];
+LedState      g_ledRequiredState[LED_QTY];
 bool          g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 
@@ -380,7 +383,7 @@ void redrawStatusBar();
 void redrawInputFooter();
 bool noteUserActivity();
 void routeMessage(const String& message, MessageSource source, byte senderDeviceId);
-void ledSetState(int pin, int requiredState);
+void ledSetState(int pin, LedState requiredState);
 void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
@@ -395,7 +398,6 @@ int  contactGetActiveCount();
 void showSplashScreen();
 
 // screen-conv.ino
-void setupFontTests();
 void printGeneralError(const String& message);
 void printGeneralInfo(const String& message);
 void printCmdInfo(const String& message);
@@ -405,6 +407,10 @@ void redrawAllConversations();
 void addConversationOtherBlock(String ts, const String& message, byte senderDeviceId);
 void addConversationMeOKBlock(String ts, const String& message);
 void addConversationMeErrorBlock(String ts, const String& message);
+
+// screen-fonts.ino
+void fontsTestSizeComputation();
+void fontsTestRenderMiscFonts();
 
 // strings.ino.
 size_t utf8ToLatin1(char* s);
@@ -806,16 +812,16 @@ void updateLedAggregatedErrorStatus() {
 
     ESP_LOGI(TAG_MM, "updateLedAggregatedErrorStatus wifi=%d mqtt=%d", wifi, mqtt);
 
-    ledSetState( LED_ERROR_STATUS, (!wifi || !mqtt ? LED_STATE_ON : LED_STATE_OFF) );
+    ledSetState(LED_ERROR_STATUS, (!wifi || !mqtt ? LedState::LED_STATE_ON : LedState::LED_STATE_OFF));
 }
 
-void ledSetState(int pin, int requiredState) {
+void ledSetState(int pin, LedState requiredState) {
     ESP_LOGD(TAG_MM, "led pin=%d state=%d", pin, requiredState);
     g_ledRequiredState[pin] = requiredState;
 
-    if (requiredState == LED_STATE_OFF) {
+    if (requiredState == LedState::LED_STATE_OFF) {
         digitalWrite(pin, LOW);
-    } else if (requiredState == LED_STATE_ON) {
+    } else if (requiredState == LedState::LED_STATE_ON) {
         digitalWrite(pin, HIGH);
     } else {
         g_ledBlinkStateIsHigh[pin]     = false;
@@ -847,12 +853,12 @@ void setupLeds() {
     }
 
     for (int pin = 0; pin < LED_QTY; pin++) {
-        g_ledRequiredState[pin] = LED_STATE_NOT_CONFIGURED;
+        g_ledRequiredState[pin] = LedState::LED_STATE_NOT_CONFIGURED;
     }
 
-    ledSetState(LED_POWER_ON, LED_STATE_ON);
-    ledSetState(LED_ERROR_STATUS, LED_STATE_BLINK_FAST);
-    ledSetState(LED_FRIEND, LED_STATE_OFF);
+    ledSetState(LED_POWER_ON, LedState::LED_STATE_ON);
+    ledSetState(LED_ERROR_STATUS, LedState::LED_STATE_BLINK_FAST);
+    ledSetState(LED_FRIEND, LedState::LED_STATE_OFF);
 }
 
 // ================================================================================
@@ -1142,9 +1148,11 @@ void setup() {
     identifyDevice();
 
     setupDisplay();
-    contactsSetup();
 
-    //setupFontTests();
+    //fontsTestSizeComputation();
+    fontsTestRenderMiscFonts();
+
+    contactsSetup();
 
     showSplashScreen();
     showUpdatedInfoScreen();
@@ -1194,7 +1202,7 @@ void loop() {
     if (!g_mqttClient.connected()) {
         if (g_mqttWasConnected) {
             g_mqttWasConnected = false;
-            ledSetState(LED_ERROR_STATUS, LED_STATE_BLINK_FAST);
+            ledSetState(LED_ERROR_STATUS, LedState::LED_STATE_BLINK_FAST);
 
             // Only surface the MQTT-down banner when WiFi is actually up. If the link is down, the WiFi block above already showed "WiFi lost" and a
             // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
@@ -1275,11 +1283,11 @@ void loop() {
 
     // Blinking leds management
     for (int pin = 0; pin < LED_QTY; pin++) {
-        if (g_ledRequiredState[pin] == LED_STATE_BLINK_FAST) {
+        if (g_ledRequiredState[pin] == LedState::LED_STATE_BLINK_FAST) {
             if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_FAST_DURATION_MS) {
                 ledCommuteBlinkState(pin);
             }
-        } else if (g_ledRequiredState[pin] == LED_STATE_BLINK_SLOW) {
+        } else if (g_ledRequiredState[pin] == LedState::LED_STATE_BLINK_SLOW) {
             if (currentMillis - g_ledBlinkLastTimestampMs[pin] > LED_BLINK_SLOW_DURATION_MS) {
                 ledCommuteBlinkState(pin);
             }

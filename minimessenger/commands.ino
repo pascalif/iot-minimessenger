@@ -125,9 +125,9 @@ static void cmdWifiPublishNetworksToMQTTPeer(byte recipientDeviceId) {
     char unicastTopic[MQTT_TOPIC_SIZE];
     snprintf(unicastTopic, MQTT_TOPIC_SIZE, "msg/unicast/%u", (unsigned)recipientDeviceId);
 
-    char         message[MQTT_USERMSG_MAX_LENGTH+1];
-    size_t       used    = 0;
-    int          written = snprintf(message, sizeof(message), "wifi pub:");
+    char   message[MQTT_USERMSG_MAX_LENGTH + 1];
+    size_t used    = 0;
+    int    written = snprintf(message, sizeof(message), "wifi pub:");
     if (written > 0) {
         used = (size_t)written;
     }
@@ -378,6 +378,10 @@ bool processDbgSubcommand(const String& message) {
 bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId) {
     if (message == CMD_HELP) {
         printHelpGlobal();
+        return true;
+    }
+    if (message == "/fonts") {
+        fontsTestRenderMiscFonts();
         return true;
     }
     if (message == CMD_STATUS) {
