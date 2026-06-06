@@ -137,12 +137,12 @@ extern const MQTTServerInfo g_mqttServerInfo;
 // Runtime globals defined in mqtt.ino
 // ================================================================================
 extern PubSubClient g_mqttClient;                                    // PubSubClient bound to the WiFiClientSecure declared in minimessenger.ino.
-extern int g_mqttConnectionId;                                       // monotonically incremented on each successful (re)connect. -1 before the first.
+extern int          g_mqttConnectionId;                              // monotonically incremented on each successful (re)connect. -1 before the first.
 extern unsigned int g_mqttOutputMsgNextId;                           // monotonic id appended to every outgoing payload (### msgId:<n>).
-extern bool g_mqttWasConnected;                                      // edge-detection latch — true while connected, falls to false on the first loop iteration
+extern bool         g_mqttWasConnected;                              // edge-detection latch — true while connected, falls to false on the first loop iteration
                                                                      // that sees the link down.
 extern unsigned long g_mqttLastReconnectTryTimestampMs;              // millis() of the last mqttReconnectAttempt() attempt — used to throttle retries.
-extern uint8_t g_mqttReconnectAttempts;                              // failed attempts since the last successful (re)connect; drives mqttReconnectDelayMs().
+extern uint8_t       g_mqttReconnectAttempts;                        // failed attempts since the last successful (re)connect; drives mqttReconnectDelayMs().
 extern unsigned long g_mqttPreviousKeepAliveTimestampMs;             // millis() of the last admin/liveness/<id>  keepalive publish.
 extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current unicast recipient topic — written by setRecipient(), read by routeMessage().
 

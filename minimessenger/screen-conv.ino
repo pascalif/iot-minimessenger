@@ -9,24 +9,12 @@
 
 
 // ================================================================================
-// Librairies
-// ================================================================================
-// Cf howto_fond pour la bascule vers une font buildée pour les accents
-//#include <Fonts/FreeSans9pt8b.h>  // Police SANS accents 9x7 au lieu de 7x5 de la font par defaut
-#include "fonts/FreeSans10pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
-#include "fonts/FreeSans09pt8b_latin1.h"  // Police AVEC accents (et 9x7 au lieu de 7x5)
-// A "null" police == Glcdfont, une police bitmap 5x7 pixels fixe, définie dans glcdfont.c., et non accessible à travers une variable
-
-// To switch font size or range (7b/8b), change the #include above + #define below
-
-
-// ================================================================================
 // Constants
 // ================================================================================
 
 // Remote pseudo & Timestamp lines
 // -------------------------------
-#define CONVO_TS_FONT_REF      nullptr
+#define CONVO_TS_FONT_REF      FREESANS_ACCENTS_08_1PX
 #define CONVO_TS_FONT_SIZE     1
 #define CONVO_TS_COLOR         ST77XX_CYAN
 #define CONVO_TS_MARGIN_BOTTOM 3  // avec font par defaut: 3
@@ -41,20 +29,22 @@
 
 // Effective user messages lines
 // ------------------------------
-#define CONVO_CMD_FONT_REF FreeSans09pt8b
-#define CONVO_CMD_COLOR    0xFB56  // Hot pink (RGB565 ≈ #FF69B4).
-#define CONVO_INFO_COLOR   ST77XX_GREEN
-#define CONVO_ERROR_COLOR  ST77XX_RED
+#define CONVO_CMD_FONT_REF  FREESANS_ACCENTS_13_3PX
+#define CONVO_CMD_COLOR     0xFB56  // Hot pink (RGB565 ≈ #FF69B4).
+#define CONVO_CMD_FONT_SIZE 1
+#define CONVO_INFO_COLOR    ST77XX_GREEN
+#define CONVO_ERROR_COLOR   ST77XX_RED
 
 
 // Command lines
 // --------------
+#define CONVO_MSG_FONT_REF      FREESANS_ACCENTS_15_3PX
+#define CONVO_MSG_FONT_SIZE     1
+#define CONVO_MSG_MYSELF_COLOR  ST77XX_WHITE
+#define CONVO_MSG_OTHERS_COLOR  ST77XX_YELLOW
+#define CONVO_MSG_MARGIN_BOTTOM 7  //
+
 #define CONVO_CMD_RIGHT_COL_X    90
-#define CONVO_MSG_FONT_REF       FreeSans10pt8b
-#define CONVO_MSG_FONT_SIZE      1  // 2 est vraiment trop énorme avec la font FreeSans9pt8b
-#define CONVO_MSG_MYSELF_COLOR   ST77XX_WHITE
-#define CONVO_MSG_OTHERS_COLOR   ST77XX_YELLOW
-#define CONVO_MSG_MARGIN_BOTTOM  7  //
 #define CONVO_HELP_MARGIN_BOTTOM 4  //
 
 
@@ -108,14 +98,14 @@ void redrawAllConversations() {
 
         uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
         if (line.ts[0] != '\0') {
-            g_disp->setFont(NULL);
+            g_disp->setFont(line.tsFont);
             g_disp->setTextSize(line.tsFontSize);
             g_disp->setTextColor(line.tsColor);
             g_disp->setCursor(line.tsX - line.tsBounds[BOX_X], fbY - line.tsBounds[BOX_Y]);
             g_disp->print(line.ts);
             fbY += line.tsHeightWithBottomMargin;
         }
-        g_disp->setFont(&CONVO_MSG_FONT_REF);
+        g_disp->setFont(line.msgFont);
         g_disp->setTextSize(line.msgFontSize);
         g_disp->setTextColor(line.msgColor);
         g_disp->setCursor(line.msgX - line.msgBounds[BOX_X], fbY - line.msgBounds[BOX_Y]);
@@ -134,7 +124,7 @@ void redrawAllConversations() {
 // HW-scroll primitives (g_drawY / g_scrollY / hwScrollTo) make successive calls accumulate visually like any other conversation content, and
 // hwScrollReset() drops the lot during a screen switch.
 
-void printLineLowLevelImpl(const String& left, const String& right, uint16_t color, const GFXfont* font = &CONVO_CMD_FONT_REF) {
+void printLineLowLevelImpl(const String& left, const String& right, uint16_t color) {
     if (g_deviceData.screen != DisplayType::ST7789) {
         return;
     }
@@ -151,8 +141,8 @@ void printLineLowLevelImpl(const String& left, const String& right, uint16_t col
     utf8ToLatin1(rightBuf);
     const bool hasRight = (rightBuf[0] != '\0');
 
-    g_disp->setFont(font);
-    g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
+    g_disp->setFont(CONVO_CMD_FONT_REF);
+    g_disp->setTextSize(CONVO_CMD_FONT_SIZE);
     g_disp->setTextColor(color);
 
     // Measure left for the row height. getTextBounds returns the bbox of the EXACT string (not the font's max metrics) — lines without
@@ -298,7 +288,7 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     uint16_t       msgBlockHWithMargin = 0;
     static int16_t msgBox[4]           = { 0, 0, 0, 0 };
 
-    g_disp->setFont(&CONVO_MSG_FONT_REF);
+    g_disp->setFont(CONVO_MSG_FONT_REF);
     g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
     g_disp->getTextBounds(msgBuf, 0, 0, &msgBox[BOX_X], &msgBox[BOX_Y], (uint16_t*)&msgBox[BOX_W], (uint16_t*)&msgBox[BOX_H]);
     msgBlockHWithMargin = msgBox[BOX_H] + CONVO_MSG_MARGIN_BOTTOM;
@@ -324,14 +314,14 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     int writeIdx    = (g_lineHead + g_lineCount) % MAX_LINES;
     lines[writeIdx] = TextLine(ts,
                                CONVO_TS_COLOR,
-                               NULL,
+                               CONVO_TS_FONT_REF,
                                CONVO_TS_FONT_SIZE,
                                tsBlockHWithMargin,
                                tsX,
                                tsBox,
                                msgBuf,
                                msgColor,
-                               &CONVO_MSG_FONT_REF,
+                               CONVO_MSG_FONT_REF,
                                CONVO_MSG_FONT_SIZE,
                                msgBlockHWithMargin,
                                msgX,
@@ -367,14 +357,14 @@ Pas besoin d'ajouter l'opposé de y : h est déjà calculé comme la distance en
     // above).
     uint16_t fbY = g_drawY + SCROLL_AREA_Y_FB;
     if (!ts.isEmpty()) {
-        g_disp->setFont(NULL);
+        g_disp->setFont(CONVO_TS_FONT_REF);
         g_disp->setTextSize(CONVO_TS_FONT_SIZE);
         g_disp->setTextColor(CONVO_TS_COLOR);
         g_disp->setCursor(tsX - tsBox[BOX_X], fbY - tsBox[BOX_Y]);
         g_disp->print(ts);
         fbY += tsBlockHWithMargin;
     }
-    g_disp->setFont(&CONVO_MSG_FONT_REF);
+    g_disp->setFont(CONVO_MSG_FONT_REF);
     g_disp->setTextSize(CONVO_MSG_FONT_SIZE);
     g_disp->setTextColor(msgColor);
     g_disp->setCursor(msgX - msgBox[BOX_X], fbY - msgBox[BOX_Y]);

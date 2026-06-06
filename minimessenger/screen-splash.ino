@@ -6,6 +6,9 @@
 // screen-splash-img.ino arrive trop tard pour que showSplashScreen() voie les declarations de splash_bmp / splash_bmp_w / splash_bmp_h.
 #include "screen-splash-img.h"
 
+#define SPLASH_FONT_REF  FONT_DEFAULT_07_0PX
+#define SPLASH_FONT_SIZE 2
+
 
 // Owns the pixels painted at boot before the runtime UI takes over: a centered title text and the auto-generated Goku bitmap from
 // screen-splash-img.h. Arduino IDE concatenates this file with minimessenger.ino into a single TU, so the layout constants (FB_WIDTH, FB_HEIGHT),
@@ -31,8 +34,8 @@ void showSplashScreen() {
         const int16_t     gap     = (FB_HEIGHT - kTitleH - (int16_t)splash_bmp_h) / 3;
 
         // Title centered horizontally. Default 5×7 font at setTextSize(2) → 12 px advance per glyph. Text width = strlen × 12 ; centered X.
-        pDisp->setFont(NULL);
-        pDisp->setTextSize(2);
+        pDisp->setFont(SPLASH_FONT_REF);
+        pDisp->setTextSize(SPLASH_FONT_SIZE);
         pDisp->setTextColor(ST77XX_WHITE);
         const char* title  = "MiniMessenger !";
         int16_t     titleW = (int16_t)strlen(title) * 12;

@@ -39,7 +39,7 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 // Constants
 // ================================================================================
 
-#define MAX_WIFI_NETWORKS                        5      // hard cap of slot count in NVS. Bumping requires no migration since slots  are key-indexed.
+#define MAX_WIFI_NETWORKS                   5      // hard cap of slot count in NVS. Bumping requires no migration since slots  are key-indexed.
 #define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000  // how often we call WiFiMulti.run() inside the WIFI_TRYING_KNOWN state.
 
 // After this much time in WIFI_TRYING_KNOWN with no success, fall through to the captive WIFI_PORTAL. Set to 45 s (not 15) because a single failed association
@@ -48,7 +48,7 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 // appears instead of 15 s — acceptable because "known AP transiently unreachable" is more common than "known AP definitely gone".
 #define WIFI_TRYING_KNOWN_TIMEOUT_MS 45'000
 #define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: WIFI_PORTAL auto-closes and the state machine reverts to  WIFI_TRYING_KNOWN for one more pass.
-#define WIFI_LOST_RETRY_INTERVAL_MS       5'000      // how often we call WiFiMulti.run() inside the WIFI_LOST state.
+#define WIFI_LOST_RETRY_INTERVAL_MS  5'000      // how often we call WiFiMulti.run() inside the WIFI_LOST state.
 #define WIFI_LOST_TO_PORTAL_MS       60'000     // if the connection has been WIFI_LOST for more than this, drop into WIFI_PORTAL (router probably gone).
 
 // WIFI_BOOT_EXCLUSIVE_GRACE_MS is declared in wifi.h (not here) because it's used by setup() in minimessenger.ino too, and the Arduino IDE

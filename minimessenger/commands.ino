@@ -55,6 +55,7 @@ const char* const CMD_WIFI_PUB = "/wifi pub";
 const char* const CMD_DBG_CHIP   = "/dbg chip";
 const char* const CMD_DBG_MEM    = "/dbg mem";
 const char* const CMD_DBG_REDRAW = "/dbg redraw";
+const char* const CMD_DBG_FONTS  = "/dbg fonts";
 
 // MQTT subcommands.
 const char* const CMD_MQTT_DROP = "/mqtt drop";
@@ -359,6 +360,13 @@ bool processDbgSubcommand(const String& message) {
         cmdDumpMemInfo();
         return true;
     }
+    if (message == CMD_DBG_FONTS) {
+        ESP_LOGI(TAG_MM, "Command [%s] — showing fonts", CMD_DBG_MEM);
+        fontsTestRenderMiscFonts();
+        returnToConversationsScreen();
+        return true;
+    }
+
     ESP_LOGW(TAG_MM, "Unknown /dbg subcommand: [%s]", message.c_str());
     printCmdError("Unknown /dbg cmd");
     printHelpDbg();
@@ -380,10 +388,7 @@ bool processPayloadAsCommand(const String& message, MessageSource source, byte s
         printHelpGlobal();
         return true;
     }
-    if (message == "/fonts") {
-        fontsTestRenderMiscFonts();
-        return true;
-    }
+
     if (message == CMD_STATUS) {
         ESP_LOGI(TAG_MM, "Command [%s] — info screen overlay for %ums", CMD_STATUS, (unsigned)STATUS_SCREEN_DURATION_MS);
         showUpdatedInfoScreen();

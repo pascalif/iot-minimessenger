@@ -6,12 +6,14 @@
 // file with the main .ino into a single translation unit (alphabetical order after the sketch-named file, so screen-conv-bars.ino lands right after
 // minimessenger.ino). Consequence: all the layout constants in minimessenger.ino above (STATUS_BAR_H, FOOTER_H, FOOTER_Y_FB, FB_WIDTH,
 // ICON_*_X, ICON_RADIUS, ICON_Y_CENTER, g_disp, g_statusBarDirty, g_inConversationMode, g_kb, …) are visible here without forward decls.
-//
-// Why colocate constants + functions in the same .ino rather than splitting into bars.h + screen-conv-bars.ino: pure #defines in a separate .ino file
-// would be invisible to any earlier-concatenated file. Keeping the call sites of every color macro inside this same TU section means we can
-// rename / retune palette entries with a single grep here. Same pattern as commands.ino (CMD_* constants + dispatcher together).
 
-#define RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
+// /!\ Si on mettre autre chose que la defaut, il faut
+// - calculer l'offset Y pour positionner sur le bon Y
+// - revoir tout le code de déplacement et gestion du curseur
+#define CONVO_PREVIEW_FONT_REF FONT_DEFAULT_07_0PX
+//#define CONVO_PREVIEW_FONT_REF      FREESANS_ACCENTS_15_3PX
+#define CONVO_PREVIEW_FONT_SIZE 2
+
 
 // === Color palette ==============================================================
 
@@ -68,7 +70,7 @@ static void drawIndicatorAt(int x, bool filled, uint16_t color) {
 // sans attendre le tick périodique. Police par défaut 5×7 à setTextSize(2) → glyphe 10×14 px, comparable au diamètre des disques voisins. Le cursor
 // est offset de la moitié des dimensions du glyphe pour centrer visuellement sur (cx, ICON_Y_CENTER).
 static void drawCapsAt(int cx, bool capsOn, uint16_t color) {
-    g_disp->setFont(NULL);
+    g_disp->setFont(FONT_DEFAULT_07_0PX);
     g_disp->setTextSize(2);
     g_disp->setTextColor(color);
     g_disp->setCursor(cx - 5, ICON_Y_CENTER - 7);
@@ -178,10 +180,10 @@ void redrawInputFooter() {
         const char* placeholder = "<no keyboard>";
         const int   charW       = 12;
         const int   textW       = (int)strlen(placeholder) * charW;
-        g_disp->setFont(NULL);
-        g_disp->setTextSize(2);
+        g_disp->setFont(CONVO_PREVIEW_FONT_REF);
+        g_disp->setTextSize(CONVO_PREVIEW_FONT_SIZE);
         g_disp->setTextColor(ICON_BT_COLOR);
-        g_disp->setCursor((FB_WIDTH - textW) / 2, FOOTER_Y_FB + 3);
+        g_disp->setCursor(centerIn(textW, FB_WIDTH), FOOTER_Y_FB + 3);
         g_disp->print(placeholder);
         return;
     }
@@ -213,8 +215,8 @@ void redrawInputFooter() {
     const char* shown      = full + viewStart;
     const int   textStartX = kRightEdgeX - 2 - visibleLen * kCharWidth;
 
-    g_disp->setFont(NULL);
-    g_disp->setTextSize(2);
+    g_disp->setFont(CONVO_PREVIEW_FONT_REF);
+    g_disp->setTextSize(CONVO_PREVIEW_FONT_SIZE);
     g_disp->setTextColor(KB_BAR_TEXT_COLOR);
     g_disp->setCursor(textStartX, FOOTER_Y_FB + 3);
     g_disp->print(shown);

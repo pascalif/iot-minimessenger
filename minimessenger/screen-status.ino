@@ -1,19 +1,13 @@
 // ================================================================================
 // screen-status.ino — Full-screen info / status overlay (shown by /status and on boot)
 // ================================================================================
-//
+
 // Owns the fixed-coordinate info screen layout: a stack of "label: value" rows showing device identity (ID / Owner / MAC), BT keyboard state, WiFi
 // state (SSID / IP or portal instructions), MQTT, NTP, free heap, and a help hint. Drawn over the full panel (no status bar / no footer), used at
 // boot until MQTT first connects and on demand via /status (which schedules a return to conversation mode after a few seconds).
-//
-// Arduino IDE concatenates this file with minimessenger.ino into a single translation unit, so layout constants (FB_WIDTH), globals (g_disp,
-// g_deviceData, g_inConversationMode, g_mqttClient, g_kb), HW-scroll primitives, and the wifi.ino API (wifiGetState, drawPortalInstructions) are
-// visible without forward decls.
-//
-// Sibling files:
-//   - screen-conv.ino owns the conversation scroll area + /help two-column printers.
-//   - screen-splash.ino owns the boot splash.
-//   - screen-conv-bars.ino owns the top status bar + bottom input footer.
+
+#define STATUS_FONT_REF  FONT_DEFAULT_07_0PX
+#define STATUS_FONT_SIZE 2
 
 // Print `value` at (x, y) wrapping to a second line at (x, y + lineH) if it doesn't fit in `availableWidth`. Both lines start at the same x.
 // Returns the total vertical pixels consumed (lineH for a single line, 2*lineH if wrapped).
@@ -56,7 +50,6 @@ static int printValueWrapped(Adafruit_ST7789* pDisp, const String& value, int x,
 // Draw one info-screen row: red header at colHeaders, white value at colValues (wrapped to a 2nd line via printValueWrapped if too wide).
 // Returns the row height consumed (lineHeight or 2 × lineHeight when the value wrapped) so the caller can advance nextY accordingly.
 static int drawStatusRow(Adafruit_ST7789* pDisp, const char* header, const String& value, int colHeaders, int colValues, int nextY, int lineHeight) {
-    pDisp->setTextSize(2);
     pDisp->setCursor(colHeaders, nextY);
     pDisp->setTextColor(ST77XX_RED);
     pDisp->print(header);
@@ -90,7 +83,8 @@ void showUpdatedInfoScreen() {
     g_inConversationMode = false;  // fullscreen mode, suppress status bar repaint
     hwScrollReset();               // info screen draws at fixed coordinates, scroll must be 0
 
-    pDisp->setFont(NULL);  // font par défaut
+    pDisp->setFont(STATUS_FONT_REF);
+    pDisp->setTextSize(STATUS_FONT_SIZE);
 
     int colHeaders      = 2;
     int colValues       = 66;

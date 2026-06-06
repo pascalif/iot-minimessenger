@@ -49,11 +49,12 @@ vanishes without trace.
 
 ## Solutions overview
 
-| Option | Effort | Visual fidelity | Notes |
-|--------|--------|-----------------|-------|
-| **A** — UTF-8 → ASCII transliteration (`é → e`) | ~15 min | Lossy (no accents) | Keep current font, add a transliteration table |
-| **B** — UTF-8 → Latin-1 + extended GFX font | ~30 min one-time + small code change | Perfect | Recommended — standard ESP32 + French solution |
-| **C** — Built-in 5×7 font + CP437 mapping | ~10 min | Tiny pixelated text | Quick proof of concept only |
+| Option                                          | Effort                               | Visual fidelity     | Notes                                          |
+|-------------------------------------------------|--------------------------------------|---------------------|------------------------------------------------|
+| **A** — UTF-8 → ASCII transliteration (`é → e`) | ~15 min                              | Lossy (no accents)  | Keep current font, add a transliteration table |
+| **B** — UTF-8 → Latin-1 + extended GFX font     | ~30 min one-time + small code change | Perfect             | Recommended — standard ESP32 + French solution |
+| **C** — Built-in 5×7 font + CP437 mapping       | ~10 min                              | Tiny pixelated text | Quick proof of concept only                    |
+| **D** — Font creation                           | ?                                    | ?                   | Not tried                                      |
 
 The rest of this document focuses on **Option B**, the recommended path.
 
@@ -113,10 +114,37 @@ unzip -o freefont-ttf-20120503.zip
 
 Generate FreeSans 9pt with the Latin-1 glyph range `[0x20, 0xFF]` = `[32, 255]`:
 
+```
+j'ai utilisé le paramètre de taille 9 (resp 10) lors de l'appel au script:
+
+./fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 9 32 255
+Pourtant à l'affichage, j'ai 13 (resp 15) pixels de hauteur. pourquoi.
+
+C'est normal. Le paramètre 9 est la taille en points typographiques (pt), pas en pixels.
+La conversion est : pixels = points × DPI / 72
+
+Avec le DPI par défaut de fontconvert qui est 141 DPI :
+9pt  × 141 / 72 = 17.6 → ~13 pixels
+10pt × 141 / 72 = 19.6 → ~15 pixels
+Ce qui correspond exactement à ce que tu observes.
+
+Pour obtenir une police de N pixels de haut, calcule la taille en points :
+points = pixels × 72 / 141
+Exemple pour 9 pixels de haut :
+
+9 × 72 / 141 = 4.6pt → utilise 5
+```
+
+
 ```bash
-cd ~/Dev/workspace_pascal/arduino/libraries/Adafruit_GFX_Library/fontconvert
-./fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 9 32 255 \
-  > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans09pt8b_latin1.h
+# 7 pt -> ?? pix
+~/Dev/workspace_pascal/arduino/libraries/Adafruit_GFX_Library/fontconvert/fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 7 32 255 > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans07pt8b_latin1.h
+
+#89 pt -> ?? pix
+~/Dev/workspace_pascal/arduino/libraries/Adafruit_GFX_Library/fontconvert/fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 8 32 255 > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans08pt8b_latin1.h
+
+# 9 pt -> 13 pix
+~/Dev/workspace_pascal/arduino/libraries/Adafruit_GFX_Library/fontconvert/fontconvert ~/Downloads/freefont/freefont-20120503/FreeSans.ttf 9 32 255 > ~/Dev/workspace_pascal/iot-minimessenger/minimessenger/fonts/FreeSans09pt8b_latin1.h
 ```
 
 This produces a header roughly 4–5 KB in size (versus ~1.8 KB for the
@@ -356,6 +384,10 @@ g_disp->print("\x82tait");  // 0x82 = é in CP437
 You still need to convert UTF-8 → CP437 (the codepoints differ from Latin-1 —
 see the table at the top of this document). Text becomes tiny and pixelated.
 Not recommended for the messenger UI.
+
+
+## Option D - Font creation
+https://tchapi.github.io/Adafruit-GFX-Font-Customiser/
 
 ---
 
