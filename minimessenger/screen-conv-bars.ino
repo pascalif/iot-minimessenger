@@ -112,7 +112,7 @@ void redrawStatusBar() {
     bool wifi         = (WiFi.status() == WL_CONNECTED);
     bool mqtt         = g_mqttClient.connected();
     bool caps         = kbIsCapsLockOn;
-    int  contactCount = contactGetActiveCount();  // 0 = aucun contact en ligne, 1 = un seul, 2+ = au moins deux (capped à l'affichage).
+    int  contactCount = contactGetActiveCount();
 
     if (!g_statusBarDirty && bt == g_lastDrawnBt && wifi == g_lastDrawnWifi && mqtt == g_lastDrawnMqtt && caps == g_lastDrawnCaps &&
         contactCount == g_lastDrawnContactCount) {

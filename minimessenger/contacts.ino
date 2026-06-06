@@ -4,24 +4,12 @@
 //
 // Auto-discovered: any deviceId seen on `admin/liveness/<id>` with BOOT/RECO/LIVE claims a slot; DEAD (Last Will or explicit, same topic) or an
 // applicative timeout releases it. The single admin/liveness/+ subscription carries both "alive" and "dead" transitions — there is no separate
-// admin/dead topic anymore. The two
-// "friend present" LEDs and the contact silhouettes on the top status bar are derived from the active slot count — LED_FRIEND_1 lights when at
-// least one contact is online, LED_FRIEND_2 when at least two are, regardless of which physical contacts they are. The previous static
-// g_deviceIdFriend1/2 pair (one fixed friend per LED, declared in identifyDevice()) is gone.
-//
-// Concatenation order: this file lands after minimessenger.ino, screen-conv-bars.ino and commands.ino, before mqtt.ino. We therefore see all the layout /
-// LED constants and globals defined in minimessenger.ino (DEVICE_ID_UNSET, LED_FRIEND_1, LED_STATE_ON, g_deviceData, g_statusBarDirty) and the
-// ledSetState() prototype is auto-emitted by the Arduino builder. The only #include we need is mqtt.h for MQTT_KEEPALIVE_INTERVAL_MS — it lets
-// us keep our timeout derived from the keepalive cadence in a single place rather than duplicating the number here.
-//
-// Exposed to other files purely via the accessor contactGetActiveCount() (read by screen-conv-bars.ino) and the entry point onReceivedContactOnline()
-// (called by mqtt.ino's incoming-message dispatcher via auto-prototype). No contacts.h — same "light case" pattern as wifi.h.
+// admin/dead topic anymore.
 
 #include "contacts.h"  // DeviceDataEntry + DeviceDataEntry::findByMac / ::findById — résolution pseudo / namePrefix / screen du contact distant.
 #include "mm_log.h"    // ESP_LOGI / ESP_LOGW + TAG_MM — par cohérence avec commands.ino, mqtt.ino et wifi.ino qui font le même include explicite.
 #include "mqtt.h"
 #include "personal-data.h"  // matérialise les tableaux COMPILED_DEVICE_DATA_ENTRIES + COMPILED_WIFI_DEFAULTS — DeviceDataEntry (contacts.h) et
-// CompiledWifiEntry (wifi.h) sont déjà en scope via les includes de minimessenger.ino concatenés en tête de TU.
 
 // Device-table count derived ici — premier point de la TU où le tableau a sa pleine définition. wifi.ino se contente de définir le count wifi.
 const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_ENTRIES) / sizeof(COMPILED_DEVICE_DATA_ENTRIES[0]);
@@ -73,7 +61,7 @@ struct ContactLastLiveData {
 
 static ContactLastLiveData g_contacts[MAX_CONTACTS];
 
-// Number of slots currently occupied. Read every ~500 ms by redrawStatusBar() in screen-conv-bars.ino to pick between 0/1/2-icon layouts on the top bar, and
+// Read every ~500 ms by redrawStatusBar() in screen-conv-bars.ino to pick between 0/1/2-icon layouts on the top bar, and
 // also used internally by contactsApplyState() / the +/-/timeout log lines to surface the post-change count.
 int contactGetActiveCount() {
     int n = 0;
@@ -85,13 +73,12 @@ int contactGetActiveCount() {
     return n;
 }
 
-// Refresh derived UI state after any add / remove. Two FRIEND LEDs on the device + a forced top-bar repaint at the next status-bar poll: the bar
+// Refresh derived UI state after any add / remove. A FRIEND LED on the device + a forced top-bar repaint at the next status-bar poll: the bar
 // reads contactGetActiveCount() in redrawStatusBar() and short-circuits when the count is unchanged, so the dirty flag is what makes the new count
 // actually paint instead of getting cached out.
 static void contactsApplyState() {
     const int count = contactGetActiveCount();
-    ledSetState(LED_FRIEND_1, (count >= 1) ? LED_STATE_ON : LED_STATE_OFF);
-    ledSetState(LED_FRIEND_2, (count >= 2) ? LED_STATE_ON : LED_STATE_OFF);
+    ledSetState(LED_FRIEND, (count >= 1) ? LED_STATE_ON : LED_STATE_OFF);
     g_statusBarDirty = true;
 }
 

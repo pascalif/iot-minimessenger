@@ -15,16 +15,16 @@ extern const size_t            COMPILED_WIFI_DEFAULTS_COUNT;
 // Kept in its own tiny header so both translation units see the same complete enum definition without dragging in the WiFiManager / WiFiMulti
 // headers from wifi.ino into the main .ino.
 enum class WifiState {
-    BOOTING,       // setup() not finished — NVS not read yet, WiFiMulti not populated.
-    TRYING_KNOWN,  // WiFiMulti is iterating over the known networks (NVS +
+    WIFI_BOOTING,       // setup() not finished — NVS not read yet, WiFiMulti not populated.
+    WIFI_TRYING_KNOWN,  // WiFiMulti is iterating over the known networks (NVS +
                    // compiled defaults). Retries every
                    // WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS.
-    PORTAL,        // No known network reachable; WiFiManager captive portal is open at
+    WIFI_PORTAL,        // No known network reachable; WiFiManager captive WIFI_PORTAL is open at
                    // AP "minimessenger-config" → http://192.168.4.1.
-    CONNECTED,     // STA associated. NTP and MQTT can run. UI may transition to
+    WIFI_CONNECTED,     // STA associated. NTP and MQTT can run. UI may transition to
                    // conversation mode once MQTT is also up.
-    LOST           // Was CONNECTED, now disconnected. WiFiMulti.run() called periodically;
-                   // falls back to PORTAL after WIFI_LOST_TO_PORTAL_MS.
+    WIFI_LOST           // Was WIFI_CONNECTED, now disconnected. WiFiMulti.run() called periodically;
+                   // falls back to WIFI_PORTAL after WIFI_LOST_TO_PORTAL_MS.
 };
 
 // Window during which setup() pumps wifiTick() before launching the BLE keyboard. On ESP32 the WiFi and BLE radios share the 2.4 GHz front-end via
@@ -39,14 +39,14 @@ enum class WifiState {
 // a #define inside wifi.ino is not yet visible when setup() in minimessenger.ino is compiled.
 #define WIFI_BOOT_EXCLUSIVE_GRACE_MS 5'000
 
-// Adafruit_ST7789 forward declaration so we can take a pointer in the portal renderer's signature without pulling Adafruit_GFX into wifi.h.
+// Adafruit_ST7789 forward declaration so we can take a pointer in the WIFI_PORTAL renderer's signature without pulling Adafruit_GFX into wifi.h.
 class Adafruit_ST7789;
 
 // === Functions defined in wifi.ino, callable from minimessenger.ino ===
 // setup()-time: full WiFi bringup — driver init (mode + hostname) + NVS seed/load + WiFiManager config + state machine kick. Non-blocking.
 void setupWifi();
 
-// loop()-time: drive the state machine (retry / portal / process).
+// loop()-time: drive the state machine (retry / WIFI_PORTAL / process).
 void wifiTick(unsigned long currentMillis);
 
 // Inspect the current state — used by showUpdatedInfoScreen() to pick the right row set.
@@ -69,9 +69,9 @@ void wifiPrintListToConversation();
 // (cmdWifiPublishNetworksToMQTTPeer) so the NVS-access and compile-table knowledge stays encapsulated here.
 int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, bool& outSaturated);
 
-// Force the state machine into PORTAL right now (used by /wifi portal). Closes any active STA attempt and opens the captive AP.
+// Force the state machine into WIFI_PORTAL right now (used by /wifi WIFI_PORTAL). Closes any active STA attempt and opens the captive AP.
 void wifiForcePortal();
 
-// Render the portal instructions block on the info screen. Caller advances nextY itself based on the lines added (the function updates it via the
-// reference parameter so the caller can keep flowing rows below the portal block — currently the HELP row is appended after).
+// Render the WIFI_PORTAL instructions block on the info screen. Caller advances nextY itself based on the lines added (the function updates it via the
+// reference parameter so the caller can keep flowing rows below the WIFI_PORTAL block — currently the HELP row is appended after).
 void drawPortalInstructions(Adafruit_ST7789* pDisp, int& nextY, int colHeaders, int colValues, int lineHeight);

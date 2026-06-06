@@ -139,9 +139,10 @@ Docs (/docs):
 // `D5` silkscreen on the HW-394 / DOIT V1 board (Dxx = GPIOxx on this board family — but NOT on D1 mini, where D2 = GPIO4).
 // (2) The sentinel `GPIO_NUM_NC = -1` documents "this pin is intentionally not connected", which is clearer than a bare `-1` literal.
 
-#define LED_STATUS   GPIO_NUM_32
-#define LED_FRIEND_1 GPIO_NUM_33
-#define LED_FRIEND_2 GPIO_NUM_25
+#define LED_POWER_ON GPIO_NUM_25
+#define LED_ERROR_STATUS   GPIO_NUM_33
+#define LED_FRIEND   GPIO_NUM_32
+
 
 // Scren configuration
 // -------------------
@@ -311,7 +312,7 @@ DeviceDataEntry g_deviceData;
 // LED arrays are indexed by raw GPIO pin number (ledSetState(pin, …) → g_ledRequiredState[pin] = …). The ESP32 exposes GPIOs up to 39, so the arrays
 // must be sized to cover that range — otherwise ledSetState(32, …) writes 32 bytes past a too-small array and corrupts adjacent BSS globals. The
 // previously-used value of 17 came from the D1 mini era (ESP8266, GPIO 0..16) and stealthily wrote on top of adjacent identity BSS globals on ESP32,
-// producing 0x02 (LED_STATE_BLINK_FAST as a byte → rendered as a smiley by the Adafruit GLCD font) at the offset matching LED_STATUS=GPIO32 minus
+// producing 0x02 (LED_STATE_BLINK_FAST as a byte → rendered as a smiley by the Adafruit GLCD font) at the offset matching LED_ERROR_STATUS=GPIO32 minus
 // the array's actual length. 40 covers the full ESP32 GPIO range (0..39); bump to 48 if porting to ESP32-S2/S3/C3 with larger GPIO maps.
 #define LED_QTY 40
 byte          g_ledRequiredState[LED_QTY];
@@ -319,7 +320,6 @@ bool          g_ledBlinkStateIsHigh[LED_QTY];
 unsigned long g_ledBlinkLastTimestampMs[LED_QTY];
 
 // Keyboard
-
 bool kbIsCapsLockOn = false;
 
 // Insertion point inside g_currentMsgFromKeyboard, range [0, g_currentMsgFromKeyboard.length()].
@@ -385,9 +385,6 @@ void goAndResetConversationScreen();
 void returnToConversationsScreen();
 void clearConversationHistory();
 
-// Prototypes in mqtt.h
-// mqttSendLiveness / mqttPushFormattedMessage / onMqttIncomingMessage
-
 // contacts.ino
 void contactsSetup();
 void contactsTick();
@@ -397,7 +394,7 @@ int  contactGetActiveCount();
 // screen-splash.ino
 void showSplashScreen();
 
-// screen-conf.ino
+// screen-conv.ino
 void setupFontTests();
 void printGeneralError(const String& message);
 void printGeneralInfo(const String& message);
@@ -421,44 +418,6 @@ const char* getTimezoneLabel();
 // commands.ino
 bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId);
 
-
-// ================================================================================
-// Logging
-// ================================================================================
-// All logging uses ESP-IDF's esp_log via mm_log.h. Per-tag severity is
-// configured in setup() through setupLogging().
-
-void assertTrue(bool condition, String msg) {
-    if (!condition) {
-        ESP_LOGE(TAG_MM, "ASSERT FAILED: %s", msg.c_str());
-    }
-}
-
-// ================================================================================
-// char* & Strings
-// ================================================================================
-
-char* trim(char* str) {
-    // Left trim
-    while (isspace((unsigned char)*str)) {
-        str++;
-    }
-
-    if (*str == 0) {  // all spaces?
-        return str;
-    }
-
-    // Right trim
-    char* end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) {
-        end--;
-    }
-
-    // Write new null terminator
-    *(end + 1) = '\0';
-
-    return str;
-}
 
 
 // ============================================================================
@@ -839,6 +798,17 @@ boolean setupKeyboard() {
 // LED
 // ================================================================================
 
+// Callen when wifi or mqtt own statuses have changed
+void updateLedAggregatedErrorStatus() {
+    // We don't use BT status since it will disconnect by design all the time, and there are visual indicator (chip+text) on the screen.
+    bool wifi = (WiFi.status() == WL_CONNECTED);
+    bool mqtt = g_mqttClient.connected();
+
+    ESP_LOGI(TAG_MM, "updateLedAggregatedErrorStatus wifi=%d mqtt=%d", wifi, mqtt);
+
+    ledSetState( LED_ERROR_STATUS, (!wifi || !mqtt ? LED_STATE_ON : LED_STATE_OFF) );
+}
+
 void ledSetState(int pin, int requiredState) {
     ESP_LOGD(TAG_MM, "led pin=%d state=%d", pin, requiredState);
     g_ledRequiredState[pin] = requiredState;
@@ -861,27 +831,28 @@ void ledCommuteBlinkState(int pin) {
 }
 
 void setupLeds() {
-    pinMode(LED_STATUS, OUTPUT);
-    pinMode(LED_FRIEND_1, OUTPUT);
-    pinMode(LED_FRIEND_2, OUTPUT);
+    pinMode(LED_POWER_ON, OUTPUT);
+    pinMode(LED_ERROR_STATUS, OUTPUT);
+    pinMode(LED_FRIEND, OUTPUT);
 
     for (int i = 0; i < 4; i++) {
-        digitalWrite(LED_STATUS, HIGH);
-        digitalWrite(LED_FRIEND_1, HIGH);
-        digitalWrite(LED_FRIEND_2, HIGH);
+        digitalWrite(LED_POWER_ON, HIGH);
+        digitalWrite(LED_ERROR_STATUS, HIGH);
+        digitalWrite(LED_FRIEND, HIGH);
         delay(150);
-        digitalWrite(LED_STATUS, LOW);
-        digitalWrite(LED_FRIEND_1, LOW);
-        digitalWrite(LED_FRIEND_2, LOW);
+        digitalWrite(LED_POWER_ON, LOW);
+        digitalWrite(LED_ERROR_STATUS, LOW);
+        digitalWrite(LED_FRIEND, LOW);
         delay(150);
     }
 
     for (int pin = 0; pin < LED_QTY; pin++) {
         g_ledRequiredState[pin] = LED_STATE_NOT_CONFIGURED;
     }
-    ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
-    ledSetState(LED_FRIEND_1, LED_STATE_OFF);
-    ledSetState(LED_FRIEND_2, LED_STATE_OFF);
+
+    ledSetState(LED_POWER_ON, LED_STATE_ON);
+    ledSetState(LED_ERROR_STATUS, LED_STATE_BLINK_FAST);
+    ledSetState(LED_FRIEND, LED_STATE_OFF);
 }
 
 // ================================================================================
@@ -1063,11 +1034,12 @@ void setUnicastRecipient(int recipientDeviceId) {
 //     (which wipes the scroll area and paints the status bar + footer borders), then drop a "Ready !" line in the conversation.
 //   - any later reconnect (we lost connection mid-conversation and got it back): we stay in conversation mode — the "Lost server" / "Trying to
 //     reconnect..." stack is still visible — and just append "Ready !" so the reconnect is acknowledged in-line.
-void onMQTTReconnected() {
+void onMqttConnectedOrReconnected() {
     if (!g_inConversationMode) {
         goAndResetConversationScreen();
+        printGeneralInfo("Ready !");
     }
-    printGeneralInfo("Ready !");
+    updateLedAggregatedErrorStatus();
 }
 
 // ----------------------------------------------------------------------------
@@ -1165,10 +1137,11 @@ void setup() {
     // Utilise une broche non connectée pour varier la graine (seed)
     randomSeed(analogRead(A0));  // A0 est une broche non connectée (bruit analogique)
 
+    setupLeds();
+
     identifyDevice();
 
     setupDisplay();
-    setupLeds();
     contactsSetup();
 
     //setupFontTests();
@@ -1182,7 +1155,7 @@ void setup() {
     // and ESP_ERR_INVALID_ARG only for an out-of-range enum; we don't check the return because there's nothing sensible to do on failure here.
     esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
 
-    // WiFi FIRST — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (TRYING_KNOWN or PORTAL). Non-blocking;
+    // WiFi FIRST — driver mode + hostname + NVS seed/load + WiFiManager config + state machine kick (WIFI_TRYING_KNOWN or WIFI_PORTAL). Non-blocking;
     // wifiTick() drives the actual association. We then pump wifiTick() in a tight loop for up to WIFI_BOOT_EXCLUSIVE_GRACE_MS so the first assoc
     // attempt completes with WiFi having exclusive radio access (no BLE keyboard scan/connect running in parallel). See the constant's comment in
     // wifi.ino for the full rationale and tuning advice. The loop exits early as soon as WiFi.status() == WL_CONNECTED.
@@ -1197,7 +1170,7 @@ void setup() {
         ESP_LOGI(TAG_MM, "setup(): WiFi grace window elapsed after %lums (status=%d)", millis() - t0, (int)WiFi.status());
     }
 
-    // BLE keyboard NOW that WiFi had its exclusive boot window. If WiFi is already CONNECTED here the keyboard's BLE storm has zero impact on it;
+    // BLE keyboard NOW that WiFi had its exclusive boot window. If WiFi is already WIFI_CONNECTED here the keyboard's BLE storm has zero impact on it;
     // if WiFi is still trying, BLE will share the radio from now on under the ESP_COEX_PREFER_WIFI preference set above.
     setupKeyboard();
 
@@ -1214,14 +1187,14 @@ void loop() {
 
     g_kb.tryToMaintainConnection();
 
-    // WiFi: drive the state machine in wifi.ino. Handles TRYING_KNOWN → CONNECTED / PORTAL transitions, portal HTTP traffic, rising/falling edge
-    // banners, and the LOST → PORTAL fallback after extended outages. Non-blocking — BT keyboard and serial input keep running through outages.
+    // WiFi: drive the state machine in wifi.ino. Handles WIFI_TRYING_KNOWN → WIFI_CONNECTED / WIFI_PORTAL transitions, portal HTTP traffic, rising/falling edge
+    // banners, and the LOST → WIFI_PORTAL fallback after extended outages. Non-blocking — BT keyboard and serial input keep running through outages.
     wifiTick(currentMillis);
 
     if (!g_mqttClient.connected()) {
         if (g_mqttWasConnected) {
             g_mqttWasConnected = false;
-            ledSetState(LED_STATUS, LED_STATE_BLINK_FAST);
+            ledSetState(LED_ERROR_STATUS, LED_STATE_BLINK_FAST);
 
             // Only surface the MQTT-down banner when WiFi is actually up. If the link is down, the WiFi block above already showed "WiFi lost" and a
             // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
@@ -1233,17 +1206,16 @@ void loop() {
 
         // Don't even try to reconnect while the WiFi link is down. Without an IP the TLS connect just fails on DNS (errno 118 / "Host is unreachable",
         // lwIP rc -54) after wasting heap and spamming the serial console. The wifi state machine in wifi.ino is the one driving re-association; as soon
-        // as it transitions back to CONNECTED, the time gate below will fire a fresh attempt. The delay grows exponentially across consecutive failures
+        // as it transitions back to WIFI_CONNECTEDWIFI_CONNECTED, the time gate below will fire a fresh attempt. The delay grows exponentially across consecutive failures
         // (mqttReconnectDelayMs()) so a long broker outage doesn't burn TLS handshakes every 5 s.
         if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > mqttReconnectDelayMs())) {
             // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
             // up to ~30 s; starting the timer from the call's *end* would compound.
             g_mqttLastReconnectTryTimestampMs = currentMillis;
 
-            if (mqttReconnectAttempt()) {
-                onMQTTReconnected();
-            }
-            // On failure: no delay() — the time gate above throttles the next retry.
+            mqttReconnectAttempt();  // don't care with the result.
+                                     // On success : a callback onMqttConnectedOrReconnected(); is called
+                                     // On failure: no delay() — the time gate above throttles the next retry.
         }
     } else {
         g_mqttClient.loop();

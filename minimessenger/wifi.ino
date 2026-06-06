@@ -8,21 +8,21 @@
 // (included by both .ino files) so the main file doesn't need to know about WiFiMulti / WiFiManager / Preferences.
 //
 // State machine (see wifi.h for the enum):
-//   BOOTING → TRYING_KNOWN          when setupWifi() finishes loading NVS into WiFiMulti
-//   TRYING_KNOWN → CONNECTED        when WiFiMulti.run() returns WL_CONNECTED
-//   TRYING_KNOWN → PORTAL           after WIFI_TRYING_KNOWN_TIMEOUT_MS with no success
-//   PORTAL → CONNECTED              when the user submits credentials via the captive portal page
-//   PORTAL → TRYING_KNOWN           after WIFI_PORTAL_TIMEOUT_MS without configuration (retry known nets)
-//   CONNECTED → LOST                when WiFi.status() != WL_CONNECTED
-//   LOST → CONNECTED                when WiFiMulti.run() succeeds again
-//   LOST → PORTAL                   when LOST persists more than WIFI_LOST_TO_PORTAL_MS
+//   WIFI_BOOTING → WIFI_TRYING_KNOWN          when setupWifi() finishes loading NVS into WiFiMulti
+//   WIFI_TRYING_KNOWN → WIFI_CONNECTED        when WiFiMulti.run() returns WL_CONNECTED
+//   WIFI_TRYING_KNOWN → WIFI_PORTAL           after WIFI_TRYING_KNOWN_TIMEOUT_MS with no success
+//   WIFI_PORTAL → WIFI_CONNECTED              when the user submits credentials via the captive WIFI_PORTAL page
+//   WIFI_PORTAL → WIFI_TRYING_KNOWN           after WIFI_PORTAL_TIMEOUT_MS without configuration (retry known nets)
+//   WIFI_CONNECTED → WIFI_LOST                when WiFi.status() != WL_CONNECTED
+//   WIFI_LOST → WIFI_CONNECTED                when WiFiMulti.run() succeeds again
+//   WIFI_LOST → WIFI_PORTAL                   when WIFI_LOST persists more than WIFI_LOST_TO_WIFI_PORTAL_MS
 //
 // NVS layout (namespace "wifi"):
 //   - "count" (uint8): index of the first free slot (0..MAX_WIFI_NETWORKS). Slots before it MAY contain empty strings if a /wifi forget left a
 //                      hole; wifiLoadNVSAndCompiledIntoMulti skips empties. Treat "count" as "high-water mark", not strict size.
 //   - "ssid_N" / "pwd_N" (String): for N in [0, count). Empty SSID = unused slot.
 //
-// Pink-banner rendering helpers (drawPortalInstructions) live here too so minimessenger.ino keeps its info-screen renderer agnostic.
+// Pink-banner rendering helpers (drawWIFI_PORTALInstructions) live here too so minimessenger.ino keeps its info-screen renderer agnostic.
 
 #include "mm_log.h"
 #include "wifi.h"
@@ -39,23 +39,23 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 // Constants
 // ================================================================================
 
-#define MAX_WIFI_NETWORKS                   5      // hard cap of slot count in NVS. Bumping requires no migration since slots  are key-indexed.
-#define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000  // how often we call WiFiMulti.run() inside the TRYING_KNOWN state.
+#define MAX_WIFI_NETWORKS                        5      // hard cap of slot count in NVS. Bumping requires no migration since slots  are key-indexed.
+#define WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS 1'000  // how often we call WiFiMulti.run() inside the WIFI_TRYING_KNOWN state.
 
-// After this much time in TRYING_KNOWN with no success, fall through to the captive portal. Set to 45 s (not 15) because a single failed association
+// After this much time in WIFI_TRYING_KNOWN with no success, fall through to the captive WIFI_PORTAL. Set to 45 s (not 15) because a single failed association
 // on a marginal AP burns ~11-13 s before ASSOC_EXPIRE fires; with 15 s we only got one attempt in before bailing, and the second attempt would often
-// have worked. 45 s lets WiFiMulti retry 3-4 times before giving up. Tradeoff: if the known AP is truly gone the user waits 45 s before the portal
+// have worked. 45 s lets WiFiMulti retry 3-4 times before giving up. Tradeoff: if the known AP is truly gone the user waits 45 s before the WIFI_PORTAL
 // appears instead of 15 s — acceptable because "known AP transiently unreachable" is more common than "known AP definitely gone".
 #define WIFI_TRYING_KNOWN_TIMEOUT_MS 45'000
-#define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: portal auto-closes and the state machine reverts to  TRYING_KNOWN for one more pass.
-#define WIFI_LOST_RETRY_INTERVAL_MS  5'000      // how often we call WiFiMulti.run() inside the LOST state.
-#define WIFI_LOST_TO_PORTAL_MS       60'000     // if the connection has been LOST for more than this, drop into PORTAL (router probably gone).
+#define WIFI_PORTAL_TIMEOUT_MS       300'000UL  // 5 min: WIFI_PORTAL auto-closes and the state machine reverts to  WIFI_TRYING_KNOWN for one more pass.
+#define WIFI_LOST_RETRY_INTERVAL_MS       5'000      // how often we call WiFiMulti.run() inside the WIFI_LOST state.
+#define WIFI_LOST_TO_WIFI_PORTAL_MS       60'000     // if the connection has been WIFI_LOST for more than this, drop into WIFI_PORTAL (router probably gone).
 
 // WIFI_BOOT_EXCLUSIVE_GRACE_MS is declared in wifi.h (not here) because it's used by setup() in minimessenger.ino too, and the Arduino IDE
 // concatenates minimessenger.ino BEFORE wifi.ino — so a #define here is not visible from there.
 
 #define WIFI_PORTAL_AP_SSID "minimsg-cfg"  // generic on purpose so the user knows what SSID to look for in  the phone's WiFi list.
-// WPA2 password for the captive portal AP.  8 chars is the WPA2 minimum (esp_wifi rejects shorter as "passphrase too short").
+// WPA2 password for the captive WIFI_PORTAL AP.  8 chars is the WPA2 minimum (esp_wifi rejects shorter as "passphrase too short").
 #define WIFI_PORTAL_AP_PASS "11110000"
 
 #define WIFI_PREFS_NAMESPACE "wifi"
@@ -64,30 +64,30 @@ const size_t COMPILED_WIFI_DEFAULTS_COUNT = sizeof(COMPILED_WIFI_DEFAULTS) / siz
 // Globals
 // ================================================================================
 
-WifiState     g_wifiState          = WifiState::BOOTING;
+WifiState     g_wifiState          = WifiState::WIFI_BOOTING;
 unsigned long g_wifiStateEnteredMs = 0;    // millis() snapshot when we transitioned into g_wifiState. Drives
                                            // per-state timeouts.
-unsigned long g_wifiLastTryConnectMs = 0;  // last time WiFiMulti.run() was called inside TRYING_KNOWN / LOST — used
+unsigned long g_wifiLastTryConnectMs = 0;  // last time WiFiMulti.run() was called inside WIFI_TRYING_KNOWN / WIFI_LOST — used
                                            // to throttle the retry cadence.
 
 // To try connection among a list of known SSIDs and passwords
 WiFiMulti g_wifiMulti;
 
-// When no possible connection, create an AP + login portal
+// When no possible connection, create an AP + login WIFI_PORTAL
 WiFiManager g_wifiManager;
 
 Preferences g_wifiPrefs;
 
-// Edge-detection flag for the "WiFi back" / "WiFi lost" banners: set true on CONNECTED entry, reset false on LOST entry. Lets us print each
-// banner exactly once per LOST↔CONNECTED transition (the state machine wouldn't fire transitions redundantly today, but the flag also gates the
-// "WiFi lost" banner against the boot path where we've never been connected yet — see the LOST branch in wifiTransitionTo).
+// Edge-detection flag for the "WiFi back" / "WiFi lost" banners: set true on WIFI_CONNECTED entry, reset false on WIFI_LOST entry. Lets us print each
+// banner exactly once per WIFI_LOST↔WIFI_CONNECTED transition (the state machine wouldn't fire transitions redundantly today, but the flag also gates the
+// "WiFi lost" banner against the boot path where we've never been connected yet — see the WIFI_LOST branch in wifiTransitionTo).
 bool g_wifiWasConnected = false;
 
 // Set true by wifiOnPortalSave() when WiFiManager hands back control after the user submitted credentials via the web UI and STA association
 // succeeded. In that path WiFiManager runs its own shutdownConfigPortal() internally (deletes the WebServer / DNSServer / netif callbacks)
 // BEFORE returning, so wifiStopPortal() must NOT call g_wifiManager.stopConfigPortal() a second time — doing so dereferences NULL pointers
-// inside WM and panics (LoadProhibited, EXCVADDR=0). Reset to false at the end of wifiStopPortal() so the next portal entry starts fresh.
-static bool g_portalSelfClosed = false;
+// inside WM and panics (LoadProhibited, EXCVADDR=0). Reset to false at the end of wifiStopPortal() so the next WIFI_PORTAL entry starts fresh.
+static bool g_wifiPortalSelfClosed = false;
 
 // ================================================================================
 // Forward declarations of internal helpers
@@ -99,8 +99,9 @@ static void wifiStartPortal();
 static void wifiStopPortal();
 static void wifiOnPortalSave();
 static void wifiOnConnected();
+static void wifiOnDisconnected();
 
-// setupNTP() lives in time.ino — declared here so wifiOnConnected() can call it without relying on auto-prototypes across .ino files.
+// time.ino
 void setupNTP();
 
 // ================================================================================
@@ -108,8 +109,8 @@ void setupNTP();
 // ================================================================================
 //
 // Initialises the WiFi driver (mode + hostname), loads both the NVS-saved networks and the compile-time defaults into WiFiMulti (NVS wins on
-// duplicate SSID — see wifiLoadNVSAndCompiledIntoMulti), configures the captive portal callbacks, and kicks the state machine into TRYING_KNOWN
-// (or PORTAL when both lists are empty so nothing can be tried). Non-blocking: wifiTick() drives the actual connection attempts from loop().
+// duplicate SSID — see wifiLoadNVSAndCompiledIntoMulti), configures the captive WIFI_PORTAL callbacks, and kicks the state machine into WIFI_TRYING_KNOWN
+// (or WIFI_PORTAL when both lists are empty so nothing can be tried). Non-blocking: wifiTick() drives the actual connection attempts from loop().
 // identifyDevice() already called WiFi.mode(WIFI_STA) earlier; we re-call it for safety in case a disconnect(true,true) wiped the state.
 
 void setupWifi() {
@@ -117,7 +118,7 @@ void setupWifi() {
 
     // Cold-boot path: arduino-esp32 has its own auto-reconnect that fires as soon as WIFI_STA is up. It re-uses the SSID/password persisted in the
     // driver's NVS from the previous boot and runs a single, very long association attempt (we observed ~11 s until ASSOC_EXPIRE on a marginal RSSI).
-    // That attempt happens *before* WiFiMulti gets a chance to run, and during it the state machine sits idle in TRYING_KNOWN. To skip that whole
+    // That attempt happens *before* WiFiMulti gets a chance to run, and during it the state machine sits idle in WIFI_TRYING_KNOWN. To skip that whole
     // detour and let WiFiMulti drive from the start (it scans first, picks the best RSSI from our list, retries every 1 s) we wipe the driver-cached
     // credentials with disconnect(true, true):
     // - first true = also stop the WiFi radio if it's already trying,
@@ -140,21 +141,21 @@ void setupWifi() {
     // as a permanent safety net. /wifi clean only wipes NVS, so the device can always come back up on a compiled default without a reflash.
     int n = wifiLoadNVSAndCompiledIntoMulti();
 
-    // Configure WiFiManager once for later PORTAL usage. setConfigPortalBlocking(false) means startConfigPortal() returns immediately; we drive it
+    // Configure WiFiManager once for later WIFI_PORTAL usage. setConfigWIFI_PORTALBlocking(false) means startConfigWIFI_PORTAL() returns immediately; we drive it
     // with g_wifiManager.process() inside wifiTick. The save callback fires when the user submits credentials via the web UI.
     g_wifiManager.setConfigPortalBlocking(false);
     g_wifiManager.setSaveConfigCallback(wifiOnPortalSave);
     // WiFiManager's own logs stay off in normal operation: at 115200 baud the AP-setup / DHCP / DNS-catcher / HTTP-server trace is loud enough to bury
-    // our own ESP_LOGx lines and slows the portal flow visibly. Flip back to setDebugOutput(true, WM_DEBUG_VERBOSE) on demand if a future onboarding
+    // our own ESP_LOGx lines and slows the WIFI_PORTAL flow visibly. Flip back to setDebugOutput(true, WM_DEBUG_VERBOSE) on demand if a future onboarding
     // regression needs the lib's internal trace (past episode: phones could see the SSID but failed to associate without any user-visible error).
     g_wifiManager.setDebugOutput(false);
 
     if (n == 0) {
-        // No networks known at all → skip the TRYING_KNOWN dance, go straight to portal.
-        ESP_LOGW(TAG_WIFI, "No known networks — opening portal immediately");
-        wifiTransitionTo(WifiState::PORTAL);
+        // No networks known at all → skip the WIFI_TRYING_KNOWN dance, go straight to WIFI_PORTAL.
+        ESP_LOGW(TAG_WIFI, "No known networks — opening WIFI_PORTAL immediately");
+        wifiTransitionTo(WifiState::WIFI_PORTAL);
     } else {
-        wifiTransitionTo(WifiState::TRYING_KNOWN);
+        wifiTransitionTo(WifiState::WIFI_TRYING_KNOWN);
     }
 }
 
@@ -164,99 +165,99 @@ void setupWifi() {
 
 void wifiTick(unsigned long currentMillis) {
     switch (g_wifiState) {
-    case WifiState::BOOTING:
-        // Should never linger here — setup() calls setupWifi() which transitions out. If we see BOOTING in loop(), something is wrong upstream.
+    case WifiState::WIFI_BOOTING:
+        // Should never linger here — setup() calls setupWifi() which transitions out. If we see WIFI_BOOTING in loop(), something is wrong upstream.
         return;
 
-    case WifiState::TRYING_KNOWN: {
+    case WifiState::WIFI_TRYING_KNOWN: {
         // Throttle WiFiMulti.run() — calling it every loop iteration is wasteful, once per second is plenty since each call internally takes
         // hundreds of ms to scan / try to associate.
         if (currentMillis - g_wifiLastTryConnectMs >= WIFI_TRYING_KNOWN_RETRY_INTERVAL_MS) {  // 1 second
             g_wifiLastTryConnectMs = currentMillis;
             if (g_wifiMulti.run() == WL_CONNECTED) {
-                wifiTransitionTo(WifiState::CONNECTED);
+                wifiTransitionTo(WifiState::WIFI_CONNECTED);
                 return;
             }
         }
-        // Still not connected after the timeout → escalate to portal.
+        // Still not connected after the timeout → escalate to WIFI_PORTAL.
         if (currentMillis - g_wifiStateEnteredMs >= WIFI_TRYING_KNOWN_TIMEOUT_MS) {  // 15 seconds
             ESP_LOGW(TAG_WIFI,
-                     "TRYING_KNOWN timeout (%lu ms) — no known network responded, "
-                     "opening portal",
+                     "WIFI_TRYING_KNOWN timeout (%lu ms) — no known network responded, "
+                     "opening WIFI_PORTAL",
                      (unsigned long)WIFI_TRYING_KNOWN_TIMEOUT_MS);
-            wifiTransitionTo(WifiState::PORTAL);
+            wifiTransitionTo(WifiState::WIFI_PORTAL);
         }
         return;
     }
 
-    case WifiState::PORTAL: {
-        // Pump the WiFiManager HTTP / DNS / portal logic. In non-blocking mode, process() returns true as soon as the save callback has run (creds
+    case WifiState::WIFI_PORTAL: {
+        // Pump the WiFiManager HTTP / DNS / WIFI_PORTAL logic. In non-blocking mode, process() returns true as soon as the save callback has run (creds
         // saved to NVS + added to WiFiMulti) and WiFiManager has torn down its captive AP — it does NOT wait for the STA to actually associate to
-        // the new SSID. So `process() == true` only means "portal is closed", not "we're online".
+        // the new SSID. So `process() == true` only means "WIFI_PORTAL is closed", not "we're online".
         bool justConnected = g_wifiManager.process();
 
-        // True CONNECTED detection: STA reports WL_CONNECTED AND has a real IP. Without the IP check, we trigger a false transition during the
-        // ~1-2 s transient where the driver is tearing down AP+STA-portal mode — WiFi.status() briefly returns WL_CONNECTED while WiFi.SSID() is
-        // still "" and WiFi.localIP() is 0.0.0.0. That false CONNECTED would then run setupNTP() on a dead link, log "Connected to [], IP=0.0.0.0",
-        // and flap to LOST 15 s later — costing ~30 s of dead UI before the real association finally comes through via the LOST retry loop.
+        // True WIFI_CONNECTED detection: STA reports WL_CONNECTED AND has a real IP. Without the IP check, we trigger a false transition during the
+        // ~1-2 s transient where the driver is tearing down AP+STA-WIFI_PORTAL mode — WiFi.status() briefly returns WL_CONNECTED while WiFi.SSID() is
+        // still "" and WiFi.localIP() is 0.0.0.0. That false WIFI_CONNECTED would then run setupNTP() on a dead link, log "Connected to [], IP=0.0.0.0",
+        // and flap to WIFI_LOST 15 s later — costing ~30 s of dead UI before the real association finally comes through via the WIFI_LOST retry loop.
         if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-            ESP_LOGI(TAG_WIFI, "Portal closed — STA is genuinely connected (SSID=[%s], IP=%s)", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+            ESP_LOGI(TAG_WIFI, "WIFI_PORTAL closed — STA is genuinely connected (SSID=[%s], IP=%s)", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
             wifiStopPortal();
-            wifiTransitionTo(WifiState::CONNECTED);
+            wifiTransitionTo(WifiState::WIFI_CONNECTED);
             return;
         }
 
-        // Portal self-closed but STA not yet associated: WiFiManager handed back control after the save callback but `WiFi.begin(newSSID)` is still
-        // pending under the hood. The credentials are already in WiFiMulti (added by wifiOnPortalSave), so the cleanest handoff is TRYING_KNOWN —
-        // the standard retry loop will pick up the new SSID alongside any other known ones, with proper timing and no phantom CONNECTED in between.
+        // WIFI_PORTAL self-closed but STA not yet associated: WiFiManager handed back control after the save callback but `WiFi.begin(newSSID)` is still
+        // pending under the hood. The credentials are already in WiFiMulti (added by wifiOnWIFI_PORTALSave), so the cleanest handoff is WIFI_TRYING_KNOWN —
+        // the standard retry loop will pick up the new SSID alongside any other known ones, with proper timing and no phantom WIFI_CONNECTED in between.
         if (justConnected) {
             ESP_LOGI(TAG_WIFI,
-                     "WiFiManager closed portal but STA not yet associated "
-                     "— handing off to TRYING_KNOWN for clean assoc");
+                     "WiFiManager closed WIFI_PORTAL but STA not yet associated "
+                     "— handing off to WIFI_TRYING_KNOWN for clean assoc");
             wifiStopPortal();
-            wifiTransitionTo(WifiState::TRYING_KNOWN);
+            wifiTransitionTo(WifiState::WIFI_TRYING_KNOWN);
             return;
         }
 
-        // Portal idle timeout: WiFiManager's own setConfigPortalTimeout is ignored in non-blocking mode (per its header comment), so we track time
-        // ourselves. After WIFI_PORTAL_TIMEOUT_MS without a successful save, close the portal and give the known networks one more chance.
+        // WIFI_PORTAL idle timeout: WiFiManager's own setConfigWIFI_PORTALTimeout is ignored in non-blocking mode (per its header comment), so we track time
+        // ourselves. After WIFI_PORTAL_TIMEOUT_MS without a successful save, close the WIFI_PORTAL and give the known networks one more chance.
         if (currentMillis - g_wifiStateEnteredMs >= WIFI_PORTAL_TIMEOUT_MS) {
             ESP_LOGW(TAG_WIFI,
-                     "Portal timeout (%lu ms) — closing portal and retrying known "
+                     "WIFI_PORTAL timeout (%lu ms) — closing WIFI_PORTAL and retrying known "
                      "networks",
                      (unsigned long)WIFI_PORTAL_TIMEOUT_MS);
             wifiStopPortal();
-            wifiTransitionTo(WifiState::TRYING_KNOWN);
+            wifiTransitionTo(WifiState::WIFI_TRYING_KNOWN);
         }
         return;
     }
 
-    case WifiState::CONNECTED: {
+    case WifiState::WIFI_CONNECTED: {
         if (WiFi.status() != WL_CONNECTED) {
-            ESP_LOGW(TAG_WIFI, "Connection lost (was CONNECTED) — entering LOST state");
-            wifiTransitionTo(WifiState::LOST);
+            ESP_LOGW(TAG_WIFI, "Connection lost (was WIFI_CONNECTED) — entering WIFI_LOST state");
+            wifiTransitionTo(WifiState::WIFI_LOST);
         }
         return;
     }
 
-    // LOST is intentionally distinct from TRYING_KNOWN even though they share the same control-flow shape (retry WiFiMulti, escalate to PORTAL on
-    // timeout). The split lets us pick different timing for the "freshly booted, never connected" case (TRYING_KNOWN: aggressive 1s retry, 15s
-    // before opening the portal — user is watching the screen and wants fast feedback) vs the "was online, just dropped" case (LOST: gentler 5s
-    // retry, 60s grace period — typical router reboots resolve in 30-60s, no point flipping the screen to portal mode for nothing).
-    case WifiState::LOST: {
+    // WIFI_LOST is intentionally distinct from WIFI_TRYING_KNOWN even though they share the same control-flow shape (retry WiFiMulti, escalate to WIFI_PORTAL on
+    // timeout). The split lets us pick different timing for the "freshly booted, never connected" case (WIFI_TRYING_KNOWN: aggressive 1s retry, 15s
+    // before opening the WIFI_PORTAL — user is watching the screen and wants fast feedback) vs the "was online, just dropped" case (WIFI_LOST: gentler 5s
+    // retry, 60s grace period — typical router reboots resolve in 30-60s, no point flipping the screen to WIFI_PORTAL mode for nothing).
+    case WifiState::WIFI_LOST: {
         // Retry WiFiMulti every WIFI_LOST_RETRY_INTERVAL_MS. The same WiFiMulti that succeeded before will try all known networks in order of RSSI.
         if (currentMillis - g_wifiLastTryConnectMs >= WIFI_LOST_RETRY_INTERVAL_MS) {
             g_wifiLastTryConnectMs = currentMillis;
             if (g_wifiMulti.run() == WL_CONNECTED) {
-                wifiTransitionTo(WifiState::CONNECTED);
+                wifiTransitionTo(WifiState::WIFI_CONNECTED);
                 return;
             }
         }
-        // After WIFI_LOST_TO_PORTAL_MS of failed retries, the AP is likely gone for good (moved house, router replaced, …). Open the portal so the
+        // After WIFI_LOST_TO_WIFI_PORTAL_MS of failed retries, the AP is likely gone for good (moved house, router replaced, …). Open the WIFI_PORTAL so the
         // user can add a new network without rebuilding firmware.
-        if (currentMillis - g_wifiStateEnteredMs >= WIFI_LOST_TO_PORTAL_MS) {
-            ESP_LOGW(TAG_WIFI, "LOST for %lu ms — falling back to portal", (unsigned long)WIFI_LOST_TO_PORTAL_MS);
-            wifiTransitionTo(WifiState::PORTAL);
+        if (currentMillis - g_wifiStateEnteredMs >= WIFI_LOST_TO_WIFI_PORTAL_MS) {
+            ESP_LOGW(TAG_WIFI, "WIFI_LOST for %lu ms — falling back to WIFI_PORTAL", (unsigned long)WIFI_LOST_TO_WIFI_PORTAL_MS);
+            wifiTransitionTo(WifiState::WIFI_PORTAL);
         }
         return;
     }
@@ -279,49 +280,46 @@ static void wifiTransitionTo(WifiState newState) {
                                  // state that polls WiFiMulti.
 
     switch (newState) {
-    case WifiState::TRYING_KNOWN:
+    case WifiState::WIFI_TRYING_KNOWN:
         // No explicit action — wifiTick will call WiFiMulti.run() in the next iteration.
         break;
 
-    case WifiState::PORTAL:
+    case WifiState::WIFI_PORTAL:
         wifiStartPortal();
         break;
 
-    case WifiState::CONNECTED:
+    case WifiState::WIFI_CONNECTED:
         wifiOnConnected();
         break;
 
-    case WifiState::LOST:
-        if (g_wifiWasConnected) {
-            printGeneralError("WiFi lost - Retrying...");
-        }
-        g_wifiWasConnected = false;  // re-arm so the next CONNECTED prints a banner.
+    case WifiState::WIFI_LOST:
+        wifiOnDisconnected();
         break;
 
-    case WifiState::BOOTING:
-        // We never transition back to BOOTING; this branch is just for completeness.
+    case WifiState::WIFI_BOOTING:
+        // We never transition back to WIFI_BOOTING; this branch is just for completeness.
         break;
     }
 
-    // Push a refresh to the info screen if it's currently shown. Covers EVERY transition (TRYING_KNOWN → CONNECTED gets SSID/IP populated,
-    // ANY → PORTAL switches to drawPortalInstructions, etc.) without needing per-case calls. No-op when in conversation mode.
+    // Push a refresh to the info screen if it's currently shown. Covers EVERY transition (WIFI_TRYING_KNOWN → WIFI_CONNECTED gets SSID/IP populated,
+    // ANY → WIFI_PORTAL switches to drawWIFI_PORTALInstructions, etc.) without needing per-case calls. No-op when in conversation mode.
     refreshInfoScreenIfShown();
 }
 
 static void wifiStartPortal() {
-    ESP_LOGI(TAG_WIFI, "Starting captive portal AP [%s]", WIFI_PORTAL_AP_SSID);
+    ESP_LOGI(TAG_WIFI, "Starting captive WIFI_PORTAL AP [%s]", WIFI_PORTAL_AP_SSID);
 
     // Pause the BLE keyboard scan before touching the WiFi mode. On ESP32 the BLE and WiFi radios share the same 2.4 GHz front-end; a BLE scan at
     // ~100 % duty cycle (the active-scan + 30 s window + immediate re-arm pattern used on first-onboarding boots — see mm_blekb.cpp setup()) starves
     // the WiFi RX path. The symptom is: AP beacons go out fine (so the phone sees the SSID in its list and prompts for the password), but
     // auth/association frames from the phone never reach the ESP32 — NUM CLIENTS stays at 0 forever, Android pops "Impossible de se connecter au
-    // réseau Wi-Fi" with no further detail. We pause the scan unconditionally here because the portal can also be triggered after a bond exists
-    // (manual `/wifi portal`), in which case the scan is in passive mode but its overhead — plus the keyboard's keep-alive notify traffic — still
+    // réseau Wi-Fi" with no further detail. We pause the scan unconditionally here because the WIFI_PORTAL can also be triggered after a bond exists
+    // (manual `/wifi WIFI_PORTAL`), in which case the scan is in passive mode but its overhead — plus the keyboard's keep-alive notify traffic — still
     // perturbs association. Resumed in wifiStopPortal().
     g_kb.pauseScan();
 
     // Hard reset of the WiFi driver BEFORE handing over to WiFiManager. Symmetric to the cleanup we already do in wifiStopPortal() (see the long
-    // comment there): coming out of TRYING_KNOWN means the STA side was scanning / connecting, the radio is busy on a random channel, and the
+    // comment there): coming out of WIFI_TRYING_KNOWN means the STA side was scanning / connecting, the radio is busy on a random channel, and the
     // softAP that startConfigPortal() raises ends up broadcasting beacons that phones SEE in the network list but cannot associate to (no error
     // bubbles up — the phone retries silently then gives up). disconnect(true,true) stops the radio AND wipes in-RAM creds, the 100 ms delay
     // lets the async STA_STOP / scan-abort events drain, then WiFiManager.startConfigPortal() puts us into a clean AP_STA from a known-quiet state.
@@ -333,18 +331,18 @@ static void wifiStartPortal() {
 }
 
 static void wifiStopPortal() {
-    ESP_LOGI(TAG_WIFI, "Stopping captive portal (selfClosed=%d)", g_portalSelfClosed);
+    ESP_LOGI(TAG_WIFI, "Stopping captive WIFI_PORTAL (selfClosed=%d)", g_wifiPortalSelfClosed);
 
-    // Only call stopConfigPortal() if WiFiManager hasn't already torn itself down. When the user submits credentials on the portal page and STA
-    // association succeeds, WM closes the portal on its own and frees the WebServer/DNSServer objects; a second stopConfigPortal() then deref's
-    // freed memory → LoadProhibited panic. g_portalSelfClosed is set by wifiOnPortalSave() in that path. The other path (timeout-based fall-through
-    // from PORTAL back to TRYING_KNOWN) has WM still alive, so we must call stop() ourselves there.
-    if (!g_portalSelfClosed) {
+    // Only call stopConfigWIFI_PORTAL() if WiFiManager hasn't already torn itself down. When the user submits credentials on the WIFI_PORTAL page and STA
+    // association succeeds, WM closes the WIFI_PORTAL on its own and frees the WebServer/DNSServer objects; a second stopConfigPortal() then deref's
+    // freed memory → LoadProhibited panic. g_wifiPortalSelfClosed is set by wifiOnPortalSave() in that path. The other path (timeout-based fall-through
+    // from WIFI_PORTAL back to WIFI_TRYING_KNOWN) has WM still alive, so we must call stop() ourselves there.
+    if (!g_wifiPortalSelfClosed) {
         g_wifiManager.stopConfigPortal();
     }
-    g_portalSelfClosed = false;
+    g_wifiPortalSelfClosed = false;
 
-    // AP → STA transition is delicate on arduino-esp32: after a long stretch in WIFI_AP_STA mode (5 min of captive portal, by default), the radio
+    // AP → STA transition is delicate on arduino-esp32: after a long stretch in WIFI_AP_STA mode (5 min of captive WIFI_PORTAL, by default), the radio
     // keeps internal residues (AP context, beaconing state, netif callbacks). Just calling WiFi.mode(WIFI_STA) is not enough — the next few
     // scanNetworks() calls return 0 results and WiFiMulti logs "no matching wifi found!" even when our SSID is right there. The fix is a hard reset
     // sequence: disconnect(true, true) stops the radio AND erases the in-RAM driver creds, the 100 ms delay lets the driver-side async events
@@ -361,45 +359,57 @@ static void wifiStopPortal() {
 }
 
 void wifiForcePortal() {
-    if (g_wifiState == WifiState::PORTAL) {
-        ESP_LOGI(TAG_WIFI, "wifiForcePortal: already in PORTAL — no-op");
+    if (g_wifiState == WifiState::WIFI_PORTAL) {
+        ESP_LOGI(TAG_WIFI, "wifiForcePortal: already in WIFI_PORTAL — no-op");
         return;
     }
-    ESP_LOGI(TAG_WIFI, "wifiForcePortal: forcing PORTAL transition");
-    wifiTransitionTo(WifiState::PORTAL);
+    ESP_LOGI(TAG_WIFI, "wifiForcePortal: forcing WIFI_PORTAL transition");
+    wifiTransitionTo(WifiState::WIFI_PORTAL);
 }
 
 // ================================================================================
-// CONNECTED entry-point side effects: NTP + UI banner
+// WIFI_CONNECTED entry-point side effects: NTP + UI banner
 // ================================================================================
 
 static void wifiOnConnected() {
     String ip = WiFi.localIP().toString();
     ESP_LOGI(TAG_WIFI, "Connected to [%s], IP=%s, RSSI=%d", WiFi.SSID().c_str(), ip.c_str(), WiFi.RSSI());
 
-    // NTP needs WiFi up. setupNTP() is idempotent: if the clock is already synced (from a previous CONNECTED transition), its wait loop exits on the
+    // NTP needs WiFi up. setupNTP() is idempotent: if the clock is already synced (from a previous WIFI_CONNECTED transition), its wait loop exits on the
     // first iteration without delay — so calling it on every reconnect is essentially free, and gives us a fresh SNTP arm in case the new network
     // resolves the NTP pool differently.
     setupNTP();
 
-    // Banner on the rising edge (first CONNECTED after a LOST or initial connect).
+    // Banner on the rising edge (first WIFI_CONNECTED after a WIFI_LOST or initial connect).
     if (!g_wifiWasConnected) {
         g_wifiWasConnected = true;
     }
+
+    updateLedAggregatedErrorStatus();
 }
 
+static void wifiOnDisconnected() {
+    if (g_inConversationMode && g_wifiWasConnected) {
+        printGeneralError("WiFi lost - Retrying...");
+    }
+    g_wifiWasConnected = false;  // re-arm so the next WIFI_CONNECTED prints a banner.
+
+    updateLedAggregatedErrorStatus();
+}
+
+
 // ================================================================================
-// Portal save callback — fires when the user submits credentials via the web UI
+// WIFI_PORTAL save callback — fires when the user submits credentials via the web UI
 // ================================================================================
 
 static void wifiOnPortalSave() {
     String ssid = WiFi.SSID();
     String pwd  = WiFi.psk();
-    ESP_LOGI(TAG_WIFI, "Portal saved credentials: SSID=[%s] (pwd %u chars)", ssid.c_str(), (unsigned)pwd.length());
+    ESP_LOGI(TAG_WIFI, "WIFI_PORTAL saved credentials: SSID=[%s] (pwd %u chars)", ssid.c_str(), (unsigned)pwd.length());
 
     if (ssid.length() == 0) {
         ESP_LOGW(TAG_WIFI,
-                 "Portal save callback fired but WiFi.SSID() is empty — "
+                 "WIFI_PORTAL save callback fired but WiFi.SSID() is empty — "
                  "skipping NVS write");
         return;
     }
@@ -414,9 +424,9 @@ static void wifiOnPortalSave() {
                  ssid.c_str());
     }
 
-    // Signal to wifiStopPortal() that WiFiManager will tear down the portal on its own (it does so right after this callback returns when STA
-    // association succeeded). Prevents the double-stopConfigPortal() that previously caused a LoadProhibited panic.
-    g_portalSelfClosed = true;
+    // Signal to wifiStopPortal() that WiFiManager will tear down the WIFI_PORTAL on its own (it does so right after this callback returns when STA
+    // association succeeded). Prevents the double-stopConfigWIFI_PORTAL() that previously caused a LoadProhibited panic.
+    g_wifiPortalSelfClosed = true;
 }
 
 // ================================================================================
@@ -441,9 +451,9 @@ static inline String wifiNvsPwdKey(uint8_t i) {
     return String("pwd_") + (int)i;
 }
 
-// Loads every known network into WiFiMulti: first the NVS-saved ones (user-managed, password may have been updated via portal), then the
+// Loads every known network into WiFiMulti: first the NVS-saved ones (user-managed, password may have been updated via WIFI_PORTAL), then the
 // compile-time defaults from personal-data.h. Deduplication is by SSID with NVS winning: if "SatelliteThree" is both in NVS and in the compiled
-// defaults, only the NVS entry is used — its password is potentially fresher (user reconfigured via portal after changing the home router pass).
+// defaults, only the NVS entry is used — its password is potentially fresher (user reconfigured via WIFI_PORTAL after changing the home router pass).
 // The compile-time list therefore acts as a permanent safety net: a `/wifi clean` wipes NVS but the defaults still get loaded at the next boot,
 // so the device can still come up on a known network without recompiling.
 // Returns the total number of unique networks loaded into WiFiMulti.
@@ -521,7 +531,7 @@ static int wifiLoadNVSAndCompiledIntoMulti() {
              skippedCompiled);
 
     // Debug dump of the final list. Cleartext password on purpose — this is a dev-time aid to confirm the right credentials are loaded after a
-    // /wifi forget / portal save / template-bump. Strip or gate behind a stricter log level if you ever ship this to non-trusted hands.
+    // /wifi forget / WIFI_PORTAL save / template-bump. Strip or gate behind a stricter log level if you ever ship this to non-trusted hands.
     for (int i = 0; i < loadedCount; i++) {
         ESP_LOGI(TAG_WIFI, "- #%d : %s / %s", i, loadedSsids[i].c_str(), loadedPwds[i].c_str());
     }
@@ -717,10 +727,10 @@ int wifiAppendKnownCredentialsToBuffer(char* buffer, size_t cap, size_t& used, b
 }
 
 // ================================================================================
-// Portal instructions renderer for the info screen
+// WIFI_PORTAL instructions renderer for the info screen
 // ================================================================================
 //
-// Called from showUpdatedInfoScreen() in display.ino when g_wifiState == PORTAL. The caller has already drawn ID / Name / MAC / BTKB rows
+// Called from showUpdatedInfoScreen() in display.ino when g_wifiState == WIFI_PORTAL. The caller has already drawn ID / Name / MAC / BTKB rows
 // and passes the current nextY by reference; we advance it for each row we paint so it can continue the layout (HELP row gets appended below).
 
 void drawPortalInstructions(Adafruit_ST7789* pDisp, int& nextY, int colHeaders, int colValues, int lineHeight) {

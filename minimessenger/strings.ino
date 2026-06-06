@@ -1,11 +1,6 @@
 // ================================================================================
 // strings.ino — Generic char* / String utilities
 // ================================================================================
-//
-// This file owns string-level helpers that don't depend on display, MQTT, BLE or WiFi state. Concatenated by the Arduino IDE into the main TU
-// after minimessenger.ino (alphabetical order, after commands.ino, before wifi.ino), so it has access to everything declared in the sketch
-// without forward decls — and conversely, its functions are reachable from earlier .ino files only through the explicit forward declarations
-// in the sketch's forward-decl block.
 
 #include <Arduino.h>
 
@@ -35,3 +30,26 @@ size_t utf8ToLatin1(char* s) {
     *out = '\0';
     return out - (uint8_t*)s;
 }
+
+
+//char* trim(char* str) {
+//    // Left trim
+//    while (isspace((unsigned char)*str)) {
+//        str++;
+//    }
+//
+//    if (*str == 0) {  // all spaces?
+//        return str;
+//    }
+//
+//    // Right trim
+//    char* end = str + strlen(str) - 1;
+//    while (end > str && isspace((unsigned char)*end)) {
+//        end--;
+//    }
+//
+//    // Write new null terminator
+//    *(end + 1) = '\0';
+//
+//    return str;
+//}

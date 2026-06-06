@@ -1,11 +1,16 @@
 # Features à faire
 
 Physique:
-- led contact(s)
-- led de statut consolidé (pas wifi ou pas mqtt). Necessaire si bloqué sur info screen + eco d'ecran
+-allumé
+- probleme
+- contact 1+
+-
+-
 - bouton reset ?
 - bouton reveil ?
 - bouton bonus ?
+
+- ecran test fonts sizes
 
 
 ## Pour une éventuelle V2 si 3+ devices sont fabriqués:

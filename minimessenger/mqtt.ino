@@ -25,11 +25,6 @@
 // extern here is purely for clarity / so this file reads standalone.
 extern WiFiClientSecure g_wifiClient;
 
-// Device identity (g_deviceData, with `g_deviceData.name()` for the formatted "namePrefix_NNN" string) is defined in minimessenger.ino /
-// personal-data.h. The .ino files are concatenated into a single TU by the Arduino IDE, so no extern declaration is needed here. See
-// identifyDevice() for the init path.
-
-// LED + display helpers called from this file (LED on after a successful connect, message routing for incoming chat messages, contact liveness LEDs).
 
 // Forward-declared so the auto-prototype ordering does not bite us.
 extern void ledSetState(int pin, int requiredState);
@@ -62,7 +57,7 @@ unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
 uint8_t       g_mqttReconnectAttempts            = 0;
 
 // Pas partagé, mais permet d'allouer une fois pour toute dans la mémoire .bss
-char g_mqttCurrentOutgoingPayload[MQTT_PAYLOAD_MAX_LENGTH+1];
+char g_mqttCurrentOutgoingPayload[MQTT_PAYLOAD_MAX_LENGTH + 1];
 
 char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
 
@@ -232,7 +227,7 @@ bool mqttReconnectAttempt() {
         g_mqttReconnectAttempts = 0;  // success — reset the backoff so a future outage starts at BASE_MS
                                       // again instead of inheriting the previous wait.
         g_mqttConnectionId++;
-        ledSetState(LED_STATUS, LED_STATE_ON);
+        updateLedAggregatedStatus();
 
         // Send public liveness. First successful connect since boot → BOOT; any subsequent reconnect → RECO. The keepalive ticks fired from the loop()
         // gate use LIVE — see minimessenger.ino.
@@ -241,29 +236,21 @@ bool mqttReconnectAttempt() {
         // Push a refresh to the info screen if it's currently shown — the MQTT row flips from "NOT OK" to "OK" on this connect.
         refreshInfoScreenIfShown();
 
+        // Notify the rest of the project for non-mqtt tasks
+        onMqttConnectedOrReconnected();
+
         return true;
     } else {
         // Codes utiles renvoyés par g_mqttClient.state() après un connect() raté
         // (source : PubSubClient.h, #define MQTT_*) :
-        //   rc=-4  MQTT_CONNECTION_TIMEOUT    — pas de réponse du broker dans les
-        //   MQTT_SOCKET_TIMEOUT (15 s par défaut).
-        //                                       En pratique sur ce projet :
-        //                                       handshake mbedtls qui patine (heap
-        //                                       fragmenté → cf. pré-check
-        //                                       MQTT_TLS_MIN_FREE_HEAP_B
-        //                                       au-dessus), ou tentative de
-        //                                       connexion sur 8883 sans TLS.
-        //   rc=-3  MQTT_CONNECTION_LOST       — TCP RST / WiFi tombé pendant ou
-        //   juste après le handshake. rc=-2  MQTT_CONNECT_FAILED        — pas de
-        //   TCP du tout : DNS qui échoue, port fermé, broker URL erronée dans
-        //   personal-data.h. rc=-1  MQTT_DISCONNECTED          — on a appelé
-        //   disconnect() nous-mêmes (cf. /mqtt drop). rc=4
-        //   MQTT_CONNECT_BAD_CREDENTIALS — CONNACK du broker : user/password
-        //   incorrect dans g_mqttServerInfo (personal-data.h). rc=5
-        //   MQTT_CONNECT_UNAUTHORIZED   — CONNACK : creds OK mais ACL refuse cette
-        //   opération (ex. topic non autorisé pour ce user).
-        // Note : ne pas confondre rc=-4 (timeout transport) et rc=4 (broker
-        // refusant les creds) — le signe compte.
+        //   rc=-4  MQTT_CONNECTION_TIMEOUT    — pas de réponse du broker dans les MQTT_SOCKET_TIMEOUT (15 s par défaut).
+        //          En pratique sur ce projet : handshake mbedtls qui patine (heap fragmenté → cf. pré-check MQTT_TLS_MIN_FREE_HEAP_B
+        //                                       au-dessus), ou tentative de connexion sur 8883 sans TLS.
+        //   rc=-3  MQTT_CONNECTION_LOST       — TCP RST / WiFi tombé pendant ou juste après le handshake.
+        //   rc=-2  MQTT_CONNECT_FAILED        — pas de TCP du tout : DNS qui échoue, port fermé, broker URL erronée dans personal-data.h.
+        //   rc=-1  MQTT_DISCONNECTED          — on a appelé disconnect() nous-mêmes (cf. /mqtt drop).
+        //   rc=4 MQTT_CONNECT_BAD_CREDENTIALS — CONNACK du broker : user/password incorrect dans g_mqttServerInfo (personal-data.h).
+        //   rc=5 MQTT_CONNECT_UNAUTHORIZED   — CONNACK : creds OK mais ACL refuse cette opération (ex. topic non autorisé pour ce user).
         if (g_mqttReconnectAttempts < UINT8_MAX) {
             g_mqttReconnectAttempts++;
         }
@@ -472,16 +459,12 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         if (nowEpoch > 1'700'000'000L) {
             long age = (long)nowEpoch - payloadEpoch;
             if (age > (long)(MQTT_KEEPALIVE_INTERVAL_MS / 1000) + 5) {
-                ESP_LOGD(TAG_MQTT,
-                         "Ignoring stale liveness retain for device %d (age %lds, "
-                         "payload=[%s])",
-                         remoteDeviceId,
-                         age,
-                         msgC);
+                ESP_LOGD(TAG_MQTT, "Ignoring stale liveness retain for device %d (age %lds, payload=[%s])", remoteDeviceId, age, msgC);
                 return;
             }
         }
 
+        // All checks are OK. Remove contact is LIVE
         onReceivedContactOnline(remoteDeviceId, ContactLiveness::LIVE);
     }
     // msg/unicast/<me> or msg/broadcast

@@ -17,28 +17,28 @@ wrapper ces defines dans #ifdef PAC_ON_ESP32 ou utiliser des valeurs différente
 
 
 ```
-                          ┌─────────────────────────┐                                                  ┌──────┬──────────────────────────────────────────────────┐
-                    EN ──►│ 1                    30 ├── GPIO23 ─────────────────────────────────┐      │      │                                                  │
-                  GPIO36 ─┤ 2 (input only)       29 │     GPIO22 (free)                         │      │      │                                                  │
-                  GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser                 │      │      │                                                  │
-                  GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser         ┌───────┼───►  │ST(CS)│                                                  │
-                  GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                 │ ┌─────┼───►  │  DC  │                                                  │
-  GND ─[220Ω]─|◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                 │ │     │      │ RST  │                                                  │
-  GND ─[220Ω]─|◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ─────────────────────────┼─┼───┐ └───►  │ SDA  │                                                  │
-  GND ─[220Ω]─|◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ─────────────────────────┘ │   └─────►  │ SCL  │             ST7789 panel — 320 × 240             │
-                  GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                   │ ┌───────►  │ VCC  │                                                  │
-                  GPIO27 ─┤ 10                   21 │     GPIO16 (free)                   │ │          │ GND  │                                                  │
-                  GPIO14 ─┤ 11                   20 │     GPIO4  (free)                   │ │          │      │                                                  │
-                  GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ───────────────────────────┘ │          │      │                                                  │
-                  GPIO13 ─┤ 13                   18 │     GPIO15 *strap                     │          │      │                                                  │
-                     GND ─┤ 14                   17 │     GND ─────────┐                    │          │      │                                                  │
-                  5V/VIN ─┤ 15                   16 ├── 3V3    ────────┼────────────────────┘          │      │                                                  │
-                          └────────────┬────────────┘                  │                               └──────┴─────────────────────┬────────────────────────────┘
-                                    ┌──┴──┐                            │                                                            │
-                                    │ USB │                            │                                                            │  (TFT GND)
-                                    └─────┘                            │                                                            │
-                                                                       │                                                            │
-═══════════════════════════════════════════════════════════════════════╧════════════════════════════════════════════════════════════╧═════════════ GND rail
+                                   ┌─────────────────────────┐                                                  ┌──────┬──────────────────────────────────────────────────┐
+                             EN ──►│ 1                    30 ├── GPIO23 ─────────────────────────────────┐      │      │                                                  │
+                           GPIO36 ─┤ 2 (input only)       29 │     GPIO22 (free)                         │      │      │                                                  │
+                           GPIO39 ─┤ 3 (input only)       28 │     GPIO1  TX0 ── USB-Ser                 │      │      │                                                  │
+                           GPIO34 ─┤ 4 (input only)       27 │     GPIO3  RX0 ── USB-Ser         ┌───────┼───►  │ST(CS)│                                                  │
+                           GPIO35 ─┤ 5 (input only)       26 │     GPIO21 (free)                 │ ┌─────┼───►  │  DC  │                                                  │
+   GND ─[220Ω]─ Yellow |◄─ GPIO32 ─┤ 6                    25 │     GPIO19 (free)                 │ │     │      │ RST  │                                                  │
+   GND ─[220Ω]─    Red |◄─ GPIO33 ─┤ 7                    24 ├── GPIO18 ─────────────────────────┼─┼───┐ └───►  │ SDA  │                                                  │
+   GND ─[220Ω]─  Green |◄─ GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ─────────────────────────┘ │   └─────►  │ SCL  │             ST7789 panel — 320 × 240             │
+                           GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)                   │ ┌───────►  │ VCC  │                                                  │
+                           GPIO27 ─┤ 10                   21 │     GPIO16 (free)                   │ │          │ GND  │                                                  │
+                           GPIO14 ─┤ 11                   20 │     GPIO4  (free)                   │ │          │      │                                                  │
+                           GPIO12 ─┤ 12 *strap            19 ├── GPIO2  ───────────────────────────┘ │          │      │                                                  │
+                           GPIO13 ─┤ 13                   18 │     GPIO15 *strap                     │          │      │                                                  │
+                              GND ─┤ 14                   17 │     GND ─────────┐                    │          │      │                                                  │
+                           5V/VIN ─┤ 15                   16 ├── 3V3    ────────┼────────────────────┘          │      │                                                  │
+                                   └────────────┬────────────┘                  │                               └──────┴─────────────────────┬────────────────────────────┘
+                                             ┌──┴──┐                            │                                                            │
+                                             │ USB │                            │                                                            │  (TFT GND)
+                                             └─────┘                            │                                                            │
+                                                                                │                                                            │
+════════════════════════════════════════════════════════════════════════════════╧════════════════════════════════════════════════════════════╧═════════════ GND rail
                            (common ground — tied to ESP32 GND pin 17, the three LED cathodes via 220 Ω each, and the TFT GND pin.
 ```
 
@@ -85,11 +85,11 @@ Notes —
 
 Three indicator LEDs, each driven directly from a GPIO through a 220 Ω series resistor to ground (anode → GPIO, cathode via R → GND).
 
-| LED constant | GPIO | Role |
-|---|---|---|
-| `LED_STATUS`   | `GPIO32` | Boot / WiFi / MQTT state (blink fast = connecting, blink slow = degraded, on = OK) |
-| `LED_FRIEND_1` | `GPIO33` | Solid when device `g_deviceIdFriend1` is online (driven by the `admin/live` MQTT topic) |
-| `LED_FRIEND_2` | `GPIO25` | Solid when device `g_deviceIdFriend2` is online |
+| LED constant   | GPIO     | Color  | Role                                                                                    |
+|----------------|----------|--------|-----------------------------------------------------------------------------------------|
+| `LED_POWER_ON` | `GPIO25` | Green  | Solid when device `g_deviceIdFriend2` is online                                         |
+| `LED_STATUS`   | `GPIO33` | Red    | Solid when device `g_deviceIdFriend1` is online (driven by the `admin/live` MQTT topic) |
+| `LED_FRIEND`   | `GPIO32` | Yellow | Boot / WiFi / MQTT state (blink fast = connecting, blink slow = degraded, on = OK)      |
 
 The `LED_QTY = 17` array in the code is sized for **raw GPIO numbers**, not LED count — bear that in mind if a fourth LED ever lands on a GPIO > 16.
 

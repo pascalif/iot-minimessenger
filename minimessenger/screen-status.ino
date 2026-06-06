@@ -112,20 +112,20 @@ void showUpdatedInfoScreen() {
     nextY += drawStatusRow(pDisp, "BTKB:", g_kb.isFullyConnected() ? "Connected" : "Not found", colHeaders, colValues, nextY, lineHeight);
     nextY += separatorHeight;
 
-    // Branch on the current WiFi state — in PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
+    // Branch on the current WiFi state — in WIFI_PORTAL we replace the SSID/IP/MQTT/TIME rows with config instructions, otherwise we keep the
     // standard runtime info layout. The "Connecting…" / "Lost" variants reuse the SSID/IP rows with placeholder values so the row positions
     // stay stable across transitions (less visual jitter when state changes between two info-screen refreshes).
     WifiState st = wifiGetState();
-    if (st == WifiState::PORTAL) {
+    if (st == WifiState::WIFI_PORTAL) {
         drawPortalInstructions(pDisp, nextY, colHeaders, colValues, lineHeight);
     } else {
-        String ssidStr = (st == WifiState::CONNECTED) ? WiFi.SSID() : String("(searching)");
+        String ssidStr = (st == WifiState::WIFI_CONNECTED) ? WiFi.SSID() : String("(searching)");
         String ipStr;
         if (WiFi.status() == WL_CONNECTED) {
             ipStr = WiFi.localIP().toString();
-        } else if (st == WifiState::TRYING_KNOWN) {
+        } else if (st == WifiState::WIFI_TRYING_KNOWN) {
             ipStr = "Connecting...";
-        } else if (st == WifiState::LOST) {
+        } else if (st == WifiState::WIFI_LOST) {
             ipStr = "Lost, retrying";
         } else {
             ipStr = "Booting...";
