@@ -78,7 +78,7 @@ int contactGetActiveCount() {
 // actually paint instead of getting cached out.
 static void contactsApplyState() {
     const int count = contactGetActiveCount();
-    ledSetState(LED_FRIEND, (count >= 1) ? LedState::LED_STATE_ON : LedState::LED_STATE_OFF);
+    ledSetState(PIN_LED_FRIEND, (count >= 1) ? LedState::LED_STATE_ON : LedState::LED_STATE_OFF);
     g_statusBarDirty = true;
 }
 
@@ -184,22 +184,22 @@ void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness) {
 // Comparing a stale currentMillis with a fresher lastSeenMs underflows the unsigned subtraction and instantly evicts the contact we just received.
 // Keeping the clock read in here (matching what onReceivedContactOnline already does) makes the two sites use the same time reference.
 void contactsTick() {
-    const unsigned long now      = millis();
-    bool                anyFreed = false;
+    unsigned long currentMillis = millis();
+    bool          anyFreed      = false;
     for (int i = 0; i < MAX_CONTACTS; i++) {
         if (g_contacts[i].deviceId == DEVICE_ID_UNSET) {
             continue;
         }
-        if (now - g_contacts[i].lastSeenMs > CONTACT_TIMEOUT_MS) {
+        if (currentMillis - g_contacts[i].lastSeenMs > CONTACT_TIMEOUT_MS) {
             const byte expiredId = g_contacts[i].deviceId;
             ESP_LOGI(TAG_MM,
                      "CONTACT -timeout id=%d (%s) slot=%d ageMs=%lu lastSeen=%lu now=%lu",
                      expiredId,
                      pseudoOrPlaceholder(expiredId),
                      i,
-                     now - g_contacts[i].lastSeenMs,
+                     currentMillis - g_contacts[i].lastSeenMs,
                      g_contacts[i].lastSeenMs,
-                     now);
+                     currentMillis);
             g_contacts[i].deviceId   = DEVICE_ID_UNSET;
             g_contacts[i].lastSeenMs = 0;
             anyFreed                 = true;
