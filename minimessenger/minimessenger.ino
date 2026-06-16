@@ -133,8 +133,8 @@ Docs (/docs):
 
 // "Screen saver" Burn-in protection: time without local input (BT keystroke / serial) and
 // without a remote message before the screen dims, then fully turns off.
-#define DISPLAY_IDLE_BEFORE_DIM_MS 10'000UL  // 5 min  -> dim to 50%
-#define DISPLAY_IDLE_BEFORE_OFF_MS 25'000UL  // 5 + 1 min -> panel off
+#define DISPLAY_IDLE_BEFORE_DIM_MS 120'000UL  // 5 min  -> dim to 50%
+#define DISPLAY_IDLE_BEFORE_OFF_MS 150'000UL  // 5 + 1 min -> panel off
 
 
 // ================================================================================
@@ -149,9 +149,9 @@ Docs (/docs):
 // `D5` silkscreen on the HW-394 / DOIT V1 board (Dxx = GPIOxx on this board family — but NOT on D1 mini, where D2 = GPIO4).
 // (2) The sentinel `GPIO_NUM_NC = -1` documents "this pin is intentionally not connected", which is clearer than a bare `-1` literal.
 
-#define PIN_LED_POWER_ON     GPIO_NUM_25
+#define PIN_LED_POWER_ON     GPIO_NUM_32
 #define PIN_LED_ERROR_STATUS GPIO_NUM_33
-#define PIN_LED_FRIEND       GPIO_NUM_32
+#define PIN_LED_FRIEND       GPIO_NUM_25
 #define PIN_BTN_WAKEUP       GPIO_NUM_26
 
 
@@ -167,10 +167,6 @@ Docs (/docs):
 
 // On ESP32:
 // STT7789v pins, vue de dessus : GND, VCC, SCL, SDA, RST, DC, CS
-// - TFT_SCL : D18 = GPIO18 "SCK" by default
-// - TFT_SDA : D23 = GPIO23 "MOSI" by default
-#define TFT_RST GPIO_NUM_NC  // not wired — the ST7789 has an internal Power-On Reset, see  ../docs/info_tft_rst.md
-#define TFT_DC  GPIO_NUM_2   // Data/Command select
 
 // Chip select — MUST be wired to a real GPIO on this module. Empirically tested: tying the TFT's CS pin to GND on the breadboard side and setting
 // `TFT_CS = GPIO_NUM_NC` (so Adafruit_SPITFT skips every CS digitalWrite via its `if (_cs >= 0)` guard) leaves the panel dark — only the backlight
@@ -179,6 +175,23 @@ Docs (/docs):
 // GPIO and let Adafruit_SPITFT toggle it per transaction.
 #define TFT_CS GPIO_NUM_5
 
+#define TFT_DC  GPIO_NUM_17   // Data/Command select
+
+// On ajoute explicitement les 2 pins SCL/SDA pour le test de basculer entre pins par défaut (matériel) vs d'autre pins (logiciel)
+// - TFT_SCL : D18 = GPIO18 "SCK" by default (SPI materiel, rapide)
+// - TFT_SDA : D23 = GPIO23 "MOSI" by default (SPI materiel, rapide)
+// Selon Claude:
+// - SPI matériel utilise le périphérique SPI intégré dans l'ESP32 — cadencé directement par le hardware, très rapide (jusqu'à 80MHz sur ESP32), sans charge CPU.
+// - SPI logiciel (bit-banging) simule le protocole SPI en manipulant les GPIO manuellement dans le code — beaucoup plus lent (typiquement 1-5MHz), charge le CPU à 100% pendant le transfert.
+// => Pour un écran ST7789 320×240, la différence est visible : un rafraîchissement complet de l'écran peut prendre ~50ms en matériel vs ~500ms+ en logiciel.
+// et concretement c'est reellement trop lent, meme pour mon usage. Donc on laisse les defines
+// de pins ici pour savoir qu'elles sont utilisées, mais il ne faut PAS les surcharger!
+#define TFT_SCL__SCLK GPIO_NUM_18
+#define TFT_SDA__MOSI GPIO_NUM_23
+
+#define TFT_RST GPIO_NUM_NC  // not wired — the ST7789 has an internal Power-On Reset, see  ../docs/info_tft_rst.md
+
+
 // Backlight pin for PWM dimming. Set to a GPIO if the BL/LED pin of the panel
 // is wired to one (then dim = 50% PWM, off = 0% PWM). Set to -1 if the BL pin
 // is tied straight to 3.3 V — the dim phase becomes invisible but the OFF
@@ -186,6 +199,7 @@ Docs (/docs):
 //
 // /!\ My STT7789v (Alixp) does NOT have this pin. Feature not possible here.
 #define TFT_BL -1
+
 
 // ================================================================================
 // Global variables
@@ -932,6 +946,9 @@ void hwScrollReset() {
 void setupDisplay() {
     if (g_deviceData.screen == DisplayType::ST7789) {
         Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+        // Complete ctor for reference. Do not use it since it enable "software SPI" rather than "hardware SPI" (even with default pins)
+        // and it's super SLOW!
+        // Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_SDA__MOSI, TFT_SCL__SCLK, TFT_RST);
 
         pDisp->init(240, 320);
         // Portrait. Hardware scroll operates in framebuffer-native (portrait)

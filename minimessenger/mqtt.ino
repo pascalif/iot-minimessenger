@@ -467,7 +467,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         // All checks are OK. Remove contact is LIVE
         onReceivedContactOnline(remoteDeviceId, ContactLiveness::LIVE);
     }
-    // msg/unicast/<me> or msg/broadcast
+    // msg/unicast/<idMe> or msg/broadcast
     else if (topic[0] == 'm') {
         // Trailer "… ### ts:<…> deviceId:<n> msgId:<n>" is added by mqttPushFormattedMessage() for every chat message published by our own code.
         // We use it for two things:

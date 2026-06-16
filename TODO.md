@@ -1,7 +1,7 @@
 # Features à faire
 
-- Connecter des boutons (au moins un pour le reveil)
-
+- Update diag wiring pour bouton entre GND et GPIO26
+- Faire une app kotlin ? python ? CLI pour ecrire et lire
 
 ## Pour une éventuelle V2 si 3+ devices sont fabriqués:
 - pas d'accents (ï) sur pseudo (petite font par defaut non générée avec latin1) : changer de font
@@ -66,7 +66,7 @@ Tu veux qu'on bascule en full event-driven en branchant les 3 endroits ci-dessus
 
 ## .clang-format 1
 
-Une option désactivé car clang-format pas encore compatible
+Une option désactivée car clang-format pas encore compatible
 
 
 ## .clang-format 2
@@ -79,13 +79,13 @@ REgarde ce commentaire reformaté:
 Comment empecher l'ajout de "\" en fin de ligne qd c'est un commentaire ?
 
 Claude responded: C'est un bug connu de clang-format : il traite les commentaires dans un #define multiligne comme du code
-et ajoute des \ inutiles.C'est un bug connu de clang-format : il traite les commentaires dans un #define multiligne comme du code et ajoute des \ inutiles.
+et ajoute des \ inutiles.
 
 La solution est d'ajouter dans ton .clang-format :
 yamlAlignEscapedNewlines: DontAlign
 
 Mais ça ne résout pas totalement le problème des commentaires dans les macros. La vraie solution est de mettre le commentaire avant ou après le #define :
-cpp// Keyboard Error Roll Over - used for all slots if too many keys are
+// Keyboard Error Roll Over - used for all slots if too many keys are
 // pressed ("Phantom key")
 #define KEY_ERR_OVF 0x01
 
