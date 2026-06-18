@@ -27,41 +27,45 @@
 // and any future channel just has to call routeMessage() with the right source to inherit all three steps.
 // ----------------------------------------------------------------------------
 
+const char CMD_TRIGGER_PRIMARY   = '/';
+const char CMD_TRIGGER_SECONDARY = '\'';  // easy access on SwiftKey keyboard on mobile phone with MQTT test apps.
+
+
 // Orphan commands — shown directly in the global /help listing. Pure top-level verbs, no group structure (yet).
-const char* const CMD_HELP   = "/help";
-const char* const CMD_STATUS = "/status";
-const char* const CMD_CLEAR  = "/clear";
+const char* const CMD_HELP   = "help";
+const char* const CMD_STATUS = "status";
+const char* const CMD_CLEAR  = "clear";
 
 // Group prefixes. Typing the bare prefix (e.g. just "/wifi") prints the group's partial help. Subcommands use a SPACE separator, not a hyphen:
 // "/wifi drop" instead of "/wifi-drop". This lets the dispatcher branch on `startsWith("/wifi ")` and parse the remaining argv with simple
 // substring math. The bare prefixes themselves are listed in the global /help so users discover the groups exist.
 // /mqtt and /bt currently host one subcommand each (drop / clean); the group skeleton is in place so additional verbs slot in without re-routing.
-const char* const GROUP_WIFI = "/wifi";
-const char* const GROUP_DBG  = "/dbg";
-const char* const GROUP_MQTT = "/mqtt";
-const char* const GROUP_BT   = "/bt";
+const char* const GROUP_WIFI = "wifi";
+const char* const GROUP_DBG  = "dbg";
+const char* const GROUP_MQTT = "mqtt";
+const char* const GROUP_BT   = "bt";
 
 // WiFi subcommands. /wifi forget takes an SSID argument so it's matched via startsWith() with a trailing space rather than equality.
-const char* const CMD_WIFI_DROP   = "/wifi drop";
-const char* const CMD_WIFI_CLEAN  = "/wifi clean";
-const char* const CMD_WIFI_LIST   = "/wifi list";
-const char* const CMD_WIFI_FORGET = "/wifi forget";  // payload: "/wifi forget <ssid>"
-const char* const CMD_WIFI_PORTAL = "/wifi portal";
+const char* const CMD_WIFI_DROP   = "wifi drop";
+const char* const CMD_WIFI_CLEAN  = "wifi clean";
+const char* const CMD_WIFI_LIST   = "wifi list";
+const char* const CMD_WIFI_FORGET = "wifi forget";  // payload: "/wifi forget <ssid>"
+const char* const CMD_WIFI_PORTAL = "wifi portal";
 // /wifi pub — publishes the device's NVS-stored WiFi credentials (SSID|PWD per line) back to the sender via msg/unicast/<senderId>. Only valid when
 // invoked from MQTT with a parseable senderDeviceId in the trailer; ignored (warning log) from serial or BLE keyboard since there is no return path.
-const char* const CMD_WIFI_PUB = "/wifi pub";
+const char* const CMD_WIFI_PUB = "wifi pub";
 
 // Debug / diagnostic subcommands. Visual recovery (redraw) and diagnostic dumps (chip, mem).
-const char* const CMD_DBG_CHIP   = "/dbg chip";
-const char* const CMD_DBG_MEM    = "/dbg mem";
-const char* const CMD_DBG_REDRAW = "/dbg redraw";
-const char* const CMD_DBG_FONTS  = "/dbg fonts";
+const char* const CMD_DBG_CHIP   = "dbg chip";
+const char* const CMD_DBG_MEM    = "dbg mem";
+const char* const CMD_DBG_REDRAW = "dbg redraw";
+const char* const CMD_DBG_FONTS  = "dbg fonts";
 
 // MQTT subcommands.
-const char* const CMD_MQTT_DROP = "/mqtt drop";
+const char* const CMD_MQTT_DROP = "mqtt drop";
 
 // BLE subcommands.
-const char* const CMD_BT_CLEAN = "/bt clean";
+const char* const CMD_BT_CLEAN = "bt clean";
 
 
 
@@ -75,7 +79,7 @@ void printHelpGlobal() {
     printCmdInfo("Commands:");
     printCmdInfo("/help", "list cmds");
     printCmdInfo("/status", "info screen");
-    printCmdInfo("/clear", "wipe history");
+    printCmdInfo("/clear", "clear messages");
     printCmdInfo("/wifi *", "WiFi mgmt");
     printCmdInfo("/mqtt *", "MQTT mgmt");
     printCmdInfo("/bt *", "BLE mgmt");
@@ -85,12 +89,12 @@ void printHelpGlobal() {
 void printHelpWifi() {
     ESP_LOGI(TAG_MM, "Listing /wifi subcommands");
     printCmdInfo("/wifi subcmds:");
-    printCmdInfo("- drop", "drop link");
-    printCmdInfo("- clean", "wipe NVS");
-    printCmdInfo("- list", "known nets");
-    printCmdInfo("- forget", "<ssid>");
+    printCmdInfo("- drop", "drop link");  // close current connection
     printCmdInfo("- portal", "open portal");
-    printCmdInfo("- pub", "publish");
+    printCmdInfo("- list", "see NVS");      // print on screen existing NVS networks (not the compiled ones)
+    printCmdInfo("- forget", "<ssid>");     // forget a specific NVS network
+    printCmdInfo("- clean", "wipe NVS");    // forget ALL NVS networks
+    printCmdInfo("- pub", "pub all nets");  // reply a unicast msg with compiled+NVS networks
 }
 
 void printHelpMqtt() {
@@ -383,7 +387,14 @@ bool processDbgSubcommand(const String& message) {
 // For groups, the bare prefix (e.g. "/wifi" alone with no subcommand) prints the group's partial help; a typo subcommand (e.g. "/wifi xyzzy") prints an "Unknown"
 // banner followed by the same partial help. Returns true if the message was consumed as a command (caller skips display + republish).
 
-bool processPayloadAsCommand(const String& message, MessageSource source, byte senderDeviceId) {
+bool processPayloadAsCommand(const String& messageWithTrigger, MessageSource source, byte senderDeviceId) {
+    if (messageWithTrigger.length() == 0 || (messageWithTrigger.charAt(0) != CMD_TRIGGER_PRIMARY && messageWithTrigger.charAt(0) != CMD_TRIGGER_SECONDARY)) {
+        return false;
+    }
+
+    // Extraire la sous-chaîne (sans le '/')
+    String message = messageWithTrigger.substring(1);
+
     if (message == CMD_HELP) {
         printHelpGlobal();
         return true;

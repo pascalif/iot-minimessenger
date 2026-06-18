@@ -44,6 +44,31 @@
 // Yellow caret bar drawn at the insertion point, growing leftward as the user types.
 #define KB_BAR_CURSOR_COLOR ST77XX_YELLOW
 
+
+// === Status bar layout ===
+
+// Two network-state chips on the left (WiFi white, MQTT yellow), a 50 px visual spacer, two input-state chips (BT blue + CapsLock A/a in white), then
+// the contact silhouette in red on the right. The radius is sized to fit comfortably in the 24 px high bar with a few pixels of margin.
+#define ICON_RADIUS 6
+
+#define ICON_Y_CENTER (STATUS_BAR_H / 2)  // 12
+// Order from left to right: WiFi, MQTT, [50 px spacer], BT, CapsLock, …, Contact. The 50 px gap separates "network reachability" indicators (left
+// cluster) from "keyboard input" indicators (right cluster) so the user can scan their meaning at a glance.
+
+#define ICON_WIFI_X 12
+#define ICON_MQTT_X 32
+// BT sits 50 px right of MQTT's right edge: ICON_MQTT_X + ICON_RADIUS + 50 + ICON_RADIUS = 32 + 6 + 50 + 6 = 94.
+#define ICON_BT_X      120
+#define ICON_CAPS_X    (ICON_BT_X + 20)
+#define ICON_CONTACT_X (FB_WIDTH - 12)  // 228 — used when 0 or 1 contact is online (single silhouette on the historical anchor).
+
+// When 2+ contacts are online, two silhouettes are drawn straddling ICON_CONTACT_X. Body width = 11 px and head r = 3 px, so a ±9 px split leaves
+// ~7 px d'air entre les deux silhouettes : assez pour rester lisibles en mode plein, sans déborder du framebuffer 240 px de large (X_RIGHT atteint au
+// pire 237+5 = 242, soit 2 px hors champ — réduire l'écart à ±8 si jamais le débordement est visible à l'écran).
+#define ICON_CONTACT_X_LEFT  (ICON_CONTACT_X - 15)
+#define ICON_CONTACT_X_RIGHT (ICON_CONTACT_X)
+
+
 // === Last-drawn-state cache =====================================================
 // Used by redrawStatusBar() to skip a repaint when no indicator's state changed. Lives here because nothing outside redrawStatusBar reads or
 // writes these — they are entirely internal to the bar's repaint debounce. g_statusBarDirty (defined in minimessenger.ino) is the external
@@ -127,9 +152,14 @@ void redrawStatusBar() {
     drawIndicatorAt(ICON_WIFI_X, wifi, ICON_WIFI_COLOR);
     drawIndicatorAt(ICON_MQTT_X, mqtt, ICON_MQTT_COLOR);
 
-    // Right cluster (keyboard input state): BT puis indicateur CapsLock 'A'/'a', séparés des chips réseau par le spacer de 50 px défini dans ICON_BT_X.
+    // Middle cluster (keyboard input state):
+    // - BT
+    // - CapsLock 'A'/'a' (si keyboard connected)
     drawIndicatorAt(ICON_BT_X, bt, ICON_BT_COLOR);
-    drawCapsAt(ICON_CAPS_X, caps, ICON_CAPS_COLOR);
+    if (bt) {
+        drawCapsAt(ICON_CAPS_X, caps, ICON_CAPS_COLOR);
+    }
+
     // Contact silhouettes: 0 contact → 1 icône en contour, 1 contact → 1 icône pleine, 2+ contacts → 2 icônes pleines côte à côte (centrées sur
     // l'ancre historique ICON_CONTACT_X). Le compte vient de contactGetActiveCount() (contacts.ino), alimenté par les liveness MQTT admin/liveness/<id>.
     if (contactCount <= 0) {

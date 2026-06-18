@@ -175,7 +175,7 @@ Docs (/docs):
 // GPIO and let Adafruit_SPITFT toggle it per transaction.
 #define TFT_CS GPIO_NUM_5
 
-#define TFT_DC  GPIO_NUM_17   // Data/Command select
+#define TFT_DC GPIO_NUM_17  // Data/Command select
 
 // On ajoute explicitement les 2 pins SCL/SDA pour le test de basculer entre pins par défaut (matériel) vs d'autre pins (logiciel)
 // - TFT_SCL : D18 = GPIO18 "SCK" by default (SPI materiel, rapide)
@@ -237,26 +237,7 @@ Docs (/docs):
 uint16_t g_scrollY = 0;
 uint16_t g_drawY   = 0;
 
-// === Status bar layout ===
-// Two network-state chips on the left (WiFi white, MQTT yellow), a 50 px visual spacer, two input-state chips (BT blue + CapsLock A/a in white), then
-// the contact silhouette in red on the right. The radius is sized to fit comfortably in the 24 px high bar with a few pixels of margin.
-#define ICON_RADIUS   6
-#define ICON_Y_CENTER (STATUS_BAR_H / 2)  // 12
-// Order from left to right: WiFi, MQTT, [50 px spacer], BT, CapsLock, …, Contact. The 50 px gap separates "network reachability" indicators (left
-// cluster) from "keyboard input" indicators (right cluster) so the user can scan their meaning at a glance.
-#define ICON_WIFI_X 12
-#define ICON_MQTT_X 32
-// BT sits 50 px right of MQTT's right edge: ICON_MQTT_X + ICON_RADIUS + 50 + ICON_RADIUS = 32 + 6 + 50 + 6 = 94.
-#define ICON_BT_X      94
-#define ICON_CAPS_X    114
-#define ICON_CONTACT_X (FB_WIDTH - 12)  // 228 — used when 0 or 1 contact is online (single silhouette on the historical anchor).
-
-// When 2+ contacts are online, two silhouettes are drawn straddling ICON_CONTACT_X. Body width = 11 px and head r = 3 px, so a ±9 px split leaves
-// ~7 px d'air entre les deux silhouettes : assez pour rester lisibles en mode plein, sans déborder du framebuffer 240 px de large (X_RIGHT atteint au
-// pire 237+5 = 242, soit 2 px hors champ — réduire l'écart à ±8 si jamais le débordement est visible à l'écran).
-#define ICON_CONTACT_X_LEFT  (ICON_CONTACT_X - 15)
-#define ICON_CONTACT_X_RIGHT (ICON_CONTACT_X)
-
+// === Status bar data ===
 // Last-drawn-state cache + color palette + bar drawing functions all live in screen-conv-bars.ino. Two globals stay here because they are SET from many
 // places in this file (boot, mode switches, caps toggle, etc.): g_statusBarDirty toggles a forced repaint, g_lastStatusBarPollMs is the
 // debounce timer.
@@ -275,7 +256,7 @@ unsigned long g_lastStatusBarPollMs = 0;
 // Non-zero value = the info screen is currently shown as a temporary overlay (triggered by "/status") and we should auto-revert to nominal once
 // millis() crosses it. Zero = not in the status-overlay state. The revert path is in loop() near the status bar polling block.
 unsigned long g_statusScreenEndMs = 0;
-#define STATUS_SCREEN_DURATION_MS 10'000
+#define STATUS_SCREEN_DURATION_MS 20'000
 
 // Conversation mode = status bar + scroll area + input footer are all live.
 // Fullscreen modes (splash, info) set this to false to suppress the periodic
@@ -1073,7 +1054,7 @@ void setUnicastRecipient(int recipientDeviceId) {
 // Called once per successful MQTT (re)connect. Two distinct cases:
 //   - first connect after boot: we were sitting on the info screen waiting for MQTT to come up. Transition to conversation mode via goAndResetConversationScreen
 //     (which wipes the scroll area and paints the status bar + footer borders), then drop a "Ready !" line in the conversation.
-//   - any later reconnect (we lost connection mid-conversation and got it back): we stay in conversation mode — the "Lost server" / "Trying to
+//   - any later reconnect (we lost connection mid-conversation and got it back): we stay in conversation mode — the "Server lost" / "Trying to
 //     reconnect..." stack is still visible — and just append "Ready !" so the reconnect is acknowledged in-line.
 void onMqttConnectedOrReconnected() {
     if (!g_inConversationMode) {
@@ -1241,10 +1222,10 @@ void loop() {
             ledSetState(PIN_LED_ERROR_STATUS, LedState::LED_STATE_BLINK_FAST);
 
             // Only surface the MQTT-down banner when WiFi is actually up. If the link is down, the WiFi block above already showed "WiFi lost" and a
-            // second "Lost server" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
+            // second "Server lost" banner is just noise about a known consequence. The internal flag flip + LED still happen regardless so the rising
             // edge logic and the status bar indicator stay accurate.
             if (WiFi.status() == WL_CONNECTED) {
-                printGeneralError("Lost server - Retrying...");
+                printGeneralError("Server lost - Retrying...");
             }
         }
 

@@ -90,19 +90,19 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
     if (tail != '\0' && tail != ' ') {
         return false;
     }
-    if (memcmp(payload, "BOOT", 4) == 0) {
+    if (strncasecmp(payload, "BOOT", 4) == 0) {
         outSubtype = MQTTLiveness::BOOT;
         return true;
     }
-    if (memcmp(payload, "RECO", 4) == 0) {
+    if (strncasecmp(payload, "RECO", 4) == 0) {
         outSubtype = MQTTLiveness::RECO;
         return true;
     }
-    if (memcmp(payload, "LIVE", 4) == 0) {
+    if (strncasecmp(payload, "LIVE", 4) == 0) {
         outSubtype = MQTTLiveness::LIVE;
         return true;
     }
-    if (memcmp(payload, "DEAD", 4) == 0) {
+    if (strncasecmp(payload, "DEAD", 4) == 0) {
         outSubtype = MQTTLiveness::DEAD;
         return true;
     }
@@ -383,19 +383,31 @@ static bool parseLeadingDeviceId(const char* str, int& outDeviceId) {
 //   0      = no author identified (cases 1, 2, or 3-with-bad-id). Caller displays whatever remains with the "ext" prefix.
 //   1..254 = valid sender deviceId. Caller looks up pseudo and (unless == us) prefixes it to the ts.
 static byte extractSenderAndStripTrailer(String& message) {
-    const int sentinelIdx = message.indexOf(MQTT_TRAILER_SENTINEL);
+    const int sentinelIdx = message.indexOf(MQTT_TRAILER_SENTINEL);  // " ### "
     if (sentinelIdx < 0) {
         return 0;
     }
-    const int devIdx = message.indexOf("deviceId:", sentinelIdx);
-    if (devIdx < 0) {
-        return 0;  // sentinelle isolée — probablement du texte utilisateur, on
-                   // n'altère pas le payload
+
+    long parsed = -1;
+
+    int devIdx = message.indexOf("deviceId:", sentinelIdx);
+    if (devIdx > 0) {
+        parsed = strtol(message.c_str() + devIdx + 9 /* strlen("deviceId:") */, nullptr, 10);
+    } else {
+        // 2eme chance pour parser un deviceId en version courte (tapé depuis app de test MQTT sur mobile)
+        devIdx = message.indexOf("did ", sentinelIdx);
+        if (devIdx > 0) {
+            parsed = strtol(message.c_str() + devIdx + 4 /* strlen("did ") */, nullptr, 10);
+        }
     }
 
+    if (devIdx < 0) {
+        return 0;  // sentinelle isolée — probablement du texte utilisateur, on n'altère pas le payload
+    }
+
+
     // À partir d'ici on est confiants que c'est notre format de trailer : on strip TOUJOURS, même si le deviceId est non-parseable / hors plage.
-    byte       senderId = 0;
-    const long parsed   = strtol(message.c_str() + devIdx + 9 /* strlen("deviceId:") */, nullptr, 10);
+    byte senderId = 0;
     if (parsed >= 1 && parsed <= 254) {
         senderId = (byte)parsed;
     }
@@ -480,6 +492,10 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         if (senderId != 0 && senderId == g_deviceData.deviceId) {
             ESP_LOGD(TAG_MQTT, "Ignoring self-echo on [%s]", topic);
             return;
+        }
+
+        if (senderId != 0) {
+            onReceivedContactOnline(senderId, ContactLiveness::LIVE);
         }
 
         // Route through the common funnel: wakes the screen, intercepts CMD_*

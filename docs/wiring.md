@@ -26,17 +26,17 @@ wrapper ces defines dans #ifdef PAC_ON_ESP32 ou utiliser des valeurs différente
     ┌─ [220Ω] ─  Green |◄─   GPIO32 ─┤ 6                    25 │     GPIO19 (free)                 │ │     │      │ RST  │                                   │
     +─ [220Ω] ─    Red |◄─   GPIO33 ─┤ 7                SCL 24 ├── GPIO18 ─────────────────────────┼─┼───┐ └───►  │ SDA  │      ST7789 panel — 320 × 240     │
     +─ [220Ω] ─ Yellow |◄─   GPIO25 ─┤ 8 (DAC1)             23 ├── GPIO5  ─────────────────────────┘ │   └─────►  │ SCL  │                                   │
-    +───────────  Btn  |◄─   GPIO26 ─┤ 9 (DAC2)             22 │     GPIO17 (free)**                 │ ┌───────►  │ VCC  │                                   │
-    │                      GPIO27   ─┤ 10                   21 │     GPIO16 (free)                   │ │    ┌──►  │ GND  │                                   │
-    │                      GPIO14   ─┤ 11                   20 │     GPIO4  (free)                   │ │    │     │      │                                   │
-    │                      GPIO12   ─┤ 12 *strap     *strap 19 ├── GPIO2  ───────────────────────────┘ │    │     └──────┴───────────────────────────────────┘
-    │                      GPIO13   ─┤ 13            *strap 18 │     GPIO15                            │    │
+    +───────────  Btn  |◄─   GPIO26 ─┤ 9 (DAC2)             22 ├── GPIO17 ───────────────────────────┘ ┌───────►  │ VCC  │                                   │
+    │                      GPIO27   ─┤ 10                   21 │     GPIO16 (free)                     │    ┌──►  │ GND  │                                   │
+    │                      GPIO14   ─┤ 11                   20 │     GPIO4  (free)                     │    │     │      │                                   │
+    │                      GPIO12   ─┤ 12 (strap)   (strap) 19 ├── GPIO2 (free)                        │    │     └──────┴───────────────────────────────────┘
+    │                      GPIO13   ─┤ 13           (strap) 18 │     GPIO15                            │    │
     │                      5V/VIN   ─┤ 15                   16 ├── 3V3 ────────────────────────────────┘    │
     └────────────────────────── GND ─┤ 14                   17 ├── GND ─────────────────────────────────────┘
                                      └─────────┐ USB ┌─────────┘
                                                └─────┘
 Rappel MQTT:
-    msg/broadcast       : <txt> ### deviceId:<id>
+    msg/broadcast       : <txt> ### deviceId:<id>   (ou "did <id>")
     msg/unicast/<id>    : idem
     admin/liveness/<id> : BOOT|LIVE|RECO|DEAD <ts>
 ```
@@ -44,7 +44,7 @@ Rappel MQTT:
 **Legend**
 
 - EN = Enable. C'est le pin de reset de l'ESP32 — appuyer sur ce bouton tire EN à LOW, ce qui redémarre le microcontrôleur. C'est l'équivalent du bouton RESET sur un Arduino classique.
-- `*strap` strapping pin — the bootloader samples it at reset. Don't drive it unconditionally LOW/HIGH at startup; reusing these for outputs requires extra care (pull-ups, late init).  Pins de strapping à éviter pour des signaux actifs au boot :
+- `(strap)` strapping pin — the bootloader samples it at reset. Don't drive it unconditionally LOW/HIGH at startup; reusing these for outputs requires extra care (pull-ups, late init).  Pins de strapping à éviter pour des signaux actifs au boot :
  GPIO2, GPIO12, GPIO15 — toutes peuvent perturber le boot selon leur état. Pour s'en servir : ajouter une résistance pull-down (10kOhm) sur GPIOx et la forcer à LOW au boot.
 - `(input only)` GPIO34–39 cannot be driven, only read (no PWM, no `digitalWrite`).
 - `DAC1`, `DAC2` only on these two GPIOs (25, 26). Les deux seules pins capables de produire une vraie tension analogique en sortie, de 0V à 3.3V avec une résolution de 8 bits (256 niveaux).

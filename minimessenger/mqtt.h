@@ -99,7 +99,7 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
 // (extractSenderAndStripTrailer in mqtt.ino) — that's why it lives here as a single source of truth. The leading + trailing spaces are part of the
 // sentinel; they make accidental collisions with user-typed content less likely and visually break the trailer in serial logs. Defined as a string
 // literal so it can be concatenated directly into a snprintf format ("%s" MQTT_TRAILER_SENTINEL "ts:%s …").
-#define MQTT_TRAILER_SENTINEL " ### "
+#define MQTT_TRAILER_SENTINEL " # "
 
 
 // ================================================================================

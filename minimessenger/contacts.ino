@@ -98,7 +98,7 @@ static void announceContactTransition(byte deviceId, ContactLiveness liveness) {
     const DeviceDataEntry* entry = DeviceDataEntry::findById(deviceId);
     String                 label = (entry != nullptr) ? String(entry->pseudo) : (String("device #") + deviceId);
     const bool             alive = (liveness == ContactLiveness::LIVE);
-    label += alive ? " connected" : " disconnected";
+    label += alive ? " is now connected" : " is now disconnected";
 
     if (alive) {
         printGeneralInfo(label);

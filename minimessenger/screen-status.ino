@@ -99,7 +99,7 @@ void showUpdatedInfoScreen() {
     char idAndNameBuf[20];  // worst case: "999 PROTO_999\0" = 14 bytes — 20 leaves slack for a longer namePrefix in the future.
     snprintf(idAndNameBuf, sizeof(idAndNameBuf), "%d %s", g_deviceData.deviceId, g_deviceData.name());
     nextY += drawStatusRow(pDisp, "ID:", idAndNameBuf, colHeaders, colValues, nextY, lineHeight);
-    nextY += drawStatusRow(pDisp, "Owner:", String(g_deviceData.pseudo), colHeaders, colValues, nextY, lineHeight);
+    nextY += drawStatusRow(pDisp, "OWN:", String(g_deviceData.pseudo), colHeaders, colValues, nextY, lineHeight);
     nextY += drawStatusRow(pDisp, "MAC:", mac, colHeaders, colValues, nextY, lineHeight);
 
     nextY += separatorHeight;
