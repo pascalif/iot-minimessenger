@@ -21,6 +21,7 @@ const size_t COMPILED_DEVICE_DATA_ENTRIES_COUNT = sizeof(COMPILED_DEVICE_DATA_EN
 // presence display, not transport health.
 #define CONTACT_TIMEOUT_MS (MQTT_KEEPALIVE_INTERVAL_MS + 5000)
 
+
 // ================================================================================
 // DeviceDataEntry — static find* method bodies
 // ================================================================================
@@ -46,6 +47,7 @@ inline const DeviceDataEntry* DeviceDataEntry::findById(byte deviceId) {
     }
     return nullptr;
 }
+
 
 // ================================================================================
 // Dynamic peer table

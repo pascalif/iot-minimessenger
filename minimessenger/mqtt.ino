@@ -21,18 +21,28 @@
 #include "symbols.h"
 #include <WiFiClientSecure.h>
 
-// WiFiClientSecure instance lives in minimessenger.ino (declared before mqtt.ino in the concatenation order, so the constructor below sees it). The
-// extern here is purely for clarity / so this file reads standalone.
-extern WiFiClientSecure g_wifiClient;
+
+// To help debug and send fake "current" pings with "LIVE 222" on admin/liveness/<myDeviceId>
+#define MQTT_FAKE_LIVE_TIMESTAMP 222
 
 
 // Forward-declared so the auto-prototype ordering does not bite us.
+// - Outside of this mqtt world
 extern void ledSetState(int pin, int requiredState);
 extern void routeMessage(const String& message, MessageSource source, byte senderDeviceId);
 extern void onReceivedContactOnline(int remoteDeviceId, ContactLiveness liveness);
 // getCurrentDateTime() lives in time.ino, concatenated after mqtt.ino — explicit extern so the trailer-build call below resolves without relying on
 // auto-prototypes across .ino files.
 extern char* getCurrentDateTime();
+
+// - Inside this file
+// Wire string for a subtype. Returns a pointer to a static string literal (lifetime = forever), safe to pass directly to PubSubClient::connect()'s
+// willMessage argument. Used by mqttSendLiveness() to assemble the payload and by mqttReconnectAttempt() to set the Will body.
+const char* mqttLivenessAsString(MQTTLiveness subtype);
+
+// Parse the leading 4-char TYPE word of an admin/liveness/<id> payload. Returns true and fills `outSubtype` on a clean match (the 4 chars match a
+// known type AND the next char is either '\0' or ' '), false otherwise. The trailing-char check avoids matching "DEADX" as DEAD.
+bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
 
 
 // ================================================================================
@@ -44,22 +54,24 @@ const char* g_mqttIncomingTopicBroadcast = "msg/broadcast";
 // single global because the topic varies per publisher; the dispatch / subscribe paths use MQTT_LIVENESS_TOPIC_PREFIX / MQTT_LIVENESS_TOPIC_WILDCARD
 // respectively. The Will targets this same per-device topic with payload MQTTLiveness::DEAD, retained=true — see mqttReconnectAttempt() below.
 
+
 // ================================================================================
 // Runtime globals
 // ================================================================================
-PubSubClient g_mqttClient(g_wifiClient);  // a WiFiClientSecure instance is
-                                          // needed for HiveMQ connection
-int           g_mqttConnectionId                 = -1;
-unsigned int  g_mqttOutputMsgNextId              = 0;
-bool          g_mqttWasConnected                 = false;
-unsigned long g_mqttLastReconnectTryTimestampMs  = 0;
-unsigned long g_mqttPreviousKeepAliveTimestampMs = 0;
-uint8_t       g_mqttReconnectAttempts            = 0;
+WiFiClientSecure g_mqttWifiClient;
+PubSubClient     g_mqttClient(g_mqttWifiClient);  // a WiFiClientSecure instance is needed for HiveMQ connection
+int              g_mqttConnectionId                 = -1;
+unsigned int     g_mqttOutputMsgNextId              = 0;
+bool             g_mqttWasConnected                 = false;
+unsigned long    g_mqttLastReconnectTryTimestampMs  = 0;
+unsigned long    g_mqttPreviousKeepAliveTimestampMs = 0;
+uint8_t          g_mqttReconnectAttempts            = 0;
 
 // Pas partagé, mais permet d'allouer une fois pour toute dans la mémoire .bss
 char g_mqttCurrentOutgoingPayload[MQTT_PAYLOAD_MAX_LENGTH + 1];
 
 char g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];
+
 
 // ================================================================================
 // Liveness subtype wire mapping
@@ -77,8 +89,7 @@ const char* mqttLivenessAsString(MQTTLiveness subtype) {
         return "DEAD";
     }
     return "????";  // unreachable in practice — all enum values handled above.
-                    // Placeholder kept so the compiler doesn't warn about missing
-                    // return.
+                    // Placeholder kept so the compiler doesn't warn about missing return.
 }
 
 bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype) {
@@ -119,10 +130,10 @@ void setupMQTT() {
     // The verification mode is driven by g_mqttServerInfo.rootCA: non-null → strict verification against that CA, null → setInsecure() so mbedtls still
     // negotiates TLS but accepts whatever cert the broker presents. Calling NEITHER would leave WiFiClientSecure in its strict-no-CA default state
     // and the handshake would systematically fail with MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, so the null branch is wired explicitly to setInsecure().
-    if (g_mqttServerInfo.rootCA != nullptr) {
-        g_wifiClient.setCACert(g_mqttServerInfo.rootCA);
+    if (DBG_MQTT_WITH_TLS && g_mqttServerInfo.rootCA != nullptr) {
+        g_mqttWifiClient.setCACert(g_mqttServerInfo.rootCA);
     } else {
-        g_wifiClient.setInsecure();
+        g_mqttWifiClient.setInsecure();
         ESP_LOGW(TAG_MQTT,
                  "No root CA configured (g_mqttServerInfo.rootCA == nullptr) — "
                  "falling back to setInsecure() (no server-cert verification)");
@@ -156,7 +167,7 @@ bool mqttReconnectAttempt() {
     // through the connect() call anyway burns ~40 KB and ends up with rc=-2 — better to surface the condition immediately so the user sees something
     // changed, and so the retry loop doesn't keep producing identical opaque failures every interval. Failure counter still bumps so the next
     // attempt waits with the exponential backoff.
-    if (largestBlock < (uint32_t)MQTT_TLS_MIN_FREE_HEAP_B) {
+    if (DBG_MQTT_WITH_TLS && largestBlock < (uint32_t)MQTT_TLS_MIN_FREE_HEAP_B) {
         ESP_LOGE(TAG_MQTT,
                  "Insufficient heap for TLS handshake: largest block=%u < "
                  "threshold=%u — skipping connect",
@@ -164,7 +175,7 @@ bool mqttReconnectAttempt() {
                  MQTT_TLS_MIN_FREE_HEAP_B);
         if (g_inConversationMode) {
             char banner[64];
-            snprintf(banner, sizeof(banner), "Low heap %u B - MQTT skipped", (unsigned)largestBlock);
+            snprintf(banner, sizeof(banner), "Low heap %u MQTT skipd", (unsigned)largestBlock);
             printCmdError(banner);
         }
         refreshInfoScreenIfShown();
@@ -468,7 +479,7 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         // Staleness check. Threshold = keepalive interval + 5 s margin, same window as contactsTick uses. Only enforced when our local clock looks
         // synced — otherwise we don't have a baseline to compare against.
         time_t nowEpoch = time(nullptr);
-        if (nowEpoch > 1'700'000'000L) {
+        if (payloadEpoch != MQTT_FAKE_LIVE_TIMESTAMP && nowEpoch > 1'700'000'000L) {
             long age = (long)nowEpoch - payloadEpoch;
             if (age > (long)(MQTT_KEEPALIVE_INTERVAL_MS / 1000) + 5) {
                 ESP_LOGD(TAG_MQTT, "Ignoring stale liveness retain for device %d (age %lds, payload=[%s])", remoteDeviceId, age, msgC);
@@ -506,6 +517,3 @@ void onMqttIncomingMessage(char* topic, byte* payload, unsigned int length) {
         ESP_LOGW(TAG_MQTT, "Message received in unknown topic [%s]: [%s]", topic, g_currentIncomingPayloadFromMQTT.c_str());
     }
 }
-
-// TLS root CA has moved out of this file — it now lives in personal-data.h as the HIVEMQ_ROOT_CA static array, referenced by g_mqttServerInfo.rootCA.
-// setup() in minimessenger.ino reads it via that struct and wires it into g_wifiClient.setCACert() (or falls back to setInsecure() if rootCA is null).

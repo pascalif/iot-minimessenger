@@ -27,11 +27,12 @@ from config import (
 # ──────────────────────────────────────────────
 SHOW_LIVE_STATUS  = True   # False = masque les lignes status=LIVE
 CONNECT_TIMEOUT   = 10     # secondes avant d'abandonner la connexion
+LIVENESS_INTERVAL = 120    # secondes entre deux pings LIVE
 
 # ──────────────────────────────────────────────
 # Regex
 # ──────────────────────────────────────────────
-RE_MSG_SPLIT = re.compile(r'^(.*?)(?:\s*###(.*))?$', re.DOTALL)  # separe txt et trailer optionnel
+RE_MSG_SPLIT = re.compile(r'^(.*?)(?:\s*#(.*))?$', re.DOTALL)    # separe txt et trailer optionnel
 RE_DEVICE_ID = re.compile(r'deviceId:(\d+)')                       # extrait deviceId du trailer
 RE_LIVENESS  = re.compile(r'^(\S+)\s+(\S+)$')                     # <status> <ts>
 
@@ -58,7 +59,7 @@ def now_str():
 
 def parse_msg(payload: str):
     """Extrait (txt, device_id) depuis le payload.
-    Le trailer ### et le deviceId sont tous deux facultatifs.
+    Le trailer # et le deviceId sont tous deux facultatifs.
     Retourne "unk" si le deviceId est absent ou non décodable.
     """
     m = RE_MSG_SPLIT.match(payload)
@@ -92,6 +93,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
         client.subscribe("msg/broadcast")
         client.subscribe(f"msg/unicast/{DEVICE_ID_ME}")
         client.subscribe("admin/liveness/#")
+        client.publish(f"admin/liveness/{DEVICE_ID_ME}", payload=f"BOOT {int(__import__('time').time())}", qos=1)
         _connected_event.set()
     else:
         _connect_error_code = rc
@@ -114,19 +116,19 @@ def on_message(client, userdata, msg):
             txt, dev_id = parse_msg(payload)
             if dev_id == str(DEVICE_ID_ME):
                 return   # ignore mes propres messages
-            messages.append(("yellow", f"{dev_id} - {now_str()} : {txt}"))
+            messages.append(("yellow", f"[{dev_id}] - {now_str()} : {txt}"))
 
         elif topic == f"msg/unicast/{DEVICE_ID_ME}":
             txt, dev_id = parse_msg(payload)
-            messages.append(("orange", f"{dev_id} - {now_str()} : {txt}"))
+            messages.append(("orange", f"[{dev_id}] - {now_str()} : {txt}"))
 
         elif topic.startswith("admin/liveness/"):
             dev_id = topic.split("/")[-1]
             m = RE_LIVENESS.match(payload)
-            status, ts = (m.group(1), m.group(2)) if m else (payload, now_str())
+            status = m.group(1) if m else payload
             if status == "LIVE" and not SHOW_LIVE_STATUS:
                 return
-            messages.append(("pink", f"{dev_id} - {ts} : {status}"))
+            messages.append(("pink", f"[{dev_id}] - {now_str()} : {status}"))
 
     new_msg_event.set()
 
@@ -147,6 +149,9 @@ def setup_mqtt():
     client.on_connect    = on_connect
     client.on_disconnect = on_disconnect
     client.on_message    = on_message
+
+    liveness_topic = f"admin/liveness/{DEVICE_ID_ME}"
+    client.will_set(liveness_topic, payload="DEAD", qos=1, retain=False)
 
     try:
         client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
@@ -178,8 +183,15 @@ def setup_mqtt():
 # ──────────────────────────────────────────────
 def publish_message(text: str):
     ts = int(time.time())
-    payload = f"{text} ### deviceId:{DEVICE_ID_ME} ts:{ts}"
+    payload = f"{text} # deviceId:{DEVICE_ID_ME} ts:{ts}"
     mqtt_client.publish("msg/broadcast", payload)
+
+
+def publish_liveness():
+    """Publie LIVE toutes les LIVENESS_INTERVAL secondes."""
+    while not stop_event.wait(timeout=LIVENESS_INTERVAL):
+        ts = int(time.time())
+        mqtt_client.publish(f"admin/liveness/{DEVICE_ID_ME}", payload=f"LIVE {ts}", qos=1)
 
 
 # ──────────────────────────────────────────────
@@ -292,6 +304,8 @@ def main():
         sys.exit(1)
 
     print(f"✓  Connecté — device ID : {DEVICE_ID_ME}")
+    liveness_thread = threading.Thread(target=publish_liveness, daemon=True)
+    liveness_thread.start()
     time.sleep(0.3)
 
     try:

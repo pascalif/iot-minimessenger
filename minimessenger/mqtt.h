@@ -28,8 +28,7 @@ Tester manuellement depuis le web-client du broker :
 // Topic names — shared so that incoming-message dispatch in mqtt.ino and the broker-connect / subscribe code can refer to the same strings.
 // ================================================================================
 extern const char* g_mqttIncomingTopicBroadcast;  // msg/broadcast — subscribed by all devices;
-                                                  // the "everyone" channel.
-//                                                   msg/unicast/<deviceId> — built at runtime in setRecipient().
+//                                                   while msg/unicast/<deviceId> is built at runtime in setRecipient().
 
 // admin/liveness/<deviceId> — retained state topic, ONE per device. Carries every flavour of liveness signal (BOOT / RECO / LIVE / DEAD) so the
 // broker's retained store always reflects "what each device believes is its current state". Per-device topic lets a fresh subscriber to
@@ -54,13 +53,7 @@ enum class MQTTLiveness : uint8_t {
     DEAD,  // Will payload. Fired by the broker on detected disconnect. No timestamp. Dispatches to ContactLiveness::DEAD.
 };
 
-// Wire string for a subtype. Returns a pointer to a static string literal (lifetime = forever), safe to pass directly to PubSubClient::connect()'s
-// willMessage argument. Used by mqttSendLiveness() to assemble the payload and by mqttReconnectAttempt() to set the Will body.
-const char* mqttLivenessAsString(MQTTLiveness subtype);
 
-// Parse the leading 4-char TYPE word of an admin/liveness/<id> payload. Returns true and fills `outSubtype` on a clean match (the 4 chars match a
-// known type AND the next char is either '\0' or ' '), false otherwise. The trailing-char check avoids matching "DEADX" as DEAD.
-bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
 
 // ================================================================================
 // Timing / protocol constants
@@ -81,7 +74,8 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
 // + ~6 KB SSL context in one shot; below ~38 KB the handshake silently fails with rc=-2. We pad to 50 KB so a transient allocation spike during
 // connect doesn't push us into the failure zone. Compared against ESP.getMaxAllocHeap() in mqttReconnectAttempt() — if the heap is too fragmented we skip
 // the connect attempt and surface the condition on screen instead of burning ~40 KB on a doomed handshake.
-#define MQTT_TLS_MIN_FREE_HEAP_B 50'000
+#define MQTT_TLS_MIN_FREE_HEAP_B 40'000
+// 2026-06 : 50'000 déclenche le skip de connection MQTT apres qlq heures allumé (vu sur l'écran un minimum de 45044)
 
 // Publish flags — readable names for PubSubClient::publish() / connect()'s boolean args.
 #define MQTT_MSG_RETAINED     true
@@ -108,6 +102,7 @@ bool parseMQTTLiveness(const char* payload, MQTTLiveness& outSubtype);
 
 // Max length of "msg/unicast/<id>" — id is a single byte so ≤ 3 digits, plus "msg/unicast/" prefix.
 #define MQTT_TOPIC_SIZE 30
+
 
 // ================================================================================
 // Per-deployment broker description — defined ONCE in personal-data.h (gitignored)
@@ -146,6 +141,7 @@ extern uint8_t       g_mqttReconnectAttempts;                        // failed a
 extern unsigned long g_mqttPreviousKeepAliveTimestampMs;             // millis() of the last admin/liveness/<id>  keepalive publish.
 extern char          g_mqttOutgoingRecipientTopic[MQTT_TOPIC_SIZE];  // current unicast recipient topic — written by setRecipient(), read by routeMessage().
 
+
 // ================================================================================
 // Functions defined in mqtt.ino, callable from minimessenger.ino
 // ================================================================================
@@ -161,5 +157,4 @@ void mqttSendLiveness(MQTTLiveness subtype);  // Publish a retained "<subtype> <
 // Append the "### ts:… deviceId:… msgId:…" trailer and publish. Returns the PubSubClient publish() result.
 bool mqttPushFormattedMessage(const char* topic, const char* payload);
 void onMqttIncomingMessage(char* topic, byte* payload,
-                           unsigned int length);  // PubSubClient subscribe callback — dispatches by
-                                                  // topic prefix.
+                           unsigned int length);  // PubSubClient subscribe callback — dispatches by topic prefix.

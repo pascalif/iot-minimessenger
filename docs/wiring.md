@@ -36,9 +36,15 @@ wrapper ces defines dans #ifdef PAC_ON_ESP32 ou utiliser des valeurs différente
                                      └─────────┐ USB ┌─────────┘
                                                └─────┘
 Rappel MQTT:
-    msg/broadcast       : <txt> ### deviceId:<id>   (ou "did <id>")
+    msg/broadcast       : <txt> # deviceId:<id>
+                          <txt> # did <id>            testing: shortest way
     msg/unicast/<id>    : idem
-    admin/liveness/<id> : BOOT|LIVE|RECO|DEAD <ts>
+    admin/liveness/<id> : BOOT|LIVE|RECO <ts>
+                          DEAD
+                          LIVE 222                    testing: for forcing a "current" ping
+
+Commands:
+    /cmd or 'cmd
 ```
 
 **Legend**

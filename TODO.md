@@ -1,16 +1,14 @@
 # Features à faire
 
-- Update diag wiring pour bouton entre GND et GPIO26
-- Faire une app kotlin ? python ? CLI pour ecrire et lire
 
 ## Pour une éventuelle V2 si 3+ devices sont fabriqués:
 - pas d'accents (ï) sur pseudo (petite font par defaut non générée avec latin1) : changer de font
 - selectionner le destinataire pour faire de l'unicast
 - sketch.yaml dans le projet (fixer la partition puis les libs)
+- topic de status permanent type "locked Heure de dormir", "locked Puni", "locked A ramener au support" ...
 
 
 # Features à modifier
-
 
 
 =============
@@ -26,11 +24,6 @@ Si tu chasses une instabilité actuelle, je regarderais d'abord :
 
 
     return g_kb.setup(false,  // clear bonds — flip to true once if a stale bond is
-
-
-================
-
-Extraire fichiers de constantes
 
 ================
 

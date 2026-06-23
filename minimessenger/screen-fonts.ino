@@ -1,3 +1,4 @@
+#include "display.h"
 
 
 void fontsTestSizeComputation() {
@@ -120,5 +121,5 @@ void fontsTestRenderMiscFonts() {
     show(FREESANS_ACCENTS_13_3PX, 2, "F13-2 2y");
     show(FREESANS_ACCENTS_15_3PX, 2, "F10 2y");
 
-    delay(60'000);
+    delay(30'000);
 }

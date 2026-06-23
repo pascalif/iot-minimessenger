@@ -6,6 +6,7 @@
 // (with their timestamp / pseudo prefix / alignment + clustering), the "Ready" / "Lost server" system banners, and the cmd-listing rows printed by
 // /help. Also owns the HW-scroll bookkeeping that lets new messages scroll in without a full repaint.
 
+#include "display.h"
 
 
 // ================================================================================

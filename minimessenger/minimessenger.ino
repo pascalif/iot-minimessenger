@@ -52,24 +52,6 @@ Docs (/docs):
 // component, ships with the arduino-esp32 board package — no extra library needed.
 #include <esp_coexist.h>
 
-// WiFi state machine + onboarding (NVS / WiFiMulti / WiFiManager) lives in wifi.ino. This header pulls in the shared enum and the function
-// prototypes that minimessenger.ino calls (setupWifi, wifiTick, wifiGetState, drawPortalInstructions, /wifi-* command helpers).
-#include "wifi.h"
-
-// MQTT plumbing (topics, globals, reconnect, publish, incoming dispatch, TLS root CA) lives in mqtt.ino. This header pulls in PubSubClient and the
-// shared constants / extern declarations / function prototypes. Library Manager: "PubSubClient" (2.8).
-#include "mqtt.h"
-
-// DeviceDataEntry type + static find* method declarations + extern decl of the compiled table. The actual table (with per-deployment data) lives
-// in personal-data.h, materialised when wifi.ino — last in the Arduino concatenation — includes that file. Pulling contacts.h here is what gives
-// minimessenger.ino the struct definition it needs to declare `DeviceDataEntry g_deviceData` and to read its fields throughout the sketch.
-#include "contacts.h"
-
-
-// To debounce buttons (and allow pressing 2 buttons)
-// To install it, include "ADebouncer" in Libraries manager - 2026-08 : v1.1.0
-#include "ADebouncer.h"
-
 
 // Install from library manager:
 // - "Adafruit ST7735 and ST7789" (1.11.0)
@@ -83,6 +65,32 @@ Docs (/docs):
 // validity checks against the HiveMQ broker.
 #include <time.h>
 
+// To debounce buttons (and allow pressing 2 buttons)
+// To install it, include "ADebouncer" in Libraries manager - 2026-08 : v1.1.0
+#include "ADebouncer.h"
+
+
+// ================================================================================
+// Internal pseudo libraries
+// ================================================================================
+
+
+// WiFi state machine + onboarding (NVS / WiFiMulti / WiFiManager) lives in wifi.ino. This header pulls in the shared enum and the function
+// prototypes that minimessenger.ino calls (setupWifi, wifiTick, wifiGetState, drawPortalInstructions, /wifi-* command helpers).
+#include "wifi.h"
+
+// MQTT plumbing (topics, globals, reconnect, publish, incoming dispatch, TLS root CA) lives in mqtt.ino. This header pulls in PubSubClient and the
+// shared constants / extern declarations / function prototypes. Library Manager: "PubSubClient" (2.8).
+#include "mqtt.h"
+
+//
+#include "display.h"
+
+// DeviceDataEntry type + static find* method declarations + extern decl of the compiled table. The actual table (with per-deployment data) lives
+// in personal-data.h, materialised when wifi.ino — last in the Arduino concatenation — includes that file. Pulling contacts.h here is what gives
+// minimessenger.ino the struct definition it needs to declare `DeviceDataEntry g_deviceData` and to read its fields throughout the sketch.
+#include "contacts.h"
+
 
 #include "colors.h"
 #include "display.h"
@@ -94,32 +102,41 @@ Docs (/docs):
 // Our code to manage scan+connection to a BT keyboard
 #include "mm_blekb.h"
 
-// Our misc enums
-#include "symbols.h"
-
-// ESP_LOG* facade + tag definitions (shared with mm_blekb.cpp). Per-tag
-// severity is set by setupLogging() in setup().
+// ESP_LOG* facade + tag definitions (shared with mm_blekb.cpp).
+// Per-tag severity is set by setupLogging() in setup().
 #include "mm_log.h"
 
+//
+#include "screen-conv.h"
+
+// Other misc enums not already dispatched properly
+#include "symbols.h"
 
 
 // ================================================================================
 // Toggles
 // ================================================================================
 
-// Serial
-#define FLAG_READ_SERIAL_INPUTS
-
-#define WITH_LOGS
+// Enable reading typed messages on Serial link. Needed when we don't have a keyboard !
+#define DBG_READ_SERIAL_INPUTS
 
 // Use true to remove any trace of existing BLE bonds (e.g. if a stale bond is blocking pairing with a new physical keyboard)
 // Better : a dynamic way to remove bonds : use the MM command `/bt clear` at runtime
 #define DBG_BLE_CLEAR_BONDS_AT_SETUP false
 
+// Set the flag to false will save a lot of heap memory and avoid issues when not enough heap (cf treshold required by MQTT_TLS_MIN_FREE_HEAP_B)
+// You can also set g_mqttServerInfo.rootCA = nullptr to disable TLS and the pre-flight check.
+#define DBG_MQTT_WITH_TLS true
 
-// ================================================================================
-// User configuration
-// ================================================================================
+
+// Logging levels
+// To be done :
+// - our code and nice ESP32 librairies : done in setupLogging()
+// - NimBLE-arduino : done through Tools → Core Debug Level → "Warning" in the Arduino IDE
+// - Wifi manager : below
+
+#define DBG_LOG_WIFIMANAGER_DEBUG_OUTPUT false
+#define DBG_LOG_WIFIMANAGER_DEBUG_LEVEL WM_DEBUG_VERBOSE
 
 
 // ================================================================================
@@ -205,6 +222,7 @@ Docs (/docs):
 // Global variables
 // ================================================================================
 
+
 // === Hardware scroll state (ST7789, portrait, partitioned framebuffer) ===
 // FB_HEIGHT is the ST7789 framebuffer height in its NATIVE portrait orientation.
 // The scroll commands (VSCRDEF / VSCSAD) always operate on framebuffer coordinates, irrespective of setRotation().
@@ -263,14 +281,6 @@ unsigned long g_statusScreenEndMs = 0;
 // status bar repaint that would otherwise draw indicators over their content.
 bool g_inConversationMode = false;
 
-// Pour le calcul des bounds d'un texte construit avec une font donnée
-#define BOX_X 0
-#define BOX_Y 1
-#define BOX_W 2
-#define BOX_H 3
-
-#include "screen-conv.h"
-
 const int MAX_LINES = 13;  // nombre max de lignes gardées en mémoire. Utile uniquement quand on
                            // redessine les conversations depuis l'écran de status
 
@@ -281,13 +291,6 @@ const int MAX_LINES = 13;  // nombre max de lignes gardées en mémoire. Utile u
 TextLine lines[MAX_LINES];
 int      g_lineHead  = 0;
 int      g_lineCount = 0;
-
-
-// WiFi
-WiFiClientSecure g_wifiClient;
-
-// WiFi reconnection state moved to wifi.ino along with the rest of the WiFi machinery. The state machine there drives banners on rising / falling
-// edges; this .ino just exposes UI surfaces.
 
 // OLED Display
 Adafruit_GFX* g_disp = NULL;
@@ -806,7 +809,7 @@ boolean setupKeyboard() {
     g_currentMsgFromKeyboard.reserve(BT_USERMSG_MAX_LENGTH);
 
     // Scan filter is now based on the HID GATT service UUID (see mm_blekb.cpp::onResult), not on the device name — no keyboard name to pass here.
-    return g_kb.setup(DBG_BLE_CLEAR_BONDS_AT_SETUP, onBluetoothKeyboardConnectionCallback, onBluetoothKeyboardKeyPressedOrReleasedCallback);
+    return g_kb.setup(DBG_BLE_CLEAR_BONDS_AT_SETUP, TAG_BTKB, onBluetoothKeyboardConnectionCallback, onBluetoothKeyboardKeyPressedOrReleasedCallback);
 }
 
 // ================================================================================
@@ -1059,8 +1062,8 @@ void setUnicastRecipient(int recipientDeviceId) {
 void onMqttConnectedOrReconnected() {
     if (!g_inConversationMode) {
         goAndResetConversationScreen();
-        printGeneralInfo("Ready !");
     }
+    printGeneralInfo("Ready !");
     updateLedAggregatedErrorStatus();
 }
 
@@ -1230,8 +1233,9 @@ void loop() {
         }
 
         // Don't even try to reconnect while the WiFi link is down. Without an IP the TLS connect just fails on DNS (errno 118 / "Host is unreachable",
-        // lwIP rc -54) after wasting heap and spamming the serial console. The wifi state machine in wifi.ino is the one driving re-association; as soon
-        // as it transitions back to WIFI_CONNECTEDWIFI_CONNECTED, the time gate below will fire a fresh attempt. The delay grows exponentially across consecutive failures
+        // lwIP rc -54) after wasting heap and spamming the serial console.
+        // The wifi state machine in wifi.ino is the one driving re-association; as soon
+        // as it transitions back to WIFI_CONNECTED, the time gate below will fire a fresh attempt. The delay grows exponentially across consecutive failures
         // (mqttReconnectDelayMs()) so a long broker outage doesn't burn TLS handshakes every 5 s.
         if (WiFi.status() == WL_CONNECTED && (g_firstLoop || currentMillis - g_mqttLastReconnectTryTimestampMs > mqttReconnectDelayMs())) {
             // Arm the back-off gate BEFORE the attempt: a TLS handshake can block
@@ -1261,7 +1265,7 @@ void loop() {
     // the comment above its definition for the underflow scenario this avoids.
     contactsTick();
 
-#ifdef FLAG_READ_SERIAL_INPUTS
+#ifdef DBG_READ_SERIAL_INPUTS
     // /!\ Code OK uniquement pour un Serial qui envoit toutes les datas d'un coup, une fois la touche [Enter] appuyée (envoie "\r\n": 13,10)
     //     Si on veut tester char par char : utiliser simplement le clavier BT qui est là pour ça,
     //     ou utiliser un serial en mode Raw (minicim, screen, picocom, ou avec pyserial) et revoir le code.
@@ -1342,12 +1346,10 @@ void loop() {
 
     g_firstLoop = false;
 
-    // Short cooperative yield. delay(5) on ESP cores calls yield()/vTaskDelay()
-    // internally, which lets the lwIP / BLE / Wi-Fi background tasks run and
-    // feeds the watchdog. We keep some delay (rather than 0) so a tight loop
-    // does not starve those background tasks on single-core paths or hog the CPU
-    // for nothing — but we don't want it large because BLE scan, keystroke
-    // dispatch, MQTT keepalive and the LED blink tick all live in this loop and
-    // each extra millisecond shows up directly as input lag.
+    // Short cooperative yield. delay(5) on ESP cores calls yield()/vTaskDelay() internally,
+    // which lets the lwIP / BLE / Wi-Fi background tasks run and feeds the watchdog.
+    // We keep some delay (rather than 0) so a tight loop does not starve those background tasks on single-core paths or hog the CPU
+    // for nothing — but we don't want it large because BLE scan, keystroke dispatch, MQTT keepalive and the LED blink tick
+    // all live in this loop and each extra millisecond shows up directly as input lag.
     delay(5);
 }

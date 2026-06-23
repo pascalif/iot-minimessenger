@@ -38,10 +38,6 @@
 #include <string.h>
 #include <time.h>
 
-#define TAG_MM   "MM__"
-#define TAG_WIFI "WIFI"
-#define TAG_MQTT "MQTT"
-#define TAG_BTKB "BTKB"
 
 // Column widths. Tags happen to be 4 chars; func is space-padded if shorter
 // and truncated if longer.
@@ -49,7 +45,6 @@
 #define MM_LOG_FUNC_W 30
 
 // Set to 1 to insert "<file>:<line> " between the TAG and func columns.
-#define MM_LOG_SHOW_FILE 1
 #define MM_LOG_FILE_W    18
 
 // Single-line emit helper. Builds the full line in one buffer before writing
@@ -68,7 +63,7 @@ static inline void mm_log_emit(char level, const char* tag, const char* func, co
 
     char buf[320];
     int  n;
-#if MM_LOG_SHOW_FILE
+
     // Strip directory components from __FILE__.
     const char* slash                      = strrchr(file, '/');
     const char* fileShort                  = slash ? slash + 1 : file;
@@ -90,21 +85,7 @@ static inline void mm_log_emit(char level, const char* tag, const char* func, co
                  line,
                  MM_LOG_FUNC_W,
                  funcBuf);
-#else
-    (void)file;
-    (void)line;
-    n = snprintf(buf,
-                 sizeof(buf),
-                 "%02d:%02d:%02d %c  %-*s  %-*s: ",
-                 tm_info.tm_hour,
-                 tm_info.tm_min,
-                 tm_info.tm_sec,
-                 level,
-                 MM_LOG_TAG_W,
-                 tag,
-                 MM_LOG_FUNC_W,
-                 funcBuf);
-#endif
+
     if (n < 0) {
         return;
     }
@@ -131,16 +112,15 @@ static inline void mm_log_emit(char level, const char* tag, const char* func, co
 }
 
 // rem  utilisation du do/while : idiome C/C++ classique pour les macros multi-statements.
-#define MM_LOG_AT(LVL, CH, TAG, FMT, ...)                                                                                                                      \
-    do {                                                                                                                                                       \
-        if (esp_log_level_get(TAG) >= (LVL)) {                                                                                                                 \
-            mm_log_emit((CH), (TAG), __FUNCTION__, __FILE__, __LINE__, (FMT), ##__VA_ARGS__);                                                                  \
-        }                                                                                                                                                      \
+#define MM_LOG_AT(LVL, CH, TAG, FMT, ...)                                                        \
+    do {                                                                                         \
+        if (esp_log_level_get(TAG) >= (LVL)) {                                                   \
+            mm_log_emit((CH), (TAG), __FUNCTION__, __FILE__, __LINE__, (FMT), ##__VA_ARGS__);    \
+        }                                                                                        \
     } while (0)
 
-// Drop the arduhal redefinitions of ESP_LOGx (from esp32-hal-log.h, included
-// transitively via Arduino.h) and route them to our emitter. Existing call
-// sites keep working unchanged.
+// Drop the arduhal redefinitions of ESP_LOGx (from esp32-hal-log.h, included transitively via Arduino.h) and route them to our emitter.
+// Existing call sites keep working unchanged.
 #undef ESP_LOGE
 #undef ESP_LOGW
 #undef ESP_LOGI
@@ -152,13 +132,12 @@ static inline void mm_log_emit(char level, const char* tag, const char* func, co
 #define ESP_LOGD(tag, fmt, ...) MM_LOG_AT(ESP_LOG_DEBUG, 'D', tag, fmt, ##__VA_ARGS__)
 #define ESP_LOGV(tag, fmt, ...) MM_LOG_AT(ESP_LOG_VERBOSE, 'V', tag, fmt, ##__VA_ARGS__)
 
-// Call once at the very beginning of setup() (after Serial.begin) to install
-// the per-tag log level policy. Default = INFO for everything except BTKB
-// which is at DEBUG so HID keystroke reception stays visible while
-// developing. Levels are queried by MM_LOG_AT() before every emit.
+// Call once at the very beginning of setup() (after Serial.begin) to install the per-tag log level policy.
+// Default = INFO for everything except BTKB which is at DEBUG so HID keystroke reception stays visible while developing.
+ // Levels are queried by MM_LOG_AT() before every emit.
 inline void setupLogging() {
     esp_log_level_set("*", ESP_LOG_INFO);
-    esp_log_level_set(TAG_BTKB, ESP_LOG_DEBUG);
+    //esp_log_level_set(TAG_BTKB, ESP_LOG_DEBUG);
 
     // NB: do NOT add esp_log_level_set("NimBLEXxx", ...) here. NimBLE-Arduino gates its NIMBLE_LOGD/I/W/E macros at compile time
     // via   #if CONFIG_NIMBLE_CPP_LOG_LEVEL >= N   (see src/NimBLELog.h), and emits through console_printf, which bypasses esp_log
@@ -169,4 +148,4 @@ inline void setupLogging() {
     //   esp_log_level_set("NimBLEClient", ESP_LOG_WARN);
 }
 
-#endif
+#endif // MM_LOG_H

@@ -10,25 +10,25 @@ bool MiniMessengerBLEKeyboardInterface::isFullyConnected() {
 
 void MiniMessengerBLEKeyboardInterface::clearAllExistingBonds() {
     NimBLEDevice::deleteAllBonds();
-    ESP_LOGI(TAG_BTKB, "All bonds cleared");
+    ESP_LOGI(m_tag, "All bonds cleared");
 }
 
 bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& address) {
     NimBLEClient* pClient = NimBLEDevice::createClient();
-    ESP_LOGI(TAG_BTKB, "Connecting to server...");
+    ESP_LOGI(m_tag, "Connecting to server...");
 
     pClient->setClientCallbacks(this, false);  // false = do NOT delete `this` when client is destroyed
 
     if (!pClient->connect(address)) {
-        ESP_LOGE(TAG_BTKB, "Connection failed");
+        ESP_LOGE(m_tag, "Connection failed");
         return false;
     }
 
-    ESP_LOGI(TAG_BTKB, "Connected");
+    ESP_LOGI(m_tag, "Connected");
 
     NimBLERemoteService* pRemoteService = pClient->getService(NimBLEUUID(BT_SERVICE_HID_1812));
     if (pRemoteService == nullptr) {
-        ESP_LOGE(TAG_BTKB, "HID service 0x1812 not found");
+        ESP_LOGE(m_tag, "HID service 0x1812 not found");
         return false;
     }
 
@@ -44,17 +44,17 @@ bool MiniMessengerBLEKeyboardInterface::connectToServer(const NimBLEAddress& add
     for (NimBLERemoteCharacteristic* pChar : chars) {
         if (pChar->getUUID() == hidReportUuid && pChar->canNotify()) {
             bool ok = pChar->subscribe(true, MiniMessengerBLEKeyboardInterface::bleNotifyCallback);
-            ESP_LOGI(TAG_BTKB, "subscribe(handle=%u) -> %s", pChar->getHandle(), ok ? "OK" : "FAIL");
+            ESP_LOGI(m_tag, "subscribe(handle=%u) -> %s", pChar->getHandle(), ok ? "OK" : "FAIL");
             if (ok) {
                 subscribed++;
             }
         }
     }
     if (subscribed == 0) {
-        ESP_LOGE(TAG_BTKB, "No notifiable HID Report (0x2A4D) characteristic found");
+        ESP_LOGE(m_tag, "No notifiable HID Report (0x2A4D) characteristic found");
         return false;
     }
-    ESP_LOGI(TAG_BTKB, "%d HID Report characteristic(s) subscribed", subscribed);
+    ESP_LOGI(m_tag, "%d HID Report characteristic(s) subscribed", subscribed);
 
     m_connectionDone = true;
     m_clientOnConnectionCallback(m_connectionDone);
@@ -88,29 +88,29 @@ void MiniMessengerBLEKeyboardInterface::onResult(const NimBLEAdvertisedDevice* a
     // on a POSITIVE signal that the device is a mouse; absence of Appearance is never used as evidence of "this is a keyboard". The same pattern
     // could be extended later to BT_APPEARANCE_JOYSTICK_03C3 / GAMEPAD_03C4 if those start showing up in your environment.
     if (advertisedDevice->haveAppearance() && advertisedDevice->getAppearance() == BT_APPEARANCE_MOUSE_03C2) {
-        ESP_LOGI(TAG_BTKB, "Skipping mouse (appearance 0x%04X) [%s]", BT_APPEARANCE_MOUSE_03C2, advertisedDevice->toString().c_str());
+        ESP_LOGI(m_tag, "Skipping mouse (appearance 0x%04X) [%s]", BT_APPEARANCE_MOUSE_03C2, advertisedDevice->toString().c_str());
         return;
     }
 
-    ESP_LOGI(TAG_BTKB, "Found HID device [%s]", advertisedDevice->toString().c_str());
+    ESP_LOGI(m_tag, "Found HID device [%s]", advertisedDevice->toString().c_str());
 
     NimBLEDevice::getScan()->stop();
 
     // Free any address kept from a previous scan/disconnect cycle before allocating a new one — otherwise repeated re-pairings leak ~24 bytes
     // of heap per cycle. `delete nullptr` is a no-op, so this is safe on the first call too.
-    delete pServerAddress;
-    pServerAddress = new NimBLEAddress(advertisedDevice->getAddress());
+    delete m_pServerAddress;
+    m_pServerAddress = new NimBLEAddress(advertisedDevice->getAddress());
 
-    doConnect = true;
-    doScan    = false;
+    m_doConnect = true;
+    m_doScan    = false;
 }
 
 void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanResults, int reason) {
-    // NimBLE scans are asynchronous: the start() call returns immediately and this fires when the scan window elapses. Re-arm doScan so the next
+    // NimBLE scans are asynchronous: the start() call returns immediately and this fires when the scan window elapses. Re-arm m_doScan so the next
     // tryToMaintainConnection() iteration kicks off a new round — unless paused (e.g. during WiFi portal, see pauseScan()).
-    ESP_LOGI(TAG_BTKB, "Scan ended (reason=%d, %d devices seen) — %s", reason, scanResults.getCount(), m_scanPaused ? "paused, not rescanning" : "will rescan");
+    ESP_LOGI(m_tag, "Scan ended (reason=%d, %d devices seen) — %s", reason, scanResults.getCount(), m_scanPaused ? "paused, not rescanning" : "will rescan");
     if (!m_connectionDone && !m_scanPaused) {
-        doScan = true;
+        m_doScan = true;
     }
 }
 
@@ -119,22 +119,22 @@ void MiniMessengerBLEKeyboardInterface::onScanEnd(const NimBLEScanResults& scanR
 // ============================================================================
 
 void MiniMessengerBLEKeyboardInterface::onConnect(NimBLEClient* pClient) {
-    ESP_LOGI(TAG_BTKB, "Client connected");
+    ESP_LOGI(m_tag, "Client connected");
 }
 
 void MiniMessengerBLEKeyboardInterface::onDisconnect(NimBLEClient* pClient, int reason) {
-    ESP_LOGE(TAG_BTKB, "Client disconnected (reason=%d) — restarting scan", reason);
+    ESP_LOGE(m_tag, "Client disconnected (reason=%d) — restarting scan", reason);
     m_connectionDone = false;
     m_clientOnConnectionCallback(m_connectionDone);
 
-    doScan = true;
+    m_doScan = true;
 }
 
 void MiniMessengerBLEKeyboardInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
     if (connInfo.isEncrypted()) {
-        ESP_LOGI(TAG_BTKB, "Authentication complete — bonding saved in NVS");
+        ESP_LOGI(m_tag, "Authentication complete — bonding saved in NVS");
     } else {
-        ESP_LOGE(TAG_BTKB, "Authentication failed");
+        ESP_LOGE(m_tag, "Authentication failed");
     }
 }
 
@@ -145,9 +145,11 @@ void MiniMessengerBLEKeyboardInterface::bleNotifyCallback(NimBLERemoteCharacteri
 }
 
 bool MiniMessengerBLEKeyboardInterface::setup(bool                           clearExistingBonds,
+                                              const char*                    tag,
                                               mm_btkb_on_connection_callback onConnectionCallback,
                                               mm_btkb_on_keystroke_callback  onKeystrokeCallback) {
-    ESP_LOGI(TAG_BTKB, "setup()...");
+    m_tag = tag;
+    ESP_LOGI(m_tag, "setup()...");
 
     NimBLEDevice::init("");
 
@@ -170,7 +172,7 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
     // model only puts it in the SCAN_RSP, force a re-bond via g_kb.setup(true, ...) to get active scan back.
     const int  bondedCount     = NimBLEDevice::getNumBonds();
     const bool hasExistingBond = (bondedCount > 0);
-    ESP_LOGI(TAG_BTKB,
+    ESP_LOGI(m_tag,
              "Starting scan for any device advertising HID service 0x%04X "
              "(activeScan=%d, bondedCount=%d)",
              BT_SERVICE_HID_1812,
@@ -191,8 +193,8 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
     }
     // NimBLE-Arduino 2.x: scan duration is in MILLISECONDS (1.x was in seconds)
     pBLEScan->start(m_scanningDurationSec * 1000);
-    // Scan already running; onScanEnd() will re-arm doScan if it ends without finding the keyboard.
-    doScan = false;
+    // Scan already running; onScanEnd() will re-arm m_doScan if it ends without finding the keyboard.
+    m_doScan = false;
 
     m_clientOnConnectionCallback = onConnectionCallback;
     g_clientOnKeystrokeCallback  = onKeystrokeCallback;
@@ -201,39 +203,39 @@ bool MiniMessengerBLEKeyboardInterface::setup(bool                           cle
 }
 
 void MiniMessengerBLEKeyboardInterface::tryToMaintainConnection() {
-    if (doConnect) {
-        if (connectToServer(*pServerAddress)) {
-            ESP_LOGI(TAG_BTKB, "tryToMaintainConnection: connected");
+    if (m_doConnect) {
+        if (connectToServer(*m_pServerAddress)) {
+            ESP_LOGI(m_tag, "tryToMaintainConnection: connected");
         } else {
-            ESP_LOGE(TAG_BTKB, "tryToMaintainConnection: failed to connect");
-            doScan = true;  // retry scan if connect failed
+            ESP_LOGE(m_tag, "tryToMaintainConnection: failed to connect");
+            m_doScan = true;  // retry scan if connect failed
         }
-        doConnect = false;
+        m_doConnect = false;
     }
 
-    if (doScan && !m_scanPaused) {
-        ESP_LOGI(TAG_BTKB, "Rescanning...");
+    if (m_doScan && !m_scanPaused) {
+        ESP_LOGI(m_tag, "Rescanning...");
         NimBLEDevice::getScan()->start(m_scanningDurationSec * 1000, false);
-        // NimBLE scan is async — flag it as "in flight" so we don't restart it every loop iteration. onScanEnd() will re-arm doScan when the
+        // NimBLE scan is async — flag it as "in flight" so we don't restart it every loop iteration. onScanEnd() will re-arm m_doScan when the
         // window elapses without finding the keyboard (unless m_scanPaused).
-        doScan = false;
+        m_doScan = false;
     }
 }
 
 // Pause the BLE scan loop. Stops any active scan synchronously (NimBLE's stop() blocks until the radio is freed) and inhibits onScanEnd from
-// re-arming doScan. Safe to call multiple times. Used by the WiFi portal entry to free the 2.4 GHz radio for WiFi RX — see header comment.
+// re-arming m_doScan. Safe to call multiple times. Used by the WiFi portal entry to free the 2.4 GHz radio for WiFi RX — see header comment.
 void MiniMessengerBLEKeyboardInterface::pauseScan() {
-    ESP_LOGI(TAG_BTKB, "pauseScan() — stopping scan and inhibiting re-arm");
+    ESP_LOGI(m_tag, "pauseScan() — stopping scan and inhibiting re-arm");
     m_scanPaused = true;
     NimBLEDevice::getScan()->stop();
-    doScan = false;
+    m_doScan = false;
 }
 
 // Resume the BLE scan loop. If the keyboard isn't currently connected, the next tryToMaintainConnection() iteration will kick off a new scan.
 void MiniMessengerBLEKeyboardInterface::resumeScan() {
-    ESP_LOGI(TAG_BTKB, "resumeScan() — scan loop re-enabled");
+    ESP_LOGI(m_tag, "resumeScan() — scan loop re-enabled");
     m_scanPaused = false;
     if (!m_connectionDone) {
-        doScan = true;
+        m_doScan = true;
     }
 }

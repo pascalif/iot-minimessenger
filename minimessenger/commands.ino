@@ -56,10 +56,11 @@ const char* const CMD_WIFI_PORTAL = "wifi portal";
 const char* const CMD_WIFI_PUB = "wifi pub";
 
 // Debug / diagnostic subcommands. Visual recovery (redraw) and diagnostic dumps (chip, mem).
-const char* const CMD_DBG_CHIP   = "dbg chip";
-const char* const CMD_DBG_MEM    = "dbg mem";
-const char* const CMD_DBG_REDRAW = "dbg redraw";
-const char* const CMD_DBG_FONTS  = "dbg fonts";
+const char* const CMD_DBG_CHIP    = "dbg chip";
+const char* const CMD_DBG_FONTS   = "dbg fonts";
+const char* const CMD_DBG_MEM     = "dbg mem";
+const char* const CMD_DBG_REDRAW  = "dbg redraw";
+const char* const CMD_DBG_RESTART = "dbg restart";
 
 // MQTT subcommands.
 const char* const CMD_MQTT_DROP = "mqtt drop";
@@ -114,7 +115,9 @@ void printHelpDbg() {
     printCmdInfo("/dbg subcmds:");
     printCmdInfo("- chip", "chip + MACs");
     printCmdInfo("- mem", "heap + stack");
+    printCmdInfo("- fonts", "demo fonts");
     printCmdInfo("- redraw", "full repaint");
+    printCmdInfo("- restart", "restart ESP");
 }
 
 // === Command implementations ==================================================
@@ -347,16 +350,15 @@ bool processDbgSubcommand(const String& message) {
         printHelpDbg();
         return true;
     }
-    if (message == CMD_DBG_REDRAW) {
-        // Full repaint: status bar + footer + scroll area refilled from the ring buffer. Same path as the auto-revert from /status so users have
-        // one consistent recovery command after visual glitches or framebuffer/state drift.
-        ESP_LOGI(TAG_MM, "Command [%s] — full redraw of the 3 zones", CMD_DBG_REDRAW);
-        returnToConversationsScreen();
-        return true;
-    }
     if (message == CMD_DBG_CHIP) {
         ESP_LOGI(TAG_MM, "Command [%s] — dumping chip info", CMD_DBG_CHIP);
         cmdDumpChipInfo();
+        return true;
+    }
+    if (message == CMD_DBG_FONTS) {
+        ESP_LOGI(TAG_MM, "Command [%s] — showing fonts", CMD_DBG_MEM);
+        fontsTestRenderMiscFonts();
+        returnToConversationsScreen();
         return true;
     }
     if (message == CMD_DBG_MEM) {
@@ -364,10 +366,16 @@ bool processDbgSubcommand(const String& message) {
         cmdDumpMemInfo();
         return true;
     }
-    if (message == CMD_DBG_FONTS) {
-        ESP_LOGI(TAG_MM, "Command [%s] — showing fonts", CMD_DBG_MEM);
-        fontsTestRenderMiscFonts();
+    if (message == CMD_DBG_REDRAW) {
+        // Full repaint: status bar + footer + scroll area refilled from the ring buffer. Same path as the auto-revert from /status so users have
+        // one consistent recovery command after visual glitches or framebuffer/state drift.
+        ESP_LOGI(TAG_MM, "Command [%s] — full redraw of the 3 zones", CMD_DBG_REDRAW);
         returnToConversationsScreen();
+        return true;
+    }
+    if (message == CMD_DBG_RESTART) {
+        ESP.restart();  // Redémarre immédiatement
+                        // ou #include <esp_system.h> : esp_restart();
         return true;
     }
 

@@ -51,13 +51,14 @@ typedef std::function<void(uint8_t* pData, size_t length)> mm_btkb_on_keystroke_
  */
 class MiniMessengerBLEKeyboardInterface : public NimBLEScanCallbacks, public NimBLEClientCallbacks {
 public:
-    bool setup(bool clearExistingBonds, mm_btkb_on_connection_callback onConnectionCallback, mm_btkb_on_keystroke_callback onKeystrokeCallback);
+    bool
+    setup(bool clearExistingBonds, const char* tag, mm_btkb_on_connection_callback onConnectionCallback, mm_btkb_on_keystroke_callback onKeystrokeCallback);
 
     void clearAllExistingBonds();
 
-    void tryToMaintainConnection();
-
     bool isFullyConnected();
+
+    void tryToMaintainConnection();
 
     // Pause / resume the BLE scan loop. Used during the WiFi captive portal (`/wifi portal`) to free the shared 2.4 GHz radio: ESP32 has a single
     // antenna, and an active BLE scan (setActiveScan + ~100% duty cycle) starves WiFi RX — beacons still go out (so the phone sees the SSID) but
@@ -67,10 +68,6 @@ public:
     void resumeScan();
 
 protected:
-    uint8_t m_scanningDurationSec = 30;
-
-    bool connectToServer(const NimBLEAddress& address);
-
     // NimBLEScanCallbacks
     void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override;
     void onScanEnd(const NimBLEScanResults& scanResults, int reason) override;
@@ -81,13 +78,19 @@ protected:
     void onAuthenticationComplete(NimBLEConnInfo& connInfo) override;
 
 private:
-    NimBLEAddress* pServerAddress   = nullptr;
-    bool           m_connectionDone = false;
-    bool           doConnect        = false;
-    bool           doScan           = true;
-    // Set true by pauseScan(), false by resumeScan(). When true, tryToMaintainConnection() will not start a scan and onScanEnd() will not re-arm
-    // doScan, so the radio stays available for WiFi. The keyboard auto-discovery loop resumes the moment resumeScan() is called.
+    const char*    m_tag                 = nullptr;
+    NimBLEAddress* m_pServerAddress      = nullptr;
+    bool           m_connectionDone      = false;
+    bool           m_doConnect           = false;
+    bool           m_doScan              = true;
+    uint8_t        m_scanningDurationSec = 30;
+
+    // Set true by pauseScan(), false by resumeScan().
+    // When true, tryToMaintainConnection() will not start a scan and onScanEnd() will not re-arm doScan,
+    // so the radio stays available for WiFi. The keyboard auto-discovery loop resumes the moment resumeScan() is called.
     bool m_scanPaused = false;
+
+    bool connectToServer(const NimBLEAddress& address);
 
     static void bleNotifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
 

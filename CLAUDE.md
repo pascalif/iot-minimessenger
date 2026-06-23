@@ -80,7 +80,7 @@ Coordinate quirk worth knowing: with GFX fonts (`FreeSans9pt7b`), `getTextBounds
 
 Two NimBLE 2.x signature gotchas worth remembering: `onPassKeyEntry(NimBLEConnInfo&)` returns `void` (you call `NimBLEDevice::injectPassKey(connInfo, key)` to inject the value, not via the return); and scan/connect durations are in **milliseconds** (Bluedroid and NimBLE 1.x used seconds — multiply by 1000 if porting old snippets).
 
-HID reports arrive in `decodeHIDReport()`, which maintains `kbIsCapsLockOn` locally (toggled on the keyboard's CapsLock keypress, since we don't read the LED state back from the keyboard) and uses `keymapLower` / `keymapUpper` lookup tables keyed by HID codes from `hid_keys.h`. Currently keystrokes accumulate into `g_currentMsg` but pressing Enter only logs "TODO Send message" — this path is not yet wired to MQTT publishing; serial input *is* wired (via `FLAG_READ_SERIAL_INPUTS`).
+HID reports arrive in `decodeHIDReport()`, which maintains `kbIsCapsLockOn` locally (toggled on the keyboard's CapsLock keypress, since we don't read the LED state back from the keyboard) and uses `keymapLower` / `keymapUpper` lookup tables keyed by HID codes from `hid_keys.h`.
 
 ## LEDs
 
