@@ -10,7 +10,7 @@ Commands are invoked by typing **`/<verb>`** (slash prefix, no space) — e.g. `
 
 ## What this is
 
-An Arduino sketch turning an ESP32 (or ESP8266 D1 mini) into a self-contained "messenger" appliance: BLE keyboard for input, ST7789 240×320 TFT for display, and MQTT over TLS (HiveMQ Cloud) as the transport between paired devices. There is no host-side build system — everything is a `.ino` plus headers compiled by the Arduino IDE.
+An Arduino sketch turning an ESP32 into a self-contained "messenger" appliance: BLE keyboard for input, ST7789 240×320 TFT for display, and MQTT over TLS (HiveMQ Cloud) as the transport between paired devices. There is no host-side build system — everything is a `.ino` plus headers compiled by the Arduino IDE.
 
 The goal is to provide a way for multiple people to communicate together as long as they can connect to a WiFi network.
 It's kind of a very small "whatsapp"-like application.
@@ -23,23 +23,23 @@ MQTT server is used to manage storage and transfer of messages.
 There is no Makefile, PlatformIO config, CI, or test harness. Build and flash via the Arduino IDE:
 
 - Open `minimessenger.ino`.
-- For ESP32: keep `#define PAC_ON_ESP32` at the top of the `.ino` (default). Tools → Boards: select an ESP32 board; Tools → Partition Scheme: **"Huge App" (1.9 MB / 320 KB SPIFFS)** — the default partition is too small.
-- For ESP8266 D1 mini: switch to `#define PAC_ON_D1MINI`. Tools → Boards: "LOLIN(WEMOS) D1 R2 & mini".
+- Tools → Boards: select an ESP32 board (e.g., ESP32 Dev Module).
+- Tools → Partition Scheme: **"Huge App" (1.9 MB / 320 KB SPIFFS)** or **"Huge App (3MB No OTA/1MB SPIFFS)"** — the default partition is too small.
 - Serial monitor: 115200 baud.
 
 Required libraries (Library Manager, exact versions known to work in comments):
 - PubSubClient 2.8
 - Adafruit ST7735 and ST7789 1.11.0 (pulls in Adafruit_GFX)
 - **NimBLE-Arduino 2.5.0** (by h2zero) — replaces the bundled Bluedroid BLE library. Required to free enough heap (~50 KB) for the mbedtls TLS handshake to HiveMQ; with Bluedroid, the handshake fails with rc=-2 (only ~24 KB contiguous heap, mbedtls needs ~38 KB for default 16 KB IN + 16 KB OUT + SSL ctx). Do **not** also `#include <BLEDevice.h>` — calling Bluedroid's `BLEDevice::init()` alongside NimBLE wastes the savings.
-- WiFi / WiFiClientSecure / SPI / Wire ship with the ESP32 / ESP8266 board packages. Time comes from the core's `configTime()` SNTP (no third-party NTP lib).
+- WiFi / WiFiClientSecure / SPI / Wire ship with the ESP32 board package. Time comes from the core's `configTime()` SNTP (no third-party NTP lib).
 
 ## Per-device identity
 
-`identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It reads the device's MAC and looks it up via `DeviceDataEntry::findByMac(mac)` in the `COMPILED_DEVICE_DATA_ENTRIES` table (declared in `personal-data.h`, gitignored, copied from `personal-data.h.template`) and populates a single global `DeviceDataEntry g_deviceData` with the matched row (`{ mac, deviceId, pseudo, namePrefix, screen }`). The struct itself is defined in **`contacts.h`** (must be visible to minimessenger.ino, which is concatenated first); `personal-data.h` carries only the data. One formatted-name method sits on the struct: `g_deviceData.name()` returns `"<namePrefix>_<003-padded-id>"` (e.g. `"D1M_001"`, `"E32_004"`), used as MQTT client_id, WiFi hostname, and the `/status` "ID" row. The MQTT Will payload — the decimal-string form of `deviceId` — is built inline at the `connect()` call site with a 4-byte stack buffer (see `mqtt.ino::mqttReconnectAttempt`) to avoid any per-reconnect heap allocation. **Adding or moving a physical device means editing the table in `personal-data.h`** — there is no NVS-stored identity, no portal flow for the per-device tuple. An unknown MAC falls back to a synthesised entry: random ID in [100..999], pseudo `"JohnDoe"`, namePrefix `"UNK"`, screen `ST7789`. So a fresh ESP boots and joins MQTT without first editing the table.
+`identifyDevice()` in `minimessenger.ino` is the source of truth for device behaviour. It reads the device's MAC and looks it up via `DeviceDataEntry::findByMac(mac)` in the `COMPILED_DEVICE_DATA_ENTRIES` table (declared in `personal-data.h`, gitignored, copied from `personal-data.h.template`) and populates a single global `DeviceDataEntry g_deviceData` with the matched row (`{ mac, deviceId, pseudo, namePrefix, screen }`). The struct itself is defined in **`contacts.h`** (must be visible to minimessenger.ino, which is concatenated first); `personal-data.h` carries only the data. One formatted-name method sits on the struct: `g_deviceData.name()` returns `"<namePrefix>_<003-padded-id>"` (e.g. `"E32_001"`, `"E32_004"`), used as MQTT client_id, WiFi hostname, and the `/status` "ID" row. The MQTT Will payload — the decimal-string form of `deviceId` — is built inline at the `connect()` call site with a 4-byte stack buffer (see `mqtt.ino::mqttReconnectAttempt`) to avoid any per-reconnect heap allocation. **Adding or moving a physical device means editing the table in `personal-data.h`** — there is no NVS-stored identity, no portal flow for the per-device tuple. An unknown MAC falls back to a synthesised entry: random ID in [100..999], pseudo `"JohnDoe"`, namePrefix `"UNK"`, screen `ST7789`. So a fresh ESP boots and joins MQTT without first editing the table.
 
 The same compiled table is also read by `contacts.ino` (via the static method `DeviceDataEntry::findById(deviceId)`) so peer liveness pings can be logged and bannered under their friendly pseudo rather than the bare deviceId. Peers not listed in the table show up as `device #<n>` in logs and banners. The list of remote peers is not declared anywhere: it is discovered dynamically at runtime from MQTT liveness pings — see the **Contact tracking** section below.
 
-On ESP32 (arduino-esp32 3.3.8) reading the MAC reliably requires the WiFi driver to be in STA mode first. `identifyDevice()` therefore calls `WiFi.mode(WIFI_STA)` before `WiFi.macAddress(buffer)` — this brings up the netif without connecting and lets the MAC read return the real address. `setupWifi()` later issues `WiFi.disconnect(true,true) + mode + begin` on top of that already-initialised STA mode, which is well-defined. We initially tried `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` from `<esp_mac.h>` per the IDF docs (which claim the eFuse path is dependency-free), but on this core/version it silently returns `00:00:00:00:00:00` until the WiFi driver is up — so we stopped relying on it. On D1mini the legacy `WiFi.macAddress()` path is kept under `#else`.
+On ESP32 (arduino-esp32 3.3.8) reading the MAC reliably requires the WiFi driver to be in STA mode first. `identifyDevice()` therefore calls `WiFi.mode(WIFI_STA)` before `WiFi.macAddress(buffer)` — this brings up the netif without connecting and lets the MAC read return the real address. `setupWifi()` later issues `WiFi.disconnect(true,true) + mode + begin` on top of that already-initialised STA mode, which is well-defined. We initially tried `esp_read_mac(macBytes, ESP_MAC_WIFI_STA)` from `<esp_mac.h>` per the IDF docs (which claim the eFuse path is dependency-free), but on this core/version it silently returns `00:00:00:00:00:00` until the WiFi driver is up — so we stopped relying on it.
 
 ## WiFi onboarding (multi-network + portal)
 

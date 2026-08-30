@@ -29,14 +29,14 @@
 //                outgoing chat message. Unique per row.
 //   pseudo     : human-readable name shown in logs / banners / info-screen ("Alice", "Bob", …). Latin-1 only (no smart punctuation, no em-dash)
 //                — see the display charset memo.
-//   namePrefix : 3..5-letter prefix combined with deviceId as "<prefix>_NNN" (e.g. "D1M_001", "E32_004"). Used as MQTT client_id, WiFi hostname,
+//   namePrefix : 3..5-letter prefix combined with deviceId as "<prefix>_NNN" (e.g. "E32_001", "E32_004"). Used as MQTT client_id, WiFi hostname,
 //                and the "ID:" row on /status.
 //   screen     : DisplayType — ST7789 (320×240 TFT) or OLEDSHIELD (SSD1306). The latter branch is a stub today; everything renders ST7789.
 
 const DeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[] = {
-    // { "AA:BB:CC:DD:EE:01", 1, "Alice", "D1M", ST7789     },
-    // { "AA:BB:CC:DD:EE:02", 2, "Bob",   "D1M", ST7789     },
-    // { "AA:BB:CC:DD:EE:03", 3, "Carol", "D1M", OLEDSHIELD },
+    // { "AA:BB:CC:DD:EE:01", 1, "Alice", "E32", ST7789     },
+    // { "AA:BB:CC:DD:EE:02", 2, "Bob",   "E32", ST7789     },
+    // { "AA:BB:CC:DD:EE:03", 3, "Carol", "E32", OLEDSHIELD },
     // { "AA:BB:CC:DD:EE:04", 4, "Dave",  "E32", ST7789     },
 };
 

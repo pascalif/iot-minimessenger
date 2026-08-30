@@ -141,11 +141,11 @@ pDisp->drawRGBBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) /
 | 240×135      | 64,8 Ko   | Plein écran ST7789 portrait |
 | 240×320      | 153,6 Ko  | Splash plein cadre vertical complet |
 
-Sur ESP8266 D1 mini (1 Mo flash, ~600 Ko libres dépendant des libs), rester sous ~150×150. Sur ESP32 partition « Huge App », même 240×320 passe sans souci.
+Sur ESP32 avec la partition « Huge App », même un splash plein cadre en 240×320 (153.6 Ko) passe sans aucun souci.
 
 ### Gotchas
 
-- **Endianness** : Adafruit_GFX attend du big-endian (octet de poids fort en premier). Le script ci-dessus le fait naturellement via le format `0xFFFF` (l'entier 16 bits est stocké en mémoire selon l'endian de la cible, et le compilateur s'aligne — ça marche tel quel sur ESP32 et ESP8266). En cas de couleurs inversées (rouge ↔ bleu visible), ajouter `pDisp->setEndianness(...)` ou byte-swap dans le script.
+- **Endianness** : Adafruit_GFX attend du big-endian (octet de poids fort en premier). Le script ci-dessus le fait naturellement via le format `0xFFFF` (l'entier 16 bits est stocké en mémoire selon l'endian de la cible, et le compilateur s'aligne — ça marche tel quel sur ESP32). En cas de couleurs inversées (rouge ↔ bleu visible), ajouter `pDisp->setEndianness(...)` ou byte-swap dans le script.
 - **Couleurs un peu fades** : RGB565 = 65 K couleurs vs 16 M en RGB888, normal qu'un dégradé subtil perde du peps. Pour un logo plat ça ne se voit pas.
 - **Image plus grande que l'écran** : `drawRGBBitmap` ne clippe pas proprement ; redimensionner en amont (c'est le rôle de `resize((W, H), ...)`).
 
@@ -271,7 +271,7 @@ pDisp->drawBitmap((FB_WIDTH - splash_bmp_w) / 2, (FB_HEIGHT - splash_bmp_h) / 2,
 
 ### SPIFFS vs LittleFS — c'est quoi ?
 
-Les deux sont des **systèmes de fichiers** embarqués qui vivent dans une zone de la flash NOR de l'ESP32/ESP8266 distincte du code applicatif. La flash est partitionnée en plusieurs zones (cf. « Tools → Partition Scheme » dans l'IDE) : bootloader, partition app(s), NVS, et une zone « data » dont la taille et le format dépendent du schéma choisi. Pour notre projet « Huge App (1.9 MB / 320 KB SPIFFS) » : ~320 Ko sont réservés à cette partition data.
+Les deux sont des **systèmes de fichiers** embarqués qui vivent dans une zone de la flash NOR de l'ESP32 distincte du code applicatif. La flash est partitionnée en plusieurs zones (cf. « Tools → Partition Scheme » dans l'IDE) : bootloader, partition app(s), NVS, et une zone « data » dont la taille et le format dépendent du schéma choisi. Pour notre projet « Huge App (1.9 MB / 320 KB SPIFFS) » : ~320 Ko sont réservés à cette partition data.
 
 - **SPIFFS** (SPI Flash File System) — l'ancêtre. Pas de vrais dossiers (les `/` dans les noms sont décoratifs), pas de tolérance aux coupures de courant en cours d'écriture, wear-leveling sommaire. **Déprécié depuis arduino-esp32 2.x** mais toujours fonctionnel — c'est ce que le nom de partition « SPIFFS » désigne historiquement.
 - **LittleFS** — successeur recommandé. Vrais dossiers, écritures atomiques (résiste à un reset au milieu d'un `write`), wear-leveling correct, format ouvert. Sur ESP32 récent on l'utilise dans la même partition qui s'appelle toujours « SPIFFS » dans le tableau de partitions (le nom du schéma de partition n'a pas changé, mais on y monte LittleFS).

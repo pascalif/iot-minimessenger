@@ -8,12 +8,7 @@ The view is from above, USB connector at the bottom — the way the board normal
 
 ## 1. The complete wiring
 
-Sur la nomenclature Dxx : sur ton board ESP32 (HW-394 / DOIT V1), les silkscreens D2, D5, D23, etc. correspondent 1:1 aux GPIO2, GPIO5, GPIO23.
-C'est la convention standard sur les boards ESP32 de cette famille.
-
-Attention : sur le D1 mini (ESP8266), cette correspondance est fausse — D2 = GPIO4, D4 = GPIO2, etc. Les #define D2 2 que je viens
-d'ajouter sont donc valides uniquement pour le chemin ESP32. Si tu compiles un jour pour D1 mini (via PAC_ON_D1MINI), il faudra
-wrapper ces defines dans #ifdef PAC_ON_ESP32 ou utiliser des valeurs différentes.
+Sur la nomenclature Dxx : sur votre carte ESP32, les sérigraphies D2, D5, D23, etc. correspondent 1:1 aux GPIO2, GPIO5, GPIO23. C'est la convention standard sur les cartes ESP32 de cette famille.
 
 
 ```

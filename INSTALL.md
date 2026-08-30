@@ -21,7 +21,7 @@ Pour des raisons de sécurité, les informations de connexion WiFi, d'identité 
      Déclarez chaque appareil physique de votre réseau avec sa MAC address, son ID unique (1 à 254), son pseudo et son type d'écran.
      ```cpp
      const DeviceDataEntry COMPILED_DEVICE_DATA_ENTRIES[] = {
-         { "AA:BB:CC:DD:EE:01", 1, "Alice", "D1M", ST7789 },
+         { "AA:BB:CC:DD:EE:01", 1, "Alice", "E32", ST7789 },
          { "60:01:94:0F:9E:71", 2, "Bob",   "E32", ST7789 },
      };
      ```
@@ -37,8 +37,33 @@ Pour des raisons de sécurité, les informations de connexion WiFi, d'identité 
 
    * **Broker MQTT (`g_mqttServerInfo` et `HIVEMQ_ROOT_CA`) :**
      Renseignez l'adresse de votre serveur MQTT (ex: HiveMQ Cloud), le port (généralement `8883` pour MQTT over TLS), ainsi que l'identifiant et le mot de passe du client.
-     
+
      Si vous utilisez HiveMQ Cloud, collez son certificat racine TLS (généralement *ISRG Root X1* de Let's Encrypt) dans `HIVEMQ_ROOT_CA`. Pour un broker local sans vérification stricte, définissez `.rootCA = nullptr` dans `g_mqttServerInfo` pour désactiver la vérification (l'appareil utilisera alors `setInsecure()`).
+
+
+3. **Configuration du script de dialogue Python (talk.py) :**
+   Un client de chat interactif en ligne de commande (en Python) est disponible dans le dossier `scripts/` pour vous permettre de dialoguer directement avec vos appareils physiques depuis votre ordinateur via le broker MQTT.
+
+   * **Créer le fichier de configuration :**
+     Copiez le modèle de configuration dans le dossier `scripts/` :
+     ```bash
+     cp scripts/config.py.template scripts/config.py
+     ```
+
+   * **Éditer `scripts/config.py` :**
+     Ouvrez ce fichier et configurez les valeurs de connexion au broker MQTT en recopiant **exactement** les mêmes paramètres que ceux saisis dans votre fichier `minimessenger/personal-data.h` (`g_mqttServerInfo`) :
+     * `MQTT_HOST` : L'adresse de votre serveur (hôte DNS du broker).
+     * `MQTT_PORT` : Généralement `8883` (port MQTT over TLS).
+     * `MQTT_USER` : Le nom d'utilisateur de connexion au broker.
+     * `MQTT_PASSWORD` : Le mot de passe de connexion.
+     * `DEVICE_ID_ME` : Renseignez un ID numérique (ex: `10` ou `99`) non attribué à l'un de vos appareils physiques, pour vous identifier de manière unique lors des échanges de messages.
+
+   * **Lancement du script :**
+     Une fois le fichier enregistré, assurez-vous d'avoir la dépendance requise et lancez le client de chat :
+     ```bash
+     pip install paho-mqtt
+     python3 scripts/talk.py
+     ```
 
 ---
 
@@ -46,11 +71,9 @@ Pour des raisons de sécurité, les informations de connexion WiFi, d'identité 
 
 Le projet est conçu pour être compilé directement avec l'**Arduino IDE**.
 
-### 1. Installation des cartes (Board Managers)
+### 1. Installation de la carte (Board Manager)
 * **Pour l'ESP32 :**
   Ajoutez l'URL des cartes ESP32 dans vos préférences Arduino IDE, puis installez le paquet `esp32` via le gestionnaire de cartes (recommandé : versions stables de la branche 2.x ou 3.x).
-* **Pour l'ESP8266 :**
-  Installez le paquet `esp8266` via le gestionnaire de cartes.
 
 ### 2. Installation des bibliothèques requises
 Ouvrez le **Gestionnaire de bibliothèques** (Library Manager) de l'Arduino IDE et installez les versions exactes suivantes :
@@ -69,21 +92,11 @@ Ouvrez le **Gestionnaire de bibliothèques** (Library Manager) de l'Arduino IDE 
 1. **Ouvrir le projet :**
    Lancez l'Arduino IDE et ouvrez le fichier principal `minimessenger/minimessenger.ino`.
 
-2. **Sélection de la cible :**
-   Vérifiez que la bonne directive est active tout en haut du fichier `minimessenger.ino` :
-   * `#define PAC_ON_ESP32` pour compiler pour un ESP32 (actif par défaut).
-   * `#define PAC_ON_D1MINI` pour compiler pour un ESP8266 (D1 mini).
+2. **Configuration des paramètres de la carte dans l'IDE :**
+   * Allez dans **Outils** (Tools) → **Type de carte** (Board) et sélectionnez votre module ESP32 (ex: *ESP32 Dev Module*).
+   * **TRÈS IMPORTANT :** Allez dans **Outils** (Tools) → **Partition Scheme** et sélectionnez **"Huge App (3MB No OTA / 1MB SPIFFS)"** (ou **"Huge App (1.9MB No OTA/0.3MB SPIFFS)"** selon les paquets de cartes de votre IDE). Le schéma de partitionnement standard est trop petit pour l'application avec la pile BLE et TLS.
 
-3. **Configuration des paramètres de la carte dans l'IDE :**
-
-   * **Si vous compilez pour ESP32 :**
-     * Allez dans **Outils** (Tools) → **Type de carte** (Board) et sélectionnez votre module ESP32 (ex: *ESP32 Dev Module*).
-     * **TRÈS IMPORTANT :** Allez dans **Outils** (Tools) → **Partition Scheme** et sélectionnez **"Huge App" (1.9MB No OTA/0.3MB SPIFFS)**. Le schéma de partitionnement standard est trop petit pour l'application avec la pile BLE et TLS.
-   
-   * **Si vous compilez pour ESP8266 (D1 mini) :**
-     * Allez dans **Outils** (Tools) → **Type de carte** (Board) et sélectionnez **"LOLIN(WEMOS) D1 R2 & mini"**.
-
-4. **Flashage :**
+3. **Flashage :**
    * Connectez votre carte en USB à votre ordinateur.
    * Sélectionnez le bon port série dans **Outils** → **Port**.
    * Ouvrez le **Moniteur Série** (Tools → Serial Monitor) et réglez-le sur **115200 baud**.

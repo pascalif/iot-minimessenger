@@ -18,13 +18,13 @@ counters: { BUG: 5, LOGIC: 8, EDGE: 1, MEM: 7, PERF: 8, SEC: 9, OBS: 3, DUP: 5, 
 | CRITICAL | 0     |
 | HIGH     | 1     |
 | MEDIUM   | 3     |
-| LOW      | 23    |
+| LOW      | 22    |
 | INFO     | 0     |
 
-- Active: **27**
-- New this run (currently active): **8** (BUG-005, LOGIC-007, MEM-005, MEM-006, MEM-007, PERF-008, DUP-004, DUP-005)
-- Carried over: **19**
-- Retired since last run (fixed in code; IDs not recycled): **6** (COMMENT-001, COMMENT-002, BUG-004, LOGIC-008, PERF-006, PERF-007)
+- Active: **25**
+- New this run (currently active): **7** (BUG-005, MEM-005, MEM-006, MEM-007, PERF-008, DUP-004, DUP-005)
+- Carried over: **18**
+- Retired since last run (fixed in code; IDs not recycled): **8** (COMMENT-001, COMMENT-002, BUG-004, LOGIC-008, PERF-006, PERF-007, LOGIC-007, MEM-002)
 - Won't fix: **3** (SEC-009, LANG-002 merged with LANG-001, HW-005)
 - Suppressed by Won't fix: **0**
 
@@ -32,7 +32,7 @@ The counters in the header are the high-water mark for ID allocation. Retired ID
 
 ## Hardware inventory (this run)
 
-- **MCU:** ESP32 (primary, arduino-esp32 3.3.8) with alternate ESP8266 D1 mini target via `#define PAC_ON_D1MINI`.
+- **MCU:** ESP32 (primary, arduino-esp32 3.3.8).
 - **Display:** ST7789 240×320 TFT, SPI; **backlight hardwired to 3.3 V** (TFT_BL = -1, no PWM control possible).
 - **Radios:** Wi-Fi (built-in) + Bluetooth LE via NimBLE-Arduino 2.5.0 (HID-over-GATT keyboard client).
 - **LEDs/Input:** 3 status LEDs (GPIO32 / GPIO33 / GPIO25); BLE keyboard for input; serial console for debug.
@@ -175,36 +175,6 @@ The reverse-walk uses `upperBound = (maxChars - 1 < len - 1) ? (maxChars - 1) : 
 442: if (nvsSsidCount < MAX_WIFI_NETWORKS) {
 443:     nvsSsids[nvsSsidCount++] = ssid;
 444: }
-```
-
-#### LOGIC-007 — `showFontTest()` function and its `texts[]` / `fontNames[]` arrays are dead code
-
-- **File:** `minimessenger.ino:1795-1796` (and the enclosing function)
-- **Category:** LOGIC
-- **First seen:** 2026-06-02
-
-Grep for `showFontTest` across `*.ino *.h *.cpp` returns zero callers. The function is a self-contained font-metrics probe (calls `getTextBounds` for various strings and logs the results) and was clearly used during font selection — but no command, no `setup()`, no `loop()` path invokes it now. The function body declares `String texts[]` and `String fontNames[]` arrays which themselves are referenced only inside the dead function. Keeping unreachable code rotting in the main `.ino` increases the compile time and confuses anyone navigating the file looking for current behaviour.
-
-**Recommendation:** delete `showFontTest()` entirely (and the trailing comment block of measured bounds that lives just above it, lines ~1770-1793). If you anticipate needing it again, recover it from git history. If you want a `/dbg fonts` command to print metrics on demand, wire it through the existing `processDbgSubcommand` dispatcher rather than leaving it floating.
-
-```cpp
-1795: String         texts[]     = { "aaaaa", "AAAAA", "ttttt", "qqqqq", "Attqq", "     ", "_____" };
-1796: String         fontNames[] = { "default", "FreeSans9pt8b" };
-```
-
-#### MEM-002 — `new Adafruit_ST7789` in `setupDisplay()` is never paired with `delete`
-
-- **File:** `minimessenger.ino:1016`
-- **Category:** MEM
-- **First seen:** 2026-05-03
-
-`setupDisplay()` is called exactly once today, so this is not an actual leak — but the global `g_disp` is a raw owning pointer. If anyone re-runs `setupDisplay()` (e.g. for the OLEDSHIELD branch that's still a stub, or after a soft reconfigure) the prior allocation is silently abandoned.
-
-**Recommendation:** either (a) make `g_disp` point at a static instance, or (b) `delete g_disp` at the top of `setupDisplay()` before reassigning.
-
-```cpp
-1016: Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
-1027: g_disp = pDisp;
 ```
 
 #### MEM-005 — `wifiNvsSsidKey()` / `wifiNvsPwdKey()` allocate fresh `String` temporaries on every call

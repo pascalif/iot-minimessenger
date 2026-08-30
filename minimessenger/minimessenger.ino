@@ -32,7 +32,6 @@ Docs (/docs):
 
 // Provided by ESP32 boards
 #include <WiFi.h>
-// Provided by Arduino IDE (with ESP8266 board plugins ?)
 #include <WiFiClientSecure.h>
 
 
@@ -172,18 +171,9 @@ Docs (/docs):
 #define PIN_BTN_WAKEUP       GPIO_NUM_26
 
 
-// Scren configuration
-// -------------------
-// On TFT to D1mini :
-//   CS:  D1Mini pin D2 (GPIO4)
-//   RST: D1Mini pin D3 (GPIO0)
-//   DC:  D1Mini pin D4 (GPIO2)
-//   No need for constants if using std pins:
-//     SCK (CLK) ---> D1Mini pin D5 (GPIO14, SLCK).  By default
-//     MOSI(DIN) ---> D1Mini pin D7 (GPIO13)
-
-// On ESP32:
-// STT7789v pins, vue de dessus : GND, VCC, SCL, SDA, RST, DC, CS
+// Screen configuration (ESP32)
+// ----------------------------
+// STT7789v pins (top view): GND, VCC, SCL, SDA, RST, DC, CS
 
 // Chip select — MUST be wired to a real GPIO on this module. Empirically tested: tying the TFT's CS pin to GND on the breadboard side and setting
 // `TFT_CS = GPIO_NUM_NC` (so Adafruit_SPITFT skips every CS digitalWrite via its `if (_cs >= 0)` guard) leaves the panel dark — only the backlight
@@ -929,6 +919,10 @@ void hwScrollReset() {
 
 void setupDisplay() {
     if (g_deviceData.screen == DisplayType::ST7789) {
+        if (g_disp != nullptr) {
+            delete g_disp;
+            g_disp = nullptr;
+        }
         Adafruit_ST7789* pDisp = new Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
         // Complete ctor for reference. Do not use it since it enable "software SPI" rather than "hardware SPI" (even with default pins)
         // and it's super SLOW!
