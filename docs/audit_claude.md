@@ -360,10 +360,10 @@ Acknowledged in `CLAUDE.md` ("treat all three files as sensitive"). The compile-
 **Recommendation:** none required as long as the deployment stays closed. If the device count ever grows or the binary risks public distribution, migrate MQTT creds to NVS (mirror the existing WiFi NVS path) and rotate.
 
 ```cpp
-119: const char* mqtt_server   = "xxxxxx.s1.eu.hivemq.cloud";
+119: const char* mqtt_server   = "xxxxxxxxxxxx.s1.eu.hivemq.cloud";
 120: const int   mqtt_port     = 8883;
-121: const char* mqtt_user     = "xxxxx";
-122: const char* mqtt_password = "xxxxxxx";
+121: const char* mqtt_user     = "xxxxxxxx";
+122: const char* mqtt_password = "xxxxxxxx";
 ```
 
 #### SEC-005 — Hardcoded HiveMQ root CA (Let's Encrypt ISRG Root X1, expires 2035-06-04)

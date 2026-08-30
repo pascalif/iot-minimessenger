@@ -6,8 +6,8 @@ transport between paired devices. Think of it as a hardware mini-WhatsApp for a
 small group of people on the same Wi-Fi network — broadcast to everyone, or
 unicast to a specific peer.
 
-For the full project structure, build/flash steps, and per-module conventions,
-see [`CLAUDE.md`](./CLAUDE.md).
+For a detailed step-by-step setup, configuration, and flashing guide, see [`INSTALL.md`](./INSTALL.md).
+For the full project structure, codebase details, and per-module conventions, see [`CLAUDE.md`](./CLAUDE.md).
 
 ## Power
 

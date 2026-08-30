@@ -1,0 +1,9 @@
+
+# Any change in this file must be sync'ed between `config.py.template` and your local (gitignored) `config.py`
+
+MQTT_HOST     = "xxxxxxxxxxxx.s1.eu.hivemq.cloud"
+MQTT_PORT     = 8883
+MQTT_USER     = "xxxxxxxx"
+MQTT_PASSWORD = "xxxxxxxx"
+
+DEVICE_ID_ME  = 1
